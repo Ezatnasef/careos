@@ -3,10 +3,42 @@ const API_BASE = import.meta.env.VITE_API_URL || "/api/v1";
 export type AuthUser = {
   id: string;
   organization_id: string;
+  workspace_id?: string | null;
   email: string;
   full_name: string;
   role: string;
   onboarding_complete: boolean;
+};
+
+export type Organization = {
+  id: string;
+  name: string;
+  department: string;
+  timezone: string;
+  onboarding_complete?: boolean;
+};
+
+export type Workspace = {
+  id: string;
+  organization_id: string;
+  name: string;
+  department: string;
+  timezone: string;
+  onboarding_complete?: boolean;
+};
+
+export type DashboardContract = {
+  patient_count: number;
+  upcoming_appointments: ApiAppointment[];
+  followups: ApiPatient[];
+  kpi?: Record<string, number | string>;
+};
+
+export type SSOStartResponse = {
+  provider: string;
+  redirect_url: string;
+  state: string;
+  nonce: string;
 };
 
 export type ApiPatient = {
@@ -43,8 +75,49 @@ export async function login(email: string, password: string): Promise<AuthRespon
   return result;
 }
 
+export async function loginWithSso(provider = "hospital_sso", email = "", password = ""): Promise<AuthResponse> {
+  const result = await request<AuthResponse>("/auth/sso", {
+    method: "POST",
+    body: JSON.stringify({ provider, email, password }),
+  });
+  localStorage.setItem("careos-access-token", result.access_token);
+  return result;
+}
+
+export async function startHospitalSso(provider = "hospital_sso", email?: string): Promise<SSOStartResponse> {
+  return request<SSOStartResponse>("/auth/sso/start", {
+    method: "POST",
+    body: JSON.stringify({ provider, email, redirect_uri: window.location.origin }),
+  });
+}
+
+export async function exchangeHospitalSso(code: string, state: string, provider = "hospital_sso"): Promise<AuthResponse> {
+  const result = await request<AuthResponse>("/auth/sso/callback", {
+    method: "POST",
+    body: JSON.stringify({ code, state, provider }),
+  });
+  localStorage.setItem("careos-access-token", result.access_token);
+  return result;
+}
+
+export async function getCurrentUser(): Promise<AuthUser> {
+  return request<AuthUser>("/me");
+}
+
+export async function getOrganization(): Promise<Organization> {
+  return request<Organization>("/organization");
+}
+
+export async function getOrganizationWorkspace(): Promise<Workspace> {
+  return request<Workspace>("/workspace");
+}
+
 export async function completeOrganization(name: string, department: string, timezone: string): Promise<void> {
   await request("/organization", { method: "PATCH", body: JSON.stringify({ name, department, timezone }) });
+}
+
+export async function createWorkspace(name: string, department: string, timezone: string): Promise<Workspace> {
+  return request<Workspace>("/workspace", { method: "POST", body: JSON.stringify({ name, department, timezone }) });
 }
 
 export async function logout(): Promise<void> {
@@ -53,6 +126,10 @@ export async function logout(): Promise<void> {
 
 export async function getTeam(): Promise<AuthUser[]> {
   return request<AuthUser[]>("/team");
+}
+
+export async function getDashboard(): Promise<DashboardContract> {
+  return request<DashboardContract>("/dashboard");
 }
 
 export async function getAuditEvents(): Promise<Array<{ action: string; resource: string; created_at: string }>> {

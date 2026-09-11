@@ -13,6 +13,7 @@ import {
   Clock3,
   FileText,
   HeartPulse,
+  Home,
   LayoutDashboard,
   Menu,
   MessageSquareText,
@@ -38,6 +39,8 @@ import {
   BookOpen,
   Database,
   LockKeyhole,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import {
   appointments,
@@ -47,7 +50,7 @@ import {
   type Patient,
 } from "./data";
 import { translations, type Language, type TranslationKey } from "./i18n";
-import { askAssistant, completeOrganization, createAppointment as apiCreateAppointment, createClinicalNote, createPatient as apiCreatePatient, generateClinicalSummary, getAppointments as apiGetAppointments, getPatients as apiGetPatients, login as apiLogin, logout as apiLogout, register as apiRegister, signClinicalNote } from "./api";
+import { askAssistant, completeOrganization, createAppointment as apiCreateAppointment, createClinicalNote, createPatient as apiCreatePatient, generateClinicalSummary, getAppointments as apiGetAppointments, getPatients as apiGetPatients, login as apiLogin, loginWithSso as apiLoginWithSso, logout as apiLogout, register as apiRegister, signClinicalNote } from "./api";
 
 type View =
   | "dashboard"
@@ -87,21 +90,45 @@ const navItems: NavItem[] = [
 const clinicalViews = new Set<View>(["dashboard", "patients", "assistant", "notes", "appointments"]);
 const operationsViews = new Set<View>(["messages", "portal"]);
 
-function Landing({ language, setLanguage, onEnter, t }: { language: Language; setLanguage: (language: Language) => void; onEnter: () => void; t: Translator }) {
+type LandingPage = "landing" | "problem" | "features" | "demo" | "contact";
+
+function Landing({ language, setLanguage, onEnter, t, theme, setTheme }: { language: Language; setLanguage: (language: Language) => void; onEnter: (mode?: "signin" | "signup") => void; t: Translator; theme: Theme; setTheme: (theme: Theme) => void; }) {
   const isArabic = language === "ar";
   const [demoRequested, setDemoRequested] = useState(false);
+  const [currentPage, setCurrentPage] = useState<LandingPage>("landing");
+
+  useEffect(() => {
+    const revealItems = document.querySelectorAll<HTMLElement>(".reveal-on-scroll");
+
+    if (!revealItems.length) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      {
+        threshold: 0.15,
+        rootMargin: "0px 0px -8% 0px",
+      },
+    );
+
+    revealItems.forEach((item) => observer.observe(item));
+
+    return () => observer.disconnect();
+  }, [currentPage]);
+
   const copy = isArabic
     ? {
-        eyebrow: "منصة Healthcare AI للأطباء والمستشفيات في مصر",
         title: "خفف العبء الإداري عن الأطباء من غير ما تستبدل حكمهم.",
         detail:
           "CareOS مساحة عمل SaaS موجهة للفرق الطبية: تلخيص فوري للملاحظات، اقتراحات مبنية على مصادر واضحة، وجدولة أذكى، مع بقاء القرار النهائي للطبيب.",
         primary: "احجز عرض تجريبي",
         secondary: "شاهد كيف يعمل",
-        floatingTitle: "لقطة من الـ dashboard والمساعد السريري",
-        floatingDetail:
-          "كل اقتراح مرتبط بمصدره ومؤشر ثقة، بحيث يعرف الطبيب لماذا ظهر الاقتراح قبل اعتماده.",
-        trustTitle: "قيد التجربة مع 3 مستشفيات شريكة",
         trustStats: ["دعم عربي / إنجليزي", "مراجعة الطبيب 100%", "مصادر شفافة لكل اقتراح"],
         problemTitle: "أين يضيع الوقت؟",
         problemDetail:
@@ -125,16 +152,11 @@ function Landing({ language, setLanguage, onEnter, t }: { language: Language; se
         contactDetail: "املأ البيانات وسنرتب لك عرضًا تجريبيًا خلال وقت قصير.",
       }
     : {
-        eyebrow: "HEALTHCARE AI FOR DOCTORS AND HOSPITALS IN EGYPT",
         title: "Reduce clinical admin without replacing clinical judgment.",
         detail:
           "CareOS is a SaaS workspace for clinical teams: instant note summarization, source-linked suggestions, smarter scheduling, and the physician stays in control at the end of every workflow.",
         primary: "Book a demo",
         secondary: "See how it works",
-        floatingTitle: "Dashboard and clinical assistant snapshot",
-        floatingDetail:
-          "Every suggestion is tied to a visible source and confidence signal so clinicians know why it surfaced before they approve it.",
-        trustTitle: "Pilot with 3 partner hospitals",
         trustStats: ["Arabic / English", "100% physician review", "Source-linked suggestions"],
         problemTitle: "Where does the time go?",
         problemDetail:
@@ -196,62 +218,132 @@ function Landing({ language, setLanguage, onEnter, t }: { language: Language; se
         ["Ownership", "The doctor reviews and signs off"],
       ];
 
-  return (
-    <div className="landing-page" dir={language === "ar" ? "rtl" : "ltr"}>
-      <header className="landing-nav">
-        <div className="brand">
+  const navTo = (page: LandingPage) => setCurrentPage(page);
+  const goHome = () => setCurrentPage("landing");
+
+  const renderSectionPage = (title: string, description: string, body: React.ReactNode) => (
+    <div className={`landing-page ${theme === "dark" ? "dark-mode-landing" : ""}`} dir={language === "ar" ? "rtl" : "ltr"}>
+      <header className="landing-nav landing-enter-nav">
+        <button type="button" className="brand landing-brand landing-logo-home" onClick={goHome} aria-label={isArabic ? "العودة للصفحة الرئيسية" : "Return to homepage"}>
           <div className="brand-mark">
             <HeartPulse size={19} />
           </div>
           <span>
             care<span>os</span>
           </span>
-        </div>
+        </button>
         <nav className="landing-links">
-          <a href="#problem">{isArabic ? "المشكلة" : "Problem"}</a>
-          <a href="#features">{isArabic ? "المميزات" : "Features"}</a>
-          <a href="#demo">{isArabic ? "اللقطة" : "Demo"}</a>
-          <a href="#contact">{isArabic ? "تواصل" : "Contact"}</a>
+          <button type="button" className="nav-link-button" onClick={() => navTo("problem")}>{isArabic ? "المشكلة" : "Problem"}</button>
+          <button type="button" className="nav-link-button" onClick={() => navTo("features")}>{isArabic ? "المميزات" : "Features"}</button>
+          <button type="button" className="nav-link-button" onClick={() => navTo("demo")}>{isArabic ? "اللقطة" : "Demo"}</button>
+          <button type="button" className="nav-link-button" onClick={() => navTo("contact")}>{isArabic ? "تواصل" : "Contact"}</button>
         </nav>
         <div className="landing-nav-actions">
-          <span className="landing-status">
-            <i /> {copy.trustTitle}
-          </span>
-          <button className="language-btn" onClick={() => setLanguage(language === "en" ? "ar" : "en")}>
-            {language === "en" ? "العربية" : "English"}
+          <button
+            type="button"
+            className="landing-control-btn landing-icon-btn"
+            onClick={() => setLanguage(language === "en" ? "ar" : "en")}
+            aria-label={language === "en" ? "Switch to Arabic" : "Switch to English"}
+          >
+            {language === "en" ? "AR" : "EN"}
           </button>
-          <button className="outline-btn" onClick={onEnter}>
-            {t("enterPlatform")} <ArrowRight size={15} />
+          <button
+            type="button"
+            className="landing-control-btn landing-icon-btn"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            aria-label={theme === "dark" ? (isArabic ? "التبديل إلى الوضع الفاتح" : "Switch to light mode") : (isArabic ? "التبديل إلى الوضع الداكن" : "Switch to dark mode")}
+          >
+            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
           </button>
+          <div className="landing-auth-links">
+            <button type="button" className="landing-auth-link landing-auth-link-login" onClick={() => onEnter("signin")}>{isArabic ? "تسجيل الدخول" : "LOGIN"}</button>
+            <span className="landing-auth-divider">|</span>
+            <button type="button" className="landing-auth-link landing-auth-link-signup" onClick={() => onEnter("signup")}>{isArabic ? "إنشاء حساب" : "SIGN UP"}</button>
+          </div>
+          <button type="button" className="landing-primary landing-control-btn landing-control-btn-primary" onClick={() => onEnter()}>{t("enterPlatform")} <ArrowRight size={15} /></button>
         </div>
       </header>
-      <main>
-        <section className="landing-hero">
-          <div className="landing-copy">
-            <div className="eyebrow">{copy.eyebrow}</div>
-            <h1>{copy.title}</h1>
-            <p>{copy.detail}</p>
-            <div className="landing-actions">
-              <a className="primary-btn landing-primary" href="#contact">
-                {copy.primary} <ArrowRight size={17} />
-              </a>
-              <a className="landing-secondary" href="#workflow">
-                {copy.secondary} <ChevronRight size={15} />
-              </a>
-            </div>
-            <div className="landing-safety">
-              <ShieldCheck size={16} />
-              <span>{t("landingSafety")}</span>
-            </div>
+      <main className="landing-subpage-shell">
+        <div className="landing-subpage">
+          <button className="back-link" onClick={() => navTo("landing")}>
+            <ChevronLeft size={14} /> {isArabic ? "العودة" : "Back"}
+          </button>
+          <div className="landing-section-heading reveal-on-scroll">
+            <h2>{description}</h2>
           </div>
-          <div className="landing-visual landing-float-card" id="demo">
+          {body}
+        </div>
+      </main>
+    </div>
+  );
+
+  if (currentPage === "problem") {
+    return renderSectionPage(
+      isArabic ? "المشكلة" : "THE PROBLEM",
+      copy.problemTitle,
+      <div className="section-stack">
+        <div className="section-pill reveal-on-scroll">{isArabic ? "التحدي الرئيسي: الكفاءة" : "Core challenge: clinical efficiency"}</div>
+        <div className="problem-grid problem-grid-single">
+          <article className="problem-card reveal-on-scroll"><span>01</span><h3>{isArabic ? "التوثيق يستهلك الوقت" : "Documentation eats the day"}</h3><p>{isArabic ? "الهدف هو تقليل إعادة الكتابة وتحرير وقت الطبيب." : "The goal is to reduce rewrites and give the doctor back time."}</p></article>
+          <article className="problem-card reveal-on-scroll"><span>02</span><h3>{isArabic ? "البروتوكولات تتكرر في أماكن متعددة" : "Guidance is scattered"}</h3><p>{isArabic ? "البحث عن المصدر الصحيح يبطئ القرارات ويزيد الاحتكاك." : "Hunting for the right source slows decisions and adds friction."}</p></article>
+          <article className="problem-card reveal-on-scroll"><span>03</span><h3>{isArabic ? "المتابعة تفلت بين الأدوات" : "Follow-up slips between tools"}</h3><p>{isArabic ? "الجدولة، الرسائل، والملاحظات تحتاج مساحة موحدة." : "Scheduling, messages, and notes need one shared workspace."}</p></article>
+        </div>
+        <div className="info-grid reveal-on-scroll">
+          <div className="info-panel">
+            <small>{isArabic ? "مؤشر الأداء" : "Operational signal"}</small>
+            <h4>{isArabic ? "أوقات أطول من المتوقع" : "Time lost in separate tools"}</h4>
+            <p>{isArabic ? "الفرق بين ملاحظة المريض، البحث، والجدولة يستهلك دقائق ثم ساعات كل يوم." : "The gap between patient notes, guidance lookup, and scheduling turns into minutes lost, then hours every day."}</p>
+          </div>
+          <div className="info-panel">
+            <small>{isArabic ? "النتيجة" : "Result"}</small>
+            <h4>{isArabic ? "إجهاد إداري مرتفع" : "Higher administrative burden"}</h4>
+            <p>{isArabic ? "الطبيبة تتحول إلى منسّقة ومحرّرة بدلاً من أن تكون منشغلة بتقييم المريض." : "Clinicians end up acting like coordinators and editors instead of focusing on patient decisions."}</p>
+          </div>
+        </div>
+      </div>,
+    );
+  }
+
+  if (currentPage === "features") {
+    return renderSectionPage(
+      isArabic ? "الحل" : "THE SOLUTION",
+      copy.featureTitle,
+      <div className="section-stack">
+        <div className="section-pill reveal-on-scroll">{isArabic ? "المنصة تبني سير العمل الطبي" : "Built around real clinical workflow"}</div>
+        <div className="feature-grid landing-feature-grid">
+          {features.map((feature) => (
+            <Feature key={feature.step} step={feature.step} icon={feature.icon} title={feature.title} detail={feature.detail} />
+          ))}
+        </div>
+        <div className="info-grid reveal-on-scroll">
+          <div className="info-panel">
+            <small>{isArabic ? "الوظيفة" : "Clinical function"}</small>
+            <h4>{isArabic ? "تجميع كل الأدوات في واجهة واحدة" : "One place for the care workflow"}</h4>
+            <p>{isArabic ? "من الملاحظة إلى القبول، كل خطوة تدعمها نفس السياق دون تغيير التطبيق أو تشتت الفريق." : "From note to sign-off, each step sits in the same context so the care team does not bounce across tools."}</p>
+          </div>
+          <div className="info-panel">
+            <small>{isArabic ? "القيمة" : "Value"}</small>
+            <h4>{isArabic ? "أسرع مراجعة، قرارات أكثر ثقة" : "Faster review, more confident decisions"}</h4>
+            <p>{isArabic ? "يعرض النظام المصدر، الثقة، والسياق لتقليل الحاجة للتنقل بين المستندات والخطوات." : "The system exposes context, confidence, and source so physicians review faster without losing control."}</p>
+          </div>
+        </div>
+      </div>,
+    );
+  }
+
+  if (currentPage === "demo") {
+    return renderSectionPage(
+      isArabic ? "لقطة المنتج" : "PRODUCT DEMO",
+      isArabic ? "واجهة العمل اليوميّة" : "Clinical workspace overview",
+      <div className="section-stack">
+        <div className="section-pill reveal-on-scroll">{isArabic ? "من الملاحظة إلى القرار" : "From note to decision"}</div>
+        <div className="demo-page-card">
+          <div className="landing-visual landing-float-card">
             <div className="visual-orb visual-orb-a" />
             <div className="visual-orb visual-orb-b" />
             <div className="visual-scan" />
             <div className="visual-header">
-              <span>
-                <span className="live-dot" /> CareOS clinical workspace
-              </span>
+              <span><span className="live-dot" /> CareOS clinical workspace</span>
               <span>{isArabic ? "معاينة حية" : "Live preview"}</span>
             </div>
             <div className="visual-title">
@@ -262,176 +354,42 @@ function Landing({ language, setLanguage, onEnter, t }: { language: Language; se
               <div className="visual-avatar">DR</div>
             </div>
             <div className="visual-metrics">
-              <div>
-                <Users size={16} />
-                <b>248</b>
-                <span>{isArabic ? "مريض" : "Patients"}</span>
-              </div>
-              <div>
-                <CalendarDays size={16} />
-                <b>08</b>
-                <span>{isArabic ? "زيارة اليوم" : "Visits today"}</span>
-              </div>
-              <div>
-                <Clock3 size={16} />
-                <b>05</b>
-                <span>{isArabic ? "متابعة" : "Follow-ups"}</span>
-              </div>
+              <div><Users size={16} /><b>248</b><span>{isArabic ? "مريض" : "Patients"}</span></div>
+              <div><CalendarDays size={16} /><b>08</b><span>{isArabic ? "زيارة اليوم" : "Visits today"}</span></div>
+              <div><Clock3 size={16} /><b>05</b><span>{isArabic ? "متابعة" : "Follow-ups"}</span></div>
             </div>
             <div className="visual-panel">
-              <div className="visual-panel-heading">
-                <b>{isArabic ? "تدفق اليوم" : "Today's care flow"}</b>
-                <span>{isArabic ? "تفاصيل" : "View details"}</span>
-              </div>
-              <div className="visual-row">
-                <span>09:00</span>
-                <strong>Mariam Hassan</strong>
-                <em>{isArabic ? "متابعة" : "Follow-up"}</em>
-                <i>{isArabic ? "مؤكد" : "Confirmed"}</i>
-              </div>
-              <div className="visual-row">
-                <span>10:30</span>
-                <strong>Omar Khaled</strong>
-                <em>{isArabic ? "مراجعة سكر" : "Diabetes review"}</em>
-                <i>{isArabic ? "وصل" : "Arrived"}</i>
-              </div>
-              <div className="visual-row">
-                <span>12:00</span>
-                <strong>Nour El Din</strong>
-                <em>{isArabic ? "إحالة قلب" : "Cardiology referral"}</em>
-                <i>{isArabic ? "قيد الانتظار" : "Pending"}</i>
-              </div>
+              <div className="visual-panel-heading"><b>{isArabic ? "تدفق اليوم" : "Today's care flow"}</b><span>{isArabic ? "تفاصيل" : "View details"}</span></div>
+              <div className="visual-row"><span>09:00</span><strong>Mariam Hassan</strong><em>{isArabic ? "متابعة" : "Follow-up"}</em><i>{isArabic ? "مؤكد" : "Confirmed"}</i></div>
+              <div className="visual-row"><span>10:30</span><strong>Omar Khaled</strong><em>{isArabic ? "مراجعة سكر" : "Diabetes review"}</em><i>{isArabic ? "وصل" : "Arrived"}</i></div>
+              <div className="visual-row"><span>12:00</span><strong>Nour El Din</strong><em>{isArabic ? "إحالة قلب" : "Cardiology referral"}</em><i>{isArabic ? "قيد الانتظار" : "Pending"}</i></div>
             </div>
-            <div className="visual-footer">
-              <span><BookOpen size={13} /> {isArabic ? "مرتبط بالمصدر" : "Evidence linked"}</span>
-              <span><ShieldCheck size={13} /> {isArabic ? "مراجعة بشرية" : "Human review"}</span>
-            </div>
-            <div className="floating-caption">
-              <strong>{copy.floatingTitle}</strong>
-              <span>{copy.floatingDetail}</span>
-            </div>
+            <div className="visual-footer"><span><BookOpen size={13} /> {isArabic ? "مرتبط بالمصدر" : "Evidence linked"}</span><span><ShieldCheck size={13} /> {isArabic ? "مراجعة بشرية" : "Human review"}</span></div>
           </div>
-        </section>
+        </div>
+        <div className="info-grid reveal-on-scroll">
+          <div className="info-panel">
+            <small>{isArabic ? "الحالة" : "Use case"}</small>
+            <h4>{isArabic ? "أداء يوميّ منظم" : "An organized clinical day"}</h4>
+            <p>{isArabic ? "تظهر المواعيد، الملاحظات، والتوثيق في نفس الواجهة لتقليل تبديل التطبيقات والارتباك." : "Appointments, notes, and documentation appear in one place to reduce context switching and operational noise."}</p>
+          </div>
+          <div className="info-panel">
+            <small>{isArabic ? "التحكم" : "Control"}</small>
+            <h4>{isArabic ? "جلسة مراجعة بشرية عند كل نقطة" : "Human review at each critical milestone"}</h4>
+            <p>{isArabic ? "الذكاء الاصطناعي يسهّل المسار، لكن الطبيب يراجع كل قرار قبل الاعتماد." : "AI accelerates the path, while the physician validates the final decision before sign-off."}</p>
+          </div>
+        </div>
+      </div>,
+    );
+  }
 
-        <section className="landing-proof" id="principles">
-          <span>{copy.trustTitle}</span>
-          {copy.trustStats.map((item) => <span key={item}>{item}</span>)}
-        </section>
-
-        <section className="landing-problem" id="problem">
-          <div className="landing-section-heading">
-            <div className="eyebrow">{isArabic ? "المشكلة" : "THE PROBLEM"}</div>
-            <h2>{copy.problemTitle}</h2>
-            <p>{copy.problemDetail}</p>
-          </div>
-          <div className="problem-grid">
-            <article className="problem-card">
-              <span>01</span>
-              <h3>{isArabic ? "التوثيق يستهلك الوقت" : "Documentation eats the day"}</h3>
-              <p>{isArabic ? "الهدف هو تقليل إعادة الكتابة وتحرير وقت الطبيب." : "The goal is to reduce rewrites and give the doctor back time."}</p>
-            </article>
-            <article className="problem-card">
-              <span>02</span>
-              <h3>{isArabic ? "البروتوكولات تتكرر في أماكن متعددة" : "Guidance is scattered"}</h3>
-              <p>{isArabic ? "البحث عن المصدر الصحيح يبطئ القرارات ويزيد الاحتكاك." : "Hunting for the right source slows decisions and adds friction."}</p>
-            </article>
-            <article className="problem-card">
-              <span>03</span>
-              <h3>{isArabic ? "المتابعة تفلت بين الأدوات" : "Follow-up slips between tools"}</h3>
-              <p>{isArabic ? "الجدولة، الرسائل، والملاحظات تحتاج مساحة موحدة." : "Scheduling, messages, and notes need one shared workspace."}</p>
-            </article>
-          </div>
-        </section>
-
-        <section className="landing-features" id="features">
-          <div className="landing-section-heading">
-            <div className="eyebrow">{isArabic ? "الحل" : "THE SOLUTION"}</div>
-            <h2>{copy.featureTitle}</h2>
-            <p>{copy.featureDetail}</p>
-          </div>
-          <div className="feature-grid landing-feature-grid">
-            {features.map((feature) => (
-              <Feature key={feature.step} step={feature.step} icon={feature.icon} title={feature.title} detail={feature.detail} />
-            ))}
-          </div>
-        </section>
-
-        <section className="landing-workflow" id="workflow">
-          <div className="landing-section-heading">
-            <div className="eyebrow">{isArabic ? "كيف يعمل" : "HOW IT WORKS"}</div>
-            <h2>{copy.workflowTitle}</h2>
-            <p>{copy.workflowDetail}</p>
-          </div>
-          <div className="workflow-timeline">
-            {workflowSteps.map((step, index) => (
-              <div className="workflow-step" key={step}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <p>{step}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="landing-different" id="different">
-          <div className="landing-section-heading">
-            <div className="eyebrow">{isArabic ? "لماذا نحن مختلفون" : "WHY WE ARE DIFFERENT"}</div>
-            <h2>{copy.differentTitle}</h2>
-            <p>{copy.differentDetail}</p>
-          </div>
-          <div className="different-card">
-            {differentRows.map(([label, value]) => (
-              <div key={label} className="different-row">
-                <strong>{label}</strong>
-                <span>{value}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="landing-partners" id="partners">
-          <div className="landing-section-heading">
-            <div className="eyebrow">{isArabic ? "شهادات / شركاء التطوير" : "PARTNERS / PROGRESS"}</div>
-            <h2>{copy.partnersTitle}</h2>
-            <p>{copy.partnersDetail}</p>
-          </div>
-          <div className="partners-grid">
-            <article className="partner-card">
-              <span>01</span>
-              <h3>{isArabic ? "فريق سريري" : "Clinical advisors"}</h3>
-              <p>{isArabic ? "مراجعات منتظمة مع أطباء لضبط المسار السريري." : "Regular reviews with clinicians to keep the product grounded."}</p>
-            </article>
-            <article className="partner-card">
-              <span>02</span>
-              <h3>{isArabic ? "مستشفى شريك" : "Partner hospital"}</h3>
-              <p>{isArabic ? "بيئة تجريبية مبكرة بدل شهادات تسويقية غير جاهزة." : "An early pilot environment instead of inflated testimonials."}</p>
-            </article>
-            <article className="partner-card">
-              <span>03</span>
-              <h3>{isArabic ? "فريق منتجات" : "Product team"}</h3>
-              <p>{isArabic ? "نستخدم الملاحظات لتحويل الواجهة إلى أداة تشغيلية حقيقية." : "We use feedback to turn the interface into a real operating tool."}</p>
-            </article>
-          </div>
-        </section>
-
-        <section className="landing-security" id="security">
-          <div className="security-copy">
-            <div className="eyebrow">{isArabic ? "الأمان والامتثال" : "SECURITY AND COMPLIANCE"}</div>
-            <h2>{copy.securityTitle}</h2>
-            <p>{copy.securityDetail}</p>
-          </div>
-          <div className="security-points">
-            <div className="security-point"><ShieldCheck size={16} /><span>{isArabic ? "تشفير البيانات الحساسة" : "Encrypted patient data"}</span></div>
-            <div className="security-point"><LockKeyhole size={16} /><span>{isArabic ? "فصل التجربة عن البيانات الفعلية" : "Demo and live data stay separate"}</span></div>
-            <div className="security-point"><BookOpen size={16} /><span>{isArabic ? "الشفافية في المصدر" : "Source transparency"}</span></div>
-          </div>
-        </section>
-
-        <section className="landing-contact" id="contact">
-          <div className="landing-section-heading">
-            <div className="eyebrow">{isArabic ? "CTA نهائي" : "FINAL CTA"}</div>
-            <h2>{copy.contactTitle}</h2>
-            <p>{copy.contactDetail}</p>
-          </div>
+  if (currentPage === "contact") {
+    return renderSectionPage(
+      isArabic ? "تواصل" : "CONTACT",
+      copy.contactTitle,
+      <div className="section-stack">
+        <div className="section-pill reveal-on-scroll">{isArabic ? "استقبال سريع — عرض تجريبي في 48 ساعة" : "Fast response — demo in 48 hours"}</div>
+        <div className="contact-wrap">
           <form className="contact-form" onSubmit={(event) => { event.preventDefault(); setDemoRequested(true); }}>
             <input type="text" placeholder={isArabic ? "الاسم" : "Name"} />
             <input type="text" placeholder={isArabic ? "اسم المستشفى" : "Hospital name"} />
@@ -440,14 +398,127 @@ function Landing({ language, setLanguage, onEnter, t }: { language: Language; se
           </form>
           {demoRequested && <div className="contact-success" role="status"><ShieldCheck size={15} /> {t("demoRequestSent")}</div>}
           <div className="contact-note">
-            {isArabic ? "أو" : "Or"} <button className="text-link" onClick={onEnter}>{isArabic ? "افتح مساحة العمل التجريبية" : "open the demo workspace"}</button>
+            {isArabic ? "أو" : "Or"} <button className="text-link" onClick={() => onEnter()}>{isArabic ? "افتح مساحة العمل التجريبية" : "open the demo workspace"}</button>
+          </div>
+        </div>
+        <div className="info-grid reveal-on-scroll">
+          <div className="info-panel">
+            <small>{isArabic ? "مستوى الدعم" : "Support"}</small>
+            <h4>{isArabic ? "مراجعة أولية + عرض تجريبي مخصص" : "Discovery call and tailored walkthrough"}</h4>
+            <p>{isArabic ? "نعمل مع فريقك على فهم احتياج المستشفى، الطبيب، والجدولة قبل تقديم العرض." : "We review the hospital workflow, clinical needs, and scheduling pain points before the walkthrough."}</p>
+          </div>
+          <div className="info-panel">
+            <small>{isArabic ? "الخطوة التالية" : "Next step"}</small>
+            <h4>{isArabic ? "تحضير رحلة التعريف والتجريب" : "Prepare the pilot and onboarding plan"}</h4>
+            <p>{isArabic ? "بعد الموافقة، نجهّز نموذج التجربة، الفريق، ومؤشرات النجاح في أول 30 يومًا." : "After approval, we define the pilot scope, team workflow, and success measures for the first 30 days."}</p>
+          </div>
+        </div>
+      </div>,
+    );
+  }
+
+  return (
+    <div className={`landing-page ${theme === "dark" ? "dark-mode-landing" : ""}`} dir={language === "ar" ? "rtl" : "ltr"}>
+      <header className="landing-nav landing-enter-nav">
+        <button type="button" className="brand landing-brand landing-logo-home" onClick={goHome} aria-label={isArabic ? "العودة للصفحة الرئيسية" : "Return to homepage"}>
+          <div className="brand-mark">
+            <HeartPulse size={19} />
+          </div>
+          <span>
+            care<span>os</span>
+          </span>
+        </button>
+        <nav className="landing-links">
+          <button type="button" className="nav-link-button" onClick={() => navTo("problem")}>{isArabic ? "المشكلة" : "Problem"}</button>
+          <button type="button" className="nav-link-button" onClick={() => navTo("features")}>{isArabic ? "المميزات" : "Features"}</button>
+          <button type="button" className="nav-link-button" onClick={() => navTo("demo")}>{isArabic ? "اللقطة" : "Demo"}</button>
+          <button type="button" className="nav-link-button" onClick={() => navTo("contact")}>{isArabic ? "تواصل" : "Contact"}</button>
+        </nav>
+        <div className="landing-nav-actions">
+          <button
+            type="button"
+            className="landing-control-btn landing-icon-btn"
+            onClick={() => setLanguage(language === "en" ? "ar" : "en")}
+            aria-label={language === "en" ? "Switch to Arabic" : "Switch to English"}
+          >
+            {language === "en" ? "AR" : "EN"}
+          </button>
+          <button
+            type="button"
+            className="landing-control-btn landing-icon-btn"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            aria-label={theme === "dark" ? (isArabic ? "التبديل إلى الوضع الفاتح" : "Switch to light mode") : (isArabic ? "التبديل إلى الوضع الداكن" : "Switch to dark mode")}
+          >
+            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+          <div className="landing-auth-links">
+            <button type="button" className="landing-auth-link landing-auth-link-login" onClick={() => onEnter("signin")}>{isArabic ? "تسجيل الدخول" : "LOGIN"}</button>
+            <span className="landing-auth-divider">|</span>
+            <button type="button" className="landing-auth-link landing-auth-link-signup" onClick={() => onEnter("signup")}>{isArabic ? "إنشاء حساب" : "SIGN UP"}</button>
+          </div>
+          <button type="button" className="landing-primary landing-control-btn landing-control-btn-primary" onClick={() => onEnter()}>{t("enterPlatform")} <ArrowRight size={15} /></button>
+        </div>
+      </header>
+      <main>
+        <section className="landing-hero">
+          <div className="landing-copy landing-hero-copy">
+            <h1 className="hero-reveal hero-title">{copy.title}</h1>
+            <p className="hero-reveal hero-detail">{copy.detail}</p>
+            <div className="landing-actions hero-reveal hero-actions">
+              <button type="button" className="primary-btn landing-primary" onClick={() => navTo("contact")}>{copy.primary} <ArrowRight size={17} /></button>
+              <button type="button" className="landing-secondary" onClick={() => navTo("features")}>{copy.secondary} <ChevronRight size={15} /></button>
+            </div>
+            <div className="hero-badges hero-reveal">
+              {copy.trustStats.map((stat) => (
+                <span key={stat} className="hero-badge">{stat}</span>
+              ))}
+            </div>
+          </div>
+          <div className="landing-visual landing-float-card" id="demo">
+            <div className="visual-orb visual-orb-a" />
+            <div className="visual-orb visual-orb-b" />
+            <div className="visual-scan" />
+            <div className="visual-header">
+              <span><span className="live-dot" /> CareOS clinical workspace</span>
+              <span>{isArabic ? "معاينة حية" : "Live preview"}</span>
+            </div>
+            <div className="visual-title">
+              <div>
+                <small>{isArabic ? "اليوم، 21 أكتوبر" : "Today, 21 October"}</small>
+                <h2>{isArabic ? "صباح الخير، د. رنا" : "Good morning, Dr. Rana"}</h2>
+              </div>
+              <div className="visual-avatar">DR</div>
+            </div>
+            <div className="visual-metrics">
+              <div><Users size={16} /><b>248</b><span>{isArabic ? "مريض" : "Patients"}</span></div>
+              <div><CalendarDays size={16} /><b>08</b><span>{isArabic ? "زيارة اليوم" : "Visits today"}</span></div>
+              <div><Clock3 size={16} /><b>05</b><span>{isArabic ? "متابعة" : "Follow-ups"}</span></div>
+            </div>
+            <div className="visual-panel">
+              <div className="visual-panel-heading"><b>{isArabic ? "تدفق اليوم" : "Today's care flow"}</b><span>{isArabic ? "تفاصيل" : "View details"}</span></div>
+              <div className="visual-row"><span>09:00</span><strong>Mariam Hassan</strong><em>{isArabic ? "متابعة" : "Follow-up"}</em><i>{isArabic ? "مؤكد" : "Confirmed"}</i></div>
+              <div className="visual-row"><span>10:30</span><strong>Omar Khaled</strong><em>{isArabic ? "مراجعة سكر" : "Diabetes review"}</em><i>{isArabic ? "وصل" : "Arrived"}</i></div>
+              <div className="visual-row"><span>12:00</span><strong>Nour El Din</strong><em>{isArabic ? "إحالة قلب" : "Cardiology referral"}</em><i>{isArabic ? "قيد الانتظار" : "Pending"}</i></div>
+            </div>
+            <div className="visual-footer"><span><BookOpen size={13} /> {isArabic ? "مرتبط بالمصدر" : "Evidence linked"}</span><span><ShieldCheck size={13} /> {isArabic ? "مراجعة بشرية" : "Human review"}</span></div>
+          </div>
+        </section>
+
+        <section className="landing-home-grid">
+          <div className="landing-home-card reveal-on-scroll">
+            <h3>{isArabic ? "ملاحظات أسرع، قرارات أكثر وضوحًا" : "Faster notes, clearer decisions"}</h3>
+            <p>{isArabic ? "تجميع الملاحظات، المواعيد، والاقتراحات في واجهة واحدة مع مراجعة بشرية ثابتة." : "Bring notes, schedules, and recommendations into one workflow with human oversight at every step."}</p>
+          </div>
+          <div className="landing-home-card reveal-on-scroll">
+            <h3>{isArabic ? "كل اقتراح مرتبط بمصدر واضح" : "Every suggestion is traceable"}</h3>
+            <p>{isArabic ? "يلخص النظام المعلومات ويظهر المصدر والثقة حتى يراجع الطبيب القرار بدقة وبدون ارتباك." : "The system summarizes information and shows the source and confidence, so the physician can review with clarity."}</p>
+          </div>
+          <div className="landing-home-card reveal-on-scroll">
+            <h3>{isArabic ? "أمان للمريض، راحة للطبيب" : "Safer care, calmer operations"}</h3>
+            <p>{isArabic ? "المظهر، التحكم، وتدفق العمل مصمم ليصبح أداة مؤسسية لا أداة غامضة." : "The experience is built to feel clinical, governed, and sustainable for real healthcare operations."}</p>
           </div>
         </section>
       </main>
-      <footer className="landing-footer-bar">
-        <span>careos</span>
-        <span><LockKeyhole size={13} /> {isArabic ? "بيئة تجريبية آمنة" : "Synthetic demo environment"}</span>
-      </footer>
     </div>
   );
 }
@@ -467,6 +538,8 @@ function App() {
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem("careos-theme") as Theme) || "light",
   );
+  const [loginMode, setLoginMode] = useState<"signin" | "signup">("signin");
+  const [loginAccessMethod, setLoginAccessMethod] = useState<"email" | "sso">("email");
   const [helpOpen, setHelpOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [doctorName, setDoctorName] = useState(() => localStorage.getItem("careos-doctor-name") || "Dr. Rana Samir");
@@ -493,20 +566,46 @@ function App() {
     return () => window.removeEventListener("careos:toast", handler);
   }, []);
 
-  if (showLanding) return <Landing language={language} setLanguage={changeLanguage} onEnter={() => { window.location.hash = "app"; setShowLanding(false); }} t={t} />;
+  if (showLanding) return <Landing language={language} setLanguage={changeLanguage} onEnter={(mode = "signin") => { setLoginMode(mode); window.location.hash = "app"; setShowLanding(false); }} t={t} theme={theme} setTheme={changeTheme} />;
 
   if (!loggedIn)
     return (
       <Login
-        onLogin={async ({ mode, email, password, fullName, organizationName }) => {
+        initialMode={loginMode}
+        initialAccessMethod={loginAccessMethod}
+        onBackHome={() => {
+          setShowLanding(true);
+          window.location.hash = "";
+        }}
+        onLogin={async ({ mode, email, password, fullName, organizationName, authMethod = "email" }) => {
           try {
-            const result = mode === "signup" ? await apiRegister(email, password, fullName, organizationName) : await apiLogin(email, password);
+            const isSso = authMethod === "sso";
+            setLoginAccessMethod(isSso ? "sso" : "email");
+
+            const result = isSso
+              ? await apiLoginWithSso(email, password)
+              : mode === "signup"
+                ? await apiRegister(email, password, fullName, organizationName)
+                : await apiLogin(email, password);
+
+            const organizationReady = Boolean(result.user.onboarding_complete);
             setDoctorName(result.user.full_name);
             setLoggedIn(true);
-            notify(language === "ar" ? "تم تسجيل الدخول بنجاح." : "Signed in successfully.");
+            setOnboardingComplete(organizationReady);
+
+            if (organizationReady) {
+              localStorage.setItem("careos-onboarding-complete", "true");
+              notify(language === "ar" ? "تم تسجيل الدخول بنجاح." : "Signed in successfully.");
+            } else {
+              localStorage.removeItem("careos-onboarding-complete");
+              notify(language === "ar" ? "أكمل إعداد مساحة العمل." : "Complete your workspace setup.");
+            }
           } catch (error) {
             if (import.meta.env.DEV && (error instanceof TypeError || (error instanceof Error && error.message === "Request failed"))) {
               setLoggedIn(true);
+              setLoginAccessMethod(authMethod === "sso" ? "sso" : "email");
+              setOnboardingComplete(false);
+              localStorage.removeItem("careos-onboarding-complete");
               notify(t("demoMode"));
             } else {
               notify(error instanceof Error ? error.message : (language === "ar" ? "تعذر الاتصال بالخادم." : "Could not connect to the server."));
@@ -520,7 +619,32 @@ function App() {
     );
 
   if (!onboardingComplete)
-    return <Onboarding language={language} setLanguage={changeLanguage} complete={async (name) => { try { await completeOrganization(name, "Clinical care", "Africa/Cairo"); localStorage.setItem("careos-onboarding-complete", "true"); setOnboardingComplete(true); } catch (error) { if (import.meta.env.DEV && error instanceof Error && error.message === "Request failed") { localStorage.setItem("careos-onboarding-complete", "true"); setOnboardingComplete(true); notify(t("demoMode")); } else { notify(error instanceof Error ? error.message : "Could not save workspace setup."); } } }} t={t} />;
+    return <Onboarding
+      language={language}
+      setLanguage={changeLanguage}
+      complete={async (name) => {
+        try {
+          await completeOrganization(name, "Clinical care", "Africa/Cairo");
+          localStorage.setItem("careos-onboarding-complete", "true");
+          setOnboardingComplete(true);
+        } catch (error) {
+          if (import.meta.env.DEV && error instanceof Error && error.message === "Request failed") {
+            localStorage.setItem("careos-onboarding-complete", "true");
+            setOnboardingComplete(true);
+            notify(t("demoMode"));
+          } else {
+            notify(error instanceof Error ? error.message : "Could not save workspace setup.");
+          }
+        }
+      }}
+      t={t}
+      onBack={() => {
+        setLoggedIn(false);
+        setOnboardingComplete(false);
+        setLoginAccessMethod("sso");
+        localStorage.removeItem("careos-onboarding-complete");
+      }}
+    />;
 
   return (
     <div
@@ -593,17 +717,21 @@ function App() {
   );
 }
 
-function Onboarding({ language, setLanguage, complete, t }: { language: Language; setLanguage: (language: Language) => void; complete: (organizationName: string) => void; t: Translator }) {
-  const [step, setStep] = useState(1);
+function Onboarding({ language, setLanguage, complete, t, onBack }: { language: Language; setLanguage: (language: Language) => void; complete: (organizationName: string) => void; t: Translator; onBack?: () => void }) {
   const [organizationName, setOrganizationName] = useState("");
   return <div className="onboarding-screen" dir={language === "ar" ? "rtl" : "ltr"}>
     <div className="onboarding-card">
       <div className="brand"><div className="brand-mark"><HeartPulse size={19} /></div><span>care<span>os</span></span></div>
-      <div className="onboarding-progress"><span style={{ width: `${step * 33.333}%` }} /></div>
-      {step === 1 && <><div className="eyebrow">{t("onboardingStepOne")}</div><h1>{t("onboardingWelcome")}</h1><p>{t("onboardingWelcomeDetail")}</p><label>{t("organizationName")}<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder={t("organizationPlaceholder")} /></label></>}
-      {step === 2 && <><div className="eyebrow">{t("onboardingStepTwo")}</div><h1>{t("onboardingTeam")}</h1><p>{t("onboardingTeamDetail")}</p><div className="onboarding-choice"><Users size={18} /><span>{t("onboardingInviteLater")}</span><Check size={17} /></div><div className="onboarding-choice"><ShieldCheck size={18} /><span>{t("onboardingSecurity")}</span><Check size={17} /></div></>}
-      {step === 3 && <><div className="eyebrow">{t("onboardingStepThree")}</div><h1>{t("onboardingReady")}</h1><p>{t("onboardingReadyDetail")}</p><div className="onboarding-summary"><Check size={17} /> {t("onboardingSyntheticData")}</div><div className="onboarding-summary"><Check size={17} /> {t("onboardingReviewRequired")}</div></>}
-      <div className="onboarding-actions"><button className="outline-btn" onClick={() => setLanguage(language === "en" ? "ar" : "en")}>{language === "en" ? "العربية" : "English"}</button><button className="primary-btn" disabled={step === 1 && organizationName.trim().length < 2} onClick={() => step === 3 ? complete(organizationName) : setStep(step + 1)}>{step === 3 ? t("finishSetup") : t("continue") } <ArrowUpRight size={15} /></button></div>
+      <div className="onboarding-progress"><span style={{ width: `33.333%` }} /></div>
+      <div className="eyebrow">{t("onboardingStepOne")}</div>
+      <h1>{t("onboardingWelcome")}</h1>
+      <p>{t("onboardingWelcomeDetail")}</p>
+      <label>{t("organizationName")}<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder={t("organizationPlaceholder")} /></label>
+      <div className="onboarding-actions">
+        {onBack && <button className="outline-btn onboarding-back-button" onClick={onBack}>{t("back")}</button>}
+        <button className="outline-btn" onClick={() => setLanguage(language === "en" ? "ar" : "en")}>{language === "en" ? "العربية" : "English"}</button>
+        <button className="primary-btn" disabled={organizationName.trim().length < 2} onClick={() => complete(organizationName)}>{t("continue")} <ArrowUpRight size={15} /></button>
+      </div>
     </div>
   </div>;
 }
@@ -757,19 +885,22 @@ function Header({
       </div>
       <div className="top-actions">
         <button
-          className="icon-btn"
+          type="button"
+          className="glass-control-btn glass-icon-btn"
           aria-label={theme === "light" ? t("darkMode") : t("lightMode")}
           onClick={() => setTheme(theme === "light" ? "dark" : "light")}
         >
           {theme === "light" ? <Moon size={17} /> : <Sun size={17} />}
         </button>
         <button
-          className="language-btn"
+          type="button"
+          className="glass-control-btn glass-icon-btn"
           onClick={() => setLanguage(language === "en" ? "ar" : "en")}
+          aria-label={language === "en" ? "Switch to Arabic" : "Switch to English"}
         >
-          {language === "en" ? "العربية" : "English"}
+          {language === "en" ? "AR" : "EN"}
         </button>
-        <button className="icon-btn" aria-label={t("help")} onClick={onHelp}>
+        <button type="button" className="icon-btn" aria-label={t("help")} onClick={onHelp}>
           <CircleHelp size={19} />
         </button>
         <div className="notification-wrap">
@@ -1991,9 +2122,11 @@ function SettingsPage({
             </select>
           </label>
           <div className="theme-setting">
-            <span>{theme === "dark" ? t("darkMode") : t("lightMode")}</span>
+            <span>{t("preferences")}</span>
             <button
-              className="theme-switch"
+              type="button"
+              className="glass-control-btn glass-icon-btn"
+              aria-label={theme === "dark" ? t("lightMode") : t("darkMode")}
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             >
               {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
@@ -2016,23 +2149,36 @@ function Login({
   language,
   setLanguage,
   t,
+  initialMode = "signin",
+  initialAccessMethod = "email",
+  onBackHome,
 }: {
-  onLogin: (payload: { mode: "signin" | "signup"; email: string; password: string; fullName: string; organizationName: string }) => void;
+  onLogin: (payload: { mode: "signin" | "signup"; email: string; password: string; fullName: string; organizationName: string; authMethod: "email" | "sso" }) => void;
   language: Language;
   setLanguage: (language: Language) => void;
   t: Translator;
+  initialMode?: "signin" | "signup";
+  initialAccessMethod?: "email" | "sso";
+  onBackHome: () => void;
 }) {
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup">(initialMode);
+  const [accessMethod, setAccessMethod] = useState<"email" | "sso">(initialAccessMethod);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("dr.rana@citycare.org");
   const [password, setPassword] = useState("password123");
+  const [showPassword, setShowPassword] = useState(false);
   const [organizationName, setOrganizationName] = useState("CityCare");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const isSignUp = mode === "signup";
+  const isSso = accessMethod === "sso";
   return (
     <div className="login-screen" dir={language === "ar" ? "rtl" : "ltr"}>
       <div className="login-art">
+        <button type="button" className="login-home-button" onClick={onBackHome} aria-label={language === "ar" ? "العودة للرئيسية" : "Back to Home"}>
+          <Home size={16} />
+        </button>
         <div className="login-brand">
           <div className="brand-mark">
             <HeartPulse size={19} />
@@ -2052,12 +2198,22 @@ function Login({
             {t("loginArtDetail")}
           </p>
         </div>
-        <div className="login-footer">
-          <ShieldCheck size={16} /> {t("loginFooter")}
-        </div>
       </div>
       <div className="login-form-wrap">
         <div className="login-form">
+          <div className="login-form-top">
+            <button type="button" className="back-link login-back-home" onClick={onBackHome}>
+              <ChevronLeft size={14} /> {language === "ar" ? "العودة للرئيسية" : "Back to Home"}
+            </button>
+            <button
+              type="button"
+              className="glass-control-btn glass-icon-btn login-language"
+              onClick={() => setLanguage(language === "en" ? "ar" : "en")}
+              aria-label={language === "en" ? "Switch to Arabic" : "Switch to English"}
+            >
+              {language === "en" ? "AR" : "EN"}
+            </button>
+          </div>
           <div className="mobile-login-brand">
             <div className="brand-mark">
               <HeartPulse size={19} />
@@ -2066,60 +2222,88 @@ function Login({
               care<span>os</span>
             </span>
           </div>
-          <button
-            className="language-btn login-language"
-            onClick={() => setLanguage(language === "en" ? "ar" : "en")}
-          >
-            {language === "en" ? "العربية" : "English"}
-          </button>
           <div className="auth-tabs" role="tablist">
-            <button className={!isSignUp ? "active" : ""} onClick={() => setMode("signin")} role="tab" aria-selected={!isSignUp}>
+            <button className={!isSignUp ? "active" : ""} onClick={() => { setMode("signin"); setAccessMethod("email"); }} role="tab" aria-selected={!isSignUp}>
               {t("signIn")}
             </button>
-            <button className={isSignUp ? "active" : ""} onClick={() => setMode("signup")} role="tab" aria-selected={isSignUp}>
+            <button className={isSignUp ? "active" : ""} onClick={() => { setMode("signup"); setAccessMethod("email"); }} role="tab" aria-selected={isSignUp}>
               {t("createAccount")}
             </button>
           </div>
+          {!isSignUp && (
+            <div className="access-method-panel">
+              <button type="button" className={`access-method-button ${accessMethod === "email" ? "active" : ""}`} onClick={() => setAccessMethod("email")}>{t("emailPassword")}</button>
+              <button type="button" className={`access-method-button ${accessMethod === "sso" ? "active" : ""}`} onClick={() => setAccessMethod("sso")}>{t("hospitalSso")}</button>
+            </div>
+          )}
           <div className="eyebrow">{isSignUp ? t("createAccountEyebrow") : t("welcome")}</div>
           <h2>{isSignUp ? t("createAccount") : t("signIn")}</h2>
           <p>{isSignUp ? t("createAccountDetail") : t("signInDetail")}</p>
-          {isSignUp && (
+          {isSignUp && accessMethod === "email" && (
             <label>
               {t("fullName")}
               <input type="text" value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder={t("fullNamePlaceholder")} />
             </label>
           )}
-          {isSignUp && <label>{t("organizationName")}<input type="text" value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder={t("organizationPlaceholder")} /></label>}
-          <label>
-            {t("email")}
-            <input type="email" placeholder="name@hospital.org" value={isSignUp && email === "dr.rana@citycare.org" ? "" : email} onChange={(event) => setEmail(event.target.value)} />
-          </label>
-          <label>
-            {t("password")}
-            <input type="password" placeholder={isSignUp ? t("passwordPlaceholder") : "password123"} value={isSignUp && password === "password123" ? "" : password} onChange={(event) => setPassword(event.target.value)} />
-          </label>
-          {isSignUp && (
-            <label>
-              {t("confirmPassword")}
-              <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder={t("confirmPasswordPlaceholder")} />
-            </label>
+          {isSignUp && accessMethod === "email" && <label>{t("organizationName")}<input type="text" value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder={t("organizationPlaceholder")} /></label>}
+          {accessMethod === "email" && (
+            <>
+              <label>
+                {t("email")}
+                <input type="email" placeholder="name@hospital.org" value={isSignUp && email === "dr.rana@citycare.org" ? "" : email} onChange={(event) => setEmail(event.target.value)} />
+              </label>
+              <label>
+                {t("password")}
+                <span className="password-input-wrap">
+                  <input type={showPassword ? "text" : "password"} placeholder={isSignUp ? t("passwordPlaceholder") : "password123"} value={isSignUp && password === "password123" ? "" : password} onChange={(event) => setPassword(event.target.value)} />
+                  <button type="button" className="password-visibility-button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"}>
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </span>
+              </label>
+              {isSignUp && (
+                <label>
+                  {t("confirmPassword")}
+                  <span className="password-input-wrap">
+                    <input type={showConfirmPassword ? "text" : "password"} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder={t("confirmPasswordPlaceholder")} />
+                    <button type="button" className="password-visibility-button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} aria-label={showConfirmPassword ? "Hide password" : "Show password"}>
+                      {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </span>
+                </label>
+              )}
+            </>
           )}
-          {!isSignUp && <div className="form-options">
+          {!isSignUp && accessMethod === "sso" && (
+            <div className="sso-provider-panel">
+              <div className="sso-provider-title"><Stethoscope size={17} /> {t("hospitalSso")}</div>
+              <div className="sso-provider-detail">{t("ssoProviderDetail")}</div>
+              <div className="sso-provider-role">{t("ssoPageRole")}</div>
+              <div className="sso-provider-actions">
+                <button type="button" className="outline-btn sso-back-button" onClick={() => setAccessMethod("email")}>{t("back")}</button>
+                <button className="primary-btn login-button" onClick={() => onLogin({ mode: "signin", email: "dr.rana@citycare.org", password: "password123", fullName: "Dr. Rana Samir", organizationName: "CityCare", authMethod: "sso" })}>
+                  {t("continueWithSso")} <ArrowUpRight size={16} />
+                </button>
+              </div>
+            </div>
+          )}
+          {!isSignUp && accessMethod === "email" && <div className="form-options">
             <label className="check-label">
               <input type="checkbox" defaultChecked /> {t("remember")}
             </label>
             <button type="button" onClick={() => setForgotOpen(true)}>{t("forgot")}</button>
           </div>}
-          <button className="primary-btn login-button" disabled={isSignUp && (!fullName || !email || password.length < 8 || password !== confirmPassword || organizationName.length < 2)} onClick={() => onLogin({ mode, email, password, fullName, organizationName })}>
+          {accessMethod === "email" && <button className="primary-btn login-button" disabled={isSignUp && (!fullName || !email || password.length < 8 || password !== confirmPassword || organizationName.length < 2)} onClick={() => onLogin({ mode, email, password, fullName, organizationName, authMethod: "email" })}>
             {isSignUp ? t("createWorkspace") : t("signIn")} <ArrowUpRight size={16} />
-          </button>
-          <div className="sso-divider">
-            <span>{t("orContinueWith")}</span>
-          </div>
-          <button className="sso-button" onClick={() => onLogin({ mode: "signin", email: "dr.rana@citycare.org", password: "password123", fullName: "Dr. Rana Samir", organizationName: "CityCare" })}>
-            <Stethoscope size={17} /> {t("hospitalSso")}
-          </button>
-          <p className="auth-note">{isSignUp ? t("accountConsent") : t("newToCareos")}</p>
+          </button>}
+          <p className="auth-note">
+            {isSignUp ? t("accountConsent") : (
+              <>
+                {t("newToCareosPrompt")}{" "}
+                <button type="button" className="auth-note-link" onClick={() => setMode("signup")}>{t("newToCareosLink")}</button>
+              </>
+            )}
+          </p>
         </div>
       </div>
       {forgotOpen && <PasswordRecovery close={() => setForgotOpen(false)} t={t} />}

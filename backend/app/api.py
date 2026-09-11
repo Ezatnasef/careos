@@ -1,5 +1,5 @@
 from datetime import date, datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 from .db import get_session
 from .email_service import send_team_invite
+from .sso import HospitalSSOAdapter
+from .workspace import WorkspacePlan, WorkspaceService
 
 from .auth import (
     AuditEventResponse,
@@ -59,6 +61,24 @@ class RagQuestion(BaseModel):
     question: str = Field(min_length=3, max_length=2000)
 
 
+class SSOStartInput(BaseModel):
+    provider: str = "hospital_sso"
+    email: str | None = None
+    redirect_uri: str | None = None
+
+
+class SSOCallbackInput(BaseModel):
+    code: str
+    state: str
+    provider: str = "hospital_sso"
+
+
+class WorkspaceCreateInput(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    department: str = Field(min_length=2, max_length=120)
+    timezone: str = Field(min_length=2, max_length=80)
+
+
 class DocumentInput(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
 
@@ -100,6 +120,32 @@ async def login(request: LoginRequest, session: AsyncSession = Depends(get_sessi
     return {"access_token": token, "token_type": "bearer", "user": public_user(user)}
 
 
+@router.post("/auth/sso/start", tags=["auth"])
+async def start_sso(request: SSOStartInput) -> dict[str, str]:
+    adapter = HospitalSSOAdapter(provider_name=request.provider)
+    state = uuid4().hex
+    nonce = uuid4().hex
+    return {
+        "provider": request.provider,
+        "redirect_url": adapter.build_redirect_url(state=state, nonce=nonce),
+        "state": state,
+        "nonce": nonce,
+    }
+
+
+@router.post("/auth/sso/callback", tags=["auth"])
+async def sso_callback(request: SSOCallbackInput) -> dict[str, object]:
+    adapter = HospitalSSOAdapter(provider_name=request.provider)
+    claims = adapter.exchange_code_for_claims(code=request.code, state=request.state)
+    mapped = adapter.map_claims_to_org_workspace(claims)
+    return {"provider": request.provider, "status": "pending_sso_contract", "claims": claims.__dict__, "mapped": mapped}
+
+
+@router.post("/auth/sso", tags=["auth"])
+async def login_sso(request: SSOStartInput) -> dict[str, object]:
+    raise HTTPException(status_code=501, detail="Hospital SSO flow is not implemented yet. Use the start/callback contract placeholder route.")
+
+
 @router.get("/me", tags=["auth"])
 async def me(user=Depends(current_user)) -> dict[str, object]:
     return public_user(user)
@@ -109,6 +155,49 @@ async def me(user=Depends(current_user)) -> dict[str, object]:
 async def logout(credentials: HTTPAuthorizationCredentials | None = Depends(bearer), user=Depends(current_user), session: AsyncSession = Depends(get_session)) -> None:
     if credentials is not None:
         await revoke_token(session, credentials, user)
+
+
+@router.get("/organization", tags=["onboarding"])
+async def get_organization(user=Depends(current_user), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    organization = await session.get(Organization, user.organization_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return {"id": organization.id, "name": organization.name, "department": organization.department, "timezone": organization.timezone, "onboarding_complete": user.onboarding_complete}
+
+
+@router.get("/workspace", tags=["onboarding"])
+async def get_workspace(user=Depends(current_user), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    organization = await session.get(Organization, user.organization_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return {
+        "id": organization.id,
+        "organization_id": organization.id,
+        "name": organization.name,
+        "department": organization.department,
+        "timezone": organization.timezone,
+        "onboarding_complete": user.onboarding_complete,
+    }
+
+
+@router.post("/workspace", status_code=201, tags=["onboarding"])
+async def create_workspace(request: WorkspaceCreateInput, user=Depends(require_roles("administrator")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    service = WorkspaceService()
+    plan = WorkspacePlan(organization_name=request.name, department=request.department, timezone=request.timezone, admin_email=str(user.email))
+    try:
+        created = service.create_workspace(plan)
+    except NotImplementedError:
+        organization = await session.get(Organization, user.organization_id)
+        if organization is None:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        organization.name = request.name
+        organization.department = request.department
+        organization.timezone = request.timezone
+        user.onboarding_complete = True
+        await write_audit(session, user, "workspace.created", request.name)
+        await session.commit()
+        return {"id": organization.id, "organization_id": organization.id, "name": organization.name, "department": organization.department, "timezone": organization.timezone, "onboarding_complete": user.onboarding_complete}
+    return {"id": created.get("organization_id"), "organization_id": created.get("organization_id"), "name": request.name, "department": request.department, "timezone": request.timezone, "onboarding_complete": user.onboarding_complete}
 
 
 @router.patch("/organization", tags=["onboarding"])

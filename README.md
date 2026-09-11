@@ -28,6 +28,126 @@ CareOS ليست AI Doctor ولا تستبدل الطبيب. الفكرة هي ب
 
 CareOS يعالج هذه المشكلة من خلال مساحة عمل موحدة تجمع التوثيق، المريض، المواعيد، الرسائل، التحليلات، وإدارة الفريق.
 
+## بنية النظام الحقيقية المطلوبة
+
+لأن المشروع يريد أن يكون نظامًا حقيقيًا وليس Demo، يجب توزيع المسؤوليات إلى طبقات عملية واضحة:
+
+### 1. Auth Layer
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `GET /me`
+- `POST /auth/logout`
+- `AuthUser` يجب أن يحوي `organization_id`, `workspace_id`, `role`, `onboarding_complete`.
+
+### 2. Organization & Workspace Layer
+
+- إنشاء مؤسسة (`Organization`)
+- إنشاء مساحة عمل (`Workspace`)
+- ربط المستخدم بالمؤسسة وسجل الفريق
+- تمييز حالة `onboarding_complete`
+
+### 3. SSO Layer
+
+- نقطة دخول لـ Hospital SSO
+- mapping claims → organization → workspace
+- callback handling
+- validation of ID token / access token
+
+في هذا المشروع تم إنشاء نقطة ابتدائية منسقة داخل [`backend/app/sso.py`](backend/app/sso.py) لتكون مكانًا متخصصًا للمطور اللاحق.
+
+### 4. RBAC Layer
+
+- `role → permissions` mapping
+- organization-scoped resources
+- workspace-scoped access to patients/dashboard/team/audit
+
+في هذا المشروع تم إنشاء نقطة ابتدائية داخل [`backend/app/rbac.py`](backend/app/rbac.py) لتكون مصدر صلاحيات موحد.
+
+### 5. Workspace Service Layer
+
+- create organization
+- create workspace
+- add first admin
+- assign base policies
+- mark onboarding complete
+
+في هذا المشروع تم إنشاء نقطة ابتدائية داخل [`backend/app/workspace.py`](backend/app/workspace.py).
+
+### 6. Contract Layer
+
+لضمان أن frontend و backend يشاركان نفس البيانات، يحتاج المشروع إلى contract صريح يحدد:
+
+- `AuthUserContract` بأسماء الحقول: `id`, `organization_id`, `workspace_id`, `email`, `full_name`, `role`, `onboarding_complete`.
+- `OrganizationWorkspaceContract` بأسماء الحقول: `organization_id`, `workspace_id`, `organization_name`, `department`, `timezone`, `onboarding_complete`.
+- `DashboardContract` بأسماء الحقول: `patient_count`, `upcoming_appointments`, `followups`, `kpi`.
+- `SSOStartRequest` و `SSOCallback` للـ provider flow.
+
+في هذا المشروع تم إضافة ملف بدء للتوثيق داخل [`backend/app/contracts.py`](backend/app/contracts.py)، مع توسيع `src/api.ts` ليغطي `workspace_id?`, `SSO` start/callback و `DashboardContract` و `getCurrentUser` و `getOrganization` و `getWorkspace` و `createWorkspace`.
+
+### 7. Implemented API Contract Routes
+
+الواجهة والـ backend الآن يملكوا نقطة بداية واضحة لتوحيد المسار:
+
+- `POST /auth/sso/start`
+- `POST /auth/sso/callback`
+- `POST /auth/sso`
+- `GET /organization`
+- `GET /workspace`
+- `POST /workspace`
+
+ومع ذلك، هذه الـ routes ما زالت “contract placeholders” أو “architecture skeleton”، وليست SSO/Workspace/Organization flow كاملًا. تحتاج إلى provider adapter فعلي، RBAC mapping فعلي، و persistence في قاعدة البيانات.
+
+## دور كل مسؤول ومسؤولية كاملة بعد التحول إلى نظام حقيقي
+
+### Auth Specialist
+
+- يبني `POST /auth/login` و `POST /auth/register` و `GET /me` و `POST /auth/logout` بشكل فعلي.
+- يتحقق من `JWT`, `Argon2`, `refresh token`, `logout/revoke` و`session revocation`.
+- يراجع `AuthUser` الكامل معه: `id`, `organization_id`, `workspace_id`, `role`, `onboarding_complete`.
+
+### SSO / Identity Specialist
+
+- يربط `Hospital SSO` مع `OIDC/SAML` أو `Identity Provider` حقيقي.
+- ينشئ `sso_redirect_url`, `state`, `nonce`, `callback`. 
+- يحول `claims` إلى `organization`, `domain`, `role`, `email` و `workspace`.
+- يقرر إن كان المستخدم جديدًا ويحتاج `invite` أو `onboarding`.
+
+### Organization / Workspace Specialist
+
+- ينشئ المؤسسة (`Organization`) ومساحة العمل (`Workspace`).
+- يربط `organization_id` و `workspace_id` بالـ user.
+- يحدد `department`, `timezone`, `permissions default`, و `first admin`.
+- يتحقق من حالة `onboarding_complete` قبل فتح `Dashboard`.
+
+### RBAC / Security Specialist
+
+- يعرّف خريطة `role → permissions` كاملة.
+- يحدّد صلاحيات كل شاشة: `dashboard`, `patients`, `appointments`, `team`, `audit`, `notes`.
+- يطبق scope حسب `organization_id`, `workspace_id`, و `user.role`.
+- يضيف `audit` log لكل تغيير أو تسجيل دخول أو وصول مهم.
+
+### Data / Clinical Data Specialist
+
+- يعمل على `GET /dashboard` الحقيقي كله: KPI، المرضى، المواعيد، المتابعات، التوزيع بحسب المؤسسة.
+- يضيف `GET /patients`, `GET /appointments`, `GET /team`, `GET /audit-events` فعليًا من DB.
+- يضمن فصل البيانات حسب `organization_id` و `workspace_id` وليس على مستوى عالمي.
+- يتحقق من `patient privacy`, `PHI` isolation، و `clinical note` traceability.
+
+### Integration Specialist
+
+- يربط `LLM`, `RAG`, `OCR`, `EHR`, و `Notifications` بسير العمل الطبي.
+- يضيف `Clinical Assistant` الحقيقي مع `sources`, `confidence`, و `human review`.
+- يربط `patient documents`, `OCR extract`, `AI draft`, و `clinical note signing` مع APIs حقيقية.
+- يحدد نقطة `integration provider` لكل خدمة: `LLM`, `Vector DB`, `OCR`, `EHR`, `SMS/Email`.
+
+### Frontend Specialist
+
+- يربط الواجهة بكنترول كامل على contract:
+  - `auth`, `sso`, `organization`, `workspace`, `dashboard`, `team`, `audit`.
+- يضمن الانتقال بين `Dashboard` و `Onboarding` بناءً على `onboarding_complete` ووجود `workspace`.
+- يفتح routing الحقيقي بدل `demo` fallback.
+
 ## الحالة الحالية للمنتج
 
 ### منفذ فعليًا
@@ -123,8 +243,45 @@ CareOS يعالج هذه المشكلة من خلال مساحة عمل موحد
 - تشفير كلمة المرور بـ Argon2.
 - Hospital SSO button.
 - Password recovery UI.
+- access method selector داخل Login لعرض Email/Password وHospital SSO بشكل شبه tab-like.
+- لوحة Hospital SSO توضح السياق: "This is the Hospital SSO route. It uses your organization identity provider..." و"Use your organization identity provider to continue securely.".
+- زر Back داخل لوحة Hospital SSO لعودة إلى Email/Password flow.
+- زر Continue with Hospital SSO لتأكيد المسار السيري/الـSSO ثم توجيه المستخدم إلى Login flow بناءً على `authMethod` ونتيجة الـbackend.
+- قفل الوصول إلى لوحة Hospital SSO في Create account؛ فالواجهة لا تسمح بإظهار الـSSO panel في صفحة إنشاء الحساب.
+- Eye/EyeOff toggle لتبديل إظهار/إخفاء كلمة المرور في Email/password flow.
+- رابط "Create your workspace above" في نص auth note في حالة Sign-in لفتح Create account (الرسالة الارتباطية).
 
 في وضع التطوير، إذا لم يكن API شغالًا، يسمح التطبيق بفتح Synthetic Demo فقط. هذا fallback لا يجب استخدامه مع بيانات حقيقية ولا يعمل في production build.
+
+#### تدفق المواصفات الواقعية الآن
+
+المخطط الصحيح داخل UI وApp handler هو:
+
+```text
+Landing → Login
+→ authMethod = Email / Password OR Hospital SSO
+→ backend/auth request resolves identity
+→ backend/user payload includes onboarding_complete
+→ if onboarding_complete = true: Dashboard
+→ if onboarding_complete = false: Onboarding
+```
+
+وبالتالي:
+
+- Email / Password source يمر عبر `apiLogin()` أو `apiRegister()` حسب الحالة.
+- Hospital SSO source يمر عبر `apiLoginWithSso()`.
+- `onboarding_complete` في payload الخاص بـ `AuthUser` يحدد التالي:
+  - `Dashboard` في حال وجود workspace جاهز
+  - `Onboarding` في حال عدم وجود workspace أو المؤسسة بعدية
+
+ويتعامل UI مع هذا التقسيم عبر `setOnboardingComplete(Boolean(result.user.onboarding_complete))` في `App.tsx` والأثر المنطقي عليه داخل الرندر.
+
+#### التهيئة والـfallback
+
+- عند نجاح login/register/email-password flow أو SSO flow، يتم تمرير `authMethod: "email"` أو `authMethod: "sso"` إلى `App.tsx` handler.
+- عند `authMethod === "sso"` يتم استدعاء `apiLoginWithSso()`.
+- عند `authMethod === "email"` يتم استخدام `apiLogin()` أو `apiRegister()` حسب `mode`.
+- في حالات عدم توفر Backend/Request failed داخل DEV، يتم فتح Synthetic demo من خلال الـ UI مع `localStorage` و`notify()`، وهذا لا يكون تكاملًا حقيقيًا، وإنما fallback تجريبي فقط.
 
 ### 3. Onboarding
 
@@ -138,17 +295,26 @@ PATCH /api/v1/organization
 
 ### 4. Dashboard
 
-يعرض:
+في نظام حقيقي، الـ Dashboard هو نقطة الدخول بعد أن ينجح المستخدم في `Email / Password` أو `Hospital SSO` ويفحص backend وجود `organization/workspace` و`onboarding_complete`. يجب أن يعرض:
 
-- عدد المرضى.
-- زيارات اليوم.
-- المتابعات المعلقة.
-- نسبة اكتمال الرعاية.
-- مواعيد اليوم.
-- المرضى الذين يحتاجون متابعة.
-- رابط Clinical Assistant.
+- عدد المرضى في المؤسسة.
+- زيارات اليوم ومواعيد اليوم.
+- متابعات/تنبيهات الفريق وعلامات التحدي السريرية.
+- KPI لكل منطقة سريرية: إشغال/جدول/مستوى التزام.
+- قائمة مرضى اليوم مع حالة الرعاية ودرجة الأولوية.
+- بطاقات للأطباء/الأقسام/الملاحظات ونسبة التزام المواعيد.
+- رابط إلى Clinical Assistant ومؤشرات sources/decision-support.
 
-الأرقام الحالية Synthetic.
+الـ Dashboard لا يتم بنائه من بيانات ثابتة فقط؛ يجب أن يُغذى من `GET /dashboard` و`GET /patients` مع scope المؤسسة، ويجب أن تبقي الأرقام مرتبطة بـ `organization_id` و `user.role` و `RBAC` الصحيح.
+
+في الواجهة الحالية، هذا الـ Dashboard هو UI/demo، والبيانات Synthetic فقط أو مصادر ثابتة داخل `src/data.ts`. نظام حقيقي يحتاج إلى:
+
+- `GET /dashboard` يعيد اليوميات والـmetrics المصرح بها.
+- `GET /patients` و`GET /appointments` من backend مع organization scoping.
+- `GET /audit-events` و`GET /team` حسب صلاحيات المؤسسة.
+- `RBAC` و `org` و `team` permissions لكل شاشة.
+
+وهذا يثبت أن الصفحة لا تملك صلاحية حقيقية إن لم تكن `onboarding_complete = true` و`organization_id` منتجًا فعليًا في الـ backend.
 
 ### 5. Patients
 
