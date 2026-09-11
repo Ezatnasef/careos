@@ -1059,6 +1059,68 @@ function Dashboard({
           </button>
         </section>
       </div>
+      <section className="dashboard-lower-grid">
+        <section className="panel operations-panel">
+          <PanelHeading
+            title={t("operations")}
+            detail={t("careTeamOverview")}
+            action={
+              <button className="round-btn" aria-label={t("moreActions")} onClick={() => window.dispatchEvent(new CustomEvent("careos:toast", { detail: t("actionComplete") }))}>
+                <MoreHorizontal size={18} />
+              </button>
+            }
+          />
+          <div className="operations-list">
+            <div className="operation-row">
+              <span className="operation-label">{t("ragLatency")}</span>
+              <span className="operation-value">1.8s</span>
+              <span className="operation-target">{t("latencyTarget")}</span>
+            </div>
+            <div className="operation-row">
+              <span className="operation-label">{t("summaryReviewRate")}</span>
+              <span className="operation-value">82%</span>
+              <span className="operation-target">{t("draftsReviewed")}</span>
+            </div>
+            <div className="operation-row">
+              <span className="operation-label">{t("ocrDocuments")}</span>
+              <span className="operation-value">14</span>
+              <span className="operation-target">{t("syntheticDailyTarget")}</span>
+            </div>
+            <div className="operation-row">
+              <span className="operation-label">{t("citationCoverage")}</span>
+              <span className="operation-value">96%</span>
+              <span className="operation-target">{t("sourcesAttached")}</span>
+            </div>
+          </div>
+        </section>
+        <section className="panel team-panel">
+          <PanelHeading
+            title={t("careTeam")}
+            detail={t("careTeamOverview")}
+            action={
+              <button className="text-btn" onClick={() => onNavigate("teamAudit")}>
+                {t("teamAudit")} <ArrowUpRight size={15} />
+              </button>
+            }
+          />
+          <div className="dashboard-team-list">
+            {patients.slice(0, 3).map((patient) => (
+              <div className="dashboard-team-row" key={patient.id}>
+                <PatientAvatar patient={patient} />
+                <div className="dashboard-team-person">
+                  <strong>{patient.name}</strong>
+                  <span>{patient.condition}</span>
+                </div>
+                <span className={`status ${patient.status.toLowerCase().replace(/\s+/g, "-")}`}>{patient.status}</span>
+              </div>
+            ))}
+          </div>
+          <div className="team-update">
+            <div className="team-update-icon"><MessageSquareText size={15} /></div>
+            <span>{t("secureUpdate")}</span>
+          </div>
+        </section>
+      </section>
       <section className="insight-strip">
         <div className="insight-icon">
           <Stethoscope size={20} />
@@ -2280,7 +2342,6 @@ function Login({
               <div className="sso-provider-detail">{t("ssoProviderDetail")}</div>
               <div className="sso-provider-role">{t("ssoPageRole")}</div>
               <div className="sso-provider-actions">
-                <button type="button" className="outline-btn sso-back-button" onClick={() => setAccessMethod("email")}>{t("back")}</button>
                 <button className="primary-btn login-button" onClick={() => onLogin({ mode: "signin", email: "dr.rana@citycare.org", password: "password123", fullName: "Dr. Rana Samir", organizationName: "CityCare", authMethod: "sso" })}>
                   {t("continueWithSso")} <ArrowUpRight size={16} />
                 </button>
