@@ -31,17 +31,6 @@ htmlcov/
 test-results/
 tempCodeRunnerFile.py
 
-# Database / local state
+# Database / local state (sensitive - keep ignoring)
 *.sqlite3
 *.db
-
-# Local storage (uploaded files / patient data - DO NOT COMMIT)
-storage/
-backend/storage/
-
-# Temporary verification / debug artifacts
-backend/out.txt
-backend/verification_script.py
-backend/verify_*.py
-backend/verification_result.txt
-backend/verification_report.txt
