@@ -9,12 +9,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .api import router
 from .config import get_settings
+from .db import init_db
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    await init_db()
     yield
 
 

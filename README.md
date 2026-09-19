@@ -1,291 +1,497 @@
 # CareOS
 
-CareOS منصة SaaS للرعاية الصحية تساعد الأطباء وفرق الرعاية على تنظيم رحلة المريض، توثيق الزيارات، الوصول إلى المعلومات الطبية، وإدارة العمليات اليومية.
-
-> **تنبيه مهم:** CareOS حاليًا Prototype/MVP Foundation ببيانات تجريبية. لا تستخدمه مع بيانات مرضى حقيقية، ولا تعتبر مخرجاته تشخيصًا أو وصفًا علاجيًا.
-
-## الفكرة
-
-CareOS ليست AI Doctor ولا تستبدل الطبيب. الفكرة هي بناء مساحة عمل سريرية يكون فيها الذكاء الاصطناعي مساعدًا للطبيب في:
-
-- تحويل الملاحظات الحرة إلى مسودة منظمة.
-- إظهار معلومات وبروتوكولات ذات صلة مع مصادرها.
-- تنظيم المواعيد والمتابعات.
-- تقليل الأعمال الإدارية المتكررة.
-- إبقاء الطبيب مسؤولًا عن المراجعة والاعتماد النهائي.
-
-المنتج المستهدف هو B2B Healthcare SaaS للمستشفيات والعيادات ومراكز الرعاية، بينما النسخة الحالية تستخدم بيانات Synthetic وتعرض بعض الوظائف كـ Demo.
-
-## المشكلة التي يعالجها المنتج
-
-الفرق الطبية تفقد وقتًا كبيرًا في كتابة الملاحظات، البحث داخل السجلات، تنسيق المواعيد، متابعة النتائج، وإعادة شرح نفس المعلومات. ينتج عن ذلك:
-
-- وقت أقل مع المريض.
-- بيانات متفرقة وصعوبة في البحث.
-- متابعات ومواعيد معرضة للنسيان.
-- تنسيق ضعيف بين أعضاء الفريق.
-- تكلفة تشغيلية أعلى.
-
-CareOS يعالج هذه المشكلة من خلال مساحة عمل موحدة تجمع التوثيق، المريض، المواعيد، الرسائل، التحليلات، وإدارة الفريق.
-
-## بنية النظام الحقيقية المطلوبة
-
-لأن المشروع يريد أن يكون نظامًا حقيقيًا وليس Demo، يجب توزيع المسؤوليات إلى طبقات عملية واضحة:
-
-### 1. Auth Layer
-
-- `POST /auth/register`
-- `POST /auth/login`
-- `GET /me`
-- `POST /auth/logout`
-- `AuthUser` يجب أن يحوي `organization_id`, `workspace_id`, `role`, `onboarding_complete`.
-
-### 2. Organization & Workspace Layer
-
-- إنشاء مؤسسة (`Organization`)
-- إنشاء مساحة عمل (`Workspace`)
-- ربط المستخدم بالمؤسسة وسجل الفريق
-- تمييز حالة `onboarding_complete`
-
-### 3. SSO Layer
-
-- نقطة دخول لـ Hospital SSO
-- mapping claims → organization → workspace
-- callback handling
-- validation of ID token / access token
-
-في هذا المشروع تم إنشاء نقطة ابتدائية منسقة داخل [`backend/app/sso.py`](backend/app/sso.py) لتكون مكانًا متخصصًا للمطور اللاحق.
-
-### 4. RBAC Layer
-
-- `role → permissions` mapping
-- organization-scoped resources
-- workspace-scoped access to patients/dashboard/team/audit
-
-في هذا المشروع تم إنشاء نقطة ابتدائية داخل [`backend/app/rbac.py`](backend/app/rbac.py) لتكون مصدر صلاحيات موحد.
-
-### 5. Workspace Service Layer
-
-- create organization
-- create workspace
-- add first admin
-- assign base policies
-- mark onboarding complete
-
-في هذا المشروع تم إنشاء نقطة ابتدائية داخل [`backend/app/workspace.py`](backend/app/workspace.py).
-
-### 6. Contract Layer
-
-لضمان أن frontend و backend يشاركان نفس البيانات، يحتاج المشروع إلى contract صريح يحدد:
-
-- `AuthUserContract` بأسماء الحقول: `id`, `organization_id`, `workspace_id`, `email`, `full_name`, `role`, `onboarding_complete`.
-- `OrganizationWorkspaceContract` بأسماء الحقول: `organization_id`, `workspace_id`, `organization_name`, `department`, `timezone`, `onboarding_complete`.
-- `DashboardContract` بأسماء الحقول: `patient_count`, `upcoming_appointments`, `followups`, `kpi`.
-- `SSOStartRequest` و `SSOCallback` للـ provider flow.
-
-في هذا المشروع تم إضافة ملف بدء للتوثيق داخل [`backend/app/contracts.py`](backend/app/contracts.py)، مع توسيع `src/api.ts` ليغطي `workspace_id?`, `SSO` start/callback و `DashboardContract` و `getCurrentUser` و `getOrganization` و `getWorkspace` و `createWorkspace`.
-
-### 7. Implemented API Contract Routes
-
-الواجهة والـ backend الآن يملكوا نقطة بداية واضحة لتوحيد المسار:
-
-- `POST /auth/sso/start`
-- `POST /auth/sso/callback`
-- `POST /auth/sso`
-- `GET /organization`
-- `GET /workspace`
-- `POST /workspace`
-
-ومع ذلك، هذه الـ routes ما زالت “contract placeholders” أو “architecture skeleton”، وليست SSO/Workspace/Organization flow كاملًا. تحتاج إلى provider adapter فعلي، RBAC mapping فعلي، و persistence في قاعدة البيانات.
-
-## دور كل مسؤول ومسؤولية كاملة بعد التحول إلى نظام حقيقي
-
-### Auth Specialist
-
-- يبني `POST /auth/login` و `POST /auth/register` و `GET /me` و `POST /auth/logout` بشكل فعلي.
-- يتحقق من `JWT`, `Argon2`, `refresh token`, `logout/revoke` و`session revocation`.
-- يراجع `AuthUser` الكامل معه: `id`, `organization_id`, `workspace_id`, `role`, `onboarding_complete`.
-
-### SSO / Identity Specialist
-
-- يربط `Hospital SSO` مع `OIDC/SAML` أو `Identity Provider` حقيقي.
-- ينشئ `sso_redirect_url`, `state`, `nonce`, `callback`. 
-- يحول `claims` إلى `organization`, `domain`, `role`, `email` و `workspace`.
-- يقرر إن كان المستخدم جديدًا ويحتاج `invite` أو `onboarding`.
-
-### Organization / Workspace Specialist
-
-- ينشئ المؤسسة (`Organization`) ومساحة العمل (`Workspace`).
-- يربط `organization_id` و `workspace_id` بالـ user.
-- يحدد `department`, `timezone`, `permissions default`, و `first admin`.
-- يتحقق من حالة `onboarding_complete` قبل فتح `Dashboard`.
-
-### RBAC / Security Specialist
-
-- يعرّف خريطة `role → permissions` كاملة.
-- يحدّد صلاحيات كل شاشة: `dashboard`, `patients`, `appointments`, `team`, `audit`, `notes`.
-- يطبق scope حسب `organization_id`, `workspace_id`, و `user.role`.
-- يضيف `audit` log لكل تغيير أو تسجيل دخول أو وصول مهم.
-
-### Data / Clinical Data Specialist
-
-- يعمل على `GET /dashboard` الحقيقي كله: KPI، المرضى، المواعيد، المتابعات، التوزيع بحسب المؤسسة.
-- يضيف `GET /patients`, `GET /appointments`, `GET /team`, `GET /audit-events` فعليًا من DB.
-- يضمن فصل البيانات حسب `organization_id` و `workspace_id` وليس على مستوى عالمي.
-- يتحقق من `patient privacy`, `PHI` isolation، و `clinical note` traceability.
-
-### Integration Specialist
-
-- يربط `LLM`, `RAG`, `OCR`, `EHR`, و `Notifications` بسير العمل الطبي.
-- يضيف `Clinical Assistant` الحقيقي مع `sources`, `confidence`, و `human review`.
-- يربط `patient documents`, `OCR extract`, `AI draft`, و `clinical note signing` مع APIs حقيقية.
-- يحدد نقطة `integration provider` لكل خدمة: `LLM`, `Vector DB`, `OCR`, `EHR`, `SMS/Email`.
-
-### Frontend Specialist
-
-- يربط الواجهة بكنترول كامل على contract:
-  - `auth`, `sso`, `organization`, `workspace`, `dashboard`, `team`, `audit`.
-- يضمن الانتقال بين `Dashboard` و `Onboarding` بناءً على `onboarding_complete` ووجود `workspace`.
-- يفتح routing الحقيقي بدل `demo` fallback.
-
-## الحالة الحالية للمنتج
-
-### منفذ فعليًا
-
-- واجهة React/Vite كاملة للـ workspace.
-- تصميم Light/Dark mode.
-- دعم العربية والإنجليزية وRTL.
-- Landing page وCTA لطلب Demo.
-- Login وCreate account في الواجهة.
-- Password recovery UI.
-- Onboarding من ثلاث خطوات.
-- Dashboard طبي.
-- Patients وPatient details.
-- Clinical Notes مع AI draft تجريبي ومراجعة بشرية.
-- Clinical Assistant بواجهة مصادر وثقة وتنبيه decision support.
-- Appointments وموعد جديد تجريبي.
-- Messages تجريبية.
-- Patient Portal تجريبي.
-- Analytics وDepartments وReports تجريبية.
-- Team & Audit UI.
-- Loading, empty, unsaved, error، وtoast states الأساسية.
-- Responsive layout وaccessibility labels الرئيسية.
-- PostgreSQL models للهوية والمؤسسة والفريق والتدقيق والجلسات والإشعارات.
-- JWT authentication foundation.
-- Argon2 password hashing.
-- RBAC أساسي للأدوار.
-- Organization onboarding API.
-- Team invite API مع SMTP configuration.
-- Server-side session revocation/logout.
-- Notifications API.
-- Append-only audit trigger في PostgreSQL.
-- Alembic migration.
-- Docker Compose للـ PostgreSQL والـ API.
-- CI workflow وPlaywright smoke test.
-- Migration سريرية ثانية (`0002_clinical_core`) لجداول المرضى والمواعيد والملاحظات والمستندات وjobs التذكير.
-- APIs سريرية authenticated مع عزل كل سجل حسب المؤسسة (organization scoping).
-- إنشاء مريض من الواجهة، والبحث عن المرضى من الـAPI عند توفره.
-- إنشاء موعد من الواجهة، فحص تعارض الموعد، وإضافة reminder job في وضع Sandbox.
-- إنشاء Clinical Note، توليد مسودة Sandbox، ثم توقيعها من الواجهة.
-- واجهة `Integrations` داخل التطبيق لتوضيح نقاط ربط LLM/RAG/OCR/notifications/EHR للشخص الذي سيكمل المشروع.
-- خدمة `web` في Docker Compose لتشغيل الواجهة مع الـAPI وقاعدة البيانات.
-
-### ما يزال Demo أو يحتاج Integration
-
-- بعض الشاشات ما زالت تستخدم fallback من [src/data.ts](src/data.ts) عند عدم توفر الـAPI؛ لا تستخدمه مع بيانات حقيقية.
-- رد Clinical Assistant ومسودة Clinical Notes يمران عبر API لكن مزوّدهما الافتراضي Sandbox وليس LLM حقيقيًا.
-- لا يوجد RAG أو Vector Database حتى الآن.
-- لا يوجد OCR حقيقي.
-- لا يوجد AI Agent حقيقي لإدارة رحلة المريض.
-- رسائل Patient Portal وAnalytics وReports ليست سجلات تشغيلية حقيقية.
-- الواجهة لا تزال تحتاج استبدال كل مصادر البيانات التجريبية بـ APIs سريرية authenticated.
-- OIDC/SAML موجودان كإعدادات foundation فقط، وليس integration مع IdP حقيقي.
-- SMTP يعمل عند ضبط بيانات مزود البريد، لكنه غير مضبوط افتراضيًا.
-
-### تحديث التسليم: ما هو مربوط وما هو مؤجل
-
-| النطاق | الحالة الحالية | تفاصيل التشغيل |
-| --- | --- | --- |
-| الهوية والمؤسسة | مربوط | Register/Login/JWT/RBAC/Organization onboarding وaudit log. |
-| المرضى | مربوط جزئيًا | `GET/POST /patients` والبحث يعملان من الواجهة؛ تفاصيل المريض وتعديلها تحتاج ربط UI إضافي. |
-| المواعيد | مربوط جزئيًا | نافذة الإنشاء تستدعي الـAPI وتتحقق الخلفية من تعارض الوقت؛ القائمة تفضّل بيانات الـAPI عند توفره. |
-| Clinical Notes | مربوط | إنشاء ملاحظة، توليد ملخص Sandbox، وتوقيع الطبيب تمر عبر الـAPI. |
-| Clinical Assistant | Sandbox مربوط | السؤال يصل إلى backend؛ يلزم مزود RAG حقيقي ومصادر موثقة قبل الإنتاج. |
-| OCR والمستندات | API Sandbox جاهز | يوجد endpoint وجداول، لكن واجهة رفع الملفات وobject storage ومزوّد OCR حقيقي مؤجلة. |
-| التذكيرات | Queue Sandbox جاهز | يتم إنشاء `reminder_job` مع الموعد؛ لا يوجد worker أو إرسال خارجي حتى الآن. |
-| Messages/Portal/Analytics/Reports/Departments | Demo | واجهات موجودة لكنها ليست سجلات تشغيلية أو APIs مكتملة. |
-| Team/Audit/Notifications | API موجود، UI جزئي | endpoints متاحة؛ شاشة الفريق والتنبيهات ما زالت تحتاج استبدال بيانات العرض الثابتة. |
-
-مرجع التسليم التفصيلي، حدود الـSandbox، وعقود الاستبدال موجود في [HANDOFF.md](HANDOFF.md).
-
-## الشاشات والـ workflows
-
-### 1. Landing page
-
-تعرض:
-
-- قيمة المنتج.
-- مشكلة الأعمال الإدارية في الرعاية الصحية.
-- خصائص التوثيق، RAG، الجدولة، ورقمنة المستندات.
-- مبادئ human review وsource transparency.
-- CTA لطلب Demo.
-- رابط فتح الـ workspace التجريبي.
-
-زر طلب Demo يعرض confirmation محليًا. إرسال الطلب إلى CRM أو بريد حقيقي يحتاج backend/email integration.
-
-### 2. Login وCreate account
-
-تدعم:
-
-- Email/password.
-- إنشاء مساحة عمل ومؤسسة.
-- JWT access token.
-- تشفير كلمة المرور بـ Argon2.
-- Hospital SSO button.
-- Password recovery UI.
-- access method selector داخل Login لعرض Email/Password وHospital SSO بشكل شبه tab-like.
-- لوحة Hospital SSO توضح السياق: "This is the Hospital SSO route. It uses your organization identity provider..." و"Use your organization identity provider to continue securely.".
-- زر Back داخل لوحة Hospital SSO لعودة إلى Email/Password flow.
-- زر Continue with Hospital SSO لتأكيد المسار السيري/الـSSO ثم توجيه المستخدم إلى Login flow بناءً على `authMethod` ونتيجة الـbackend.
-- قفل الوصول إلى لوحة Hospital SSO في Create account؛ فالواجهة لا تسمح بإظهار الـSSO panel في صفحة إنشاء الحساب.
-- Eye/EyeOff toggle لتبديل إظهار/إخفاء كلمة المرور في Email/password flow.
-- رابط "Create your workspace above" في نص auth note في حالة Sign-in لفتح Create account (الرسالة الارتباطية).
-
-في وضع التطوير، إذا لم يكن API شغالًا، يسمح التطبيق بفتح Synthetic Demo فقط. هذا fallback لا يجب استخدامه مع بيانات حقيقية ولا يعمل في production build.
-
-#### تدفق المواصفات الواقعية الآن
-
-المخطط الصحيح داخل UI وApp handler هو:
+> Current status: functional MVP with organization-scoped clinical APIs, authenticated patient-portal downloads, S3/filesystem storage abstraction, and an OIDC-ready identity boundary. Do not connect production PHI until the release gate in `SECURITY.md` is complete.
+
+CareOS هو منصة تشغيل ذكية للمنشأة الصحية تجمع بين Workflow السريري والذكاء الاصطناعي داخل النظام نفسه، وليس مجرد chatbot منفصل. النظام مصمم ليكون مساحة عمل متكاملة للمنشأة الطبية، تجمع بين المريض، الفريق، الملاحظات، المهام، المستندات، المواعيد، والتقارير في واجهة واحدة.
+
+> المشروع الحالي هو MVP عملي ومتماسك، لا مجرد concept. تم بناء Frontend حقيقي، Backend حقيقي، auth/organization scoping، SSO-ready flow، storage abstraction، و patient portal. ما زال المشروع يحتاج hardening إضافي قبل التشغيل في بيئة إنتاج حقيقية مع PHI حقيقي.
+
+## 1. لماذا هذا المشروع
+
+المنشأة الصحية غالبًا تعمل عبر أدوات متفرقة:
+
+- سجل المريض في مكان
+- الملاحظات في مكان آخر
+- المواعيد في جدول منفصل
+- المهام في نظام مستقل
+- المستندات في مجلدات أو منصة غير مترابطة
+- الفريق لا يرى السياق نفسه
+
+CareOS يهدف إلى توحيد هذا السياق في نظام واحد يركز على المريض، ويجعل الذكاء الاصطناعي جزءًا من سير العمل وليس كواجهة مستقلة فقط.
+
+## 2. الفلسفة الأساسية
+
+المنتج لا يحاول استبدال الطبيب، بل يهدف إلى:
+
+- تسريع كتابة الملاحظات السريرية
+- دعم القرار داخل السياق الطبي
+- تقليل الأعمال الإدارية المتكررة
+- تحسين متابعة المرضى
+- توحيد رؤية الفريق حول نفس الحالة
+- إبقاء الإنسان في حلقة المراجعة النهائية
+
+## 3. ما تم تنفيذه فعليًا
+
+### Frontend
+
+- React + TypeScript + Vite
+- Landing page
+- Login / Register
+- Organization-aware auth
+- Dashboard الرئيسي
+- قائمة المرضى
+- تفاصيل المريض
+- إدارة المواعيد
+- Clinical notes
+- AI assistant داخل سياق المريض
+- Tasks و Care Plans
+- Patient portal
+- Team و Audit
+- Analytics و Department Metrics
+- دعم العربية والإنجليزية
+
+### Backend
+
+- FastAPI
+- SQLAlchemy
+- JWT auth
+- Argon2 password hashing
+- organization-scoped authorization
+- patient-level access validation
+- audit event logging
+- OIDC-ready SSO flow
+- storage abstraction for documents
+- patient portal validation and uploads
+
+### Domain model
+
+- Organization
+- User
+- Patient
+- Appointment
+- ClinicalNote
+- Task
+- CarePlan
+- PatientDocument
+- PatientPortalAccount
+- PatientPortalDocument
+- Notification
+- AuditEvent
+
+## 4. هيكل المشروع
 
 ```text
-Landing → Login
-→ authMethod = Email / Password OR Hospital SSO
-→ backend/auth request resolves identity
-→ backend/user payload includes onboarding_complete
-→ if onboarding_complete = true: Dashboard
-→ if onboarding_complete = false: Onboarding
+.
+├── src/
+│   ├── App.tsx                 # Thin entry point
+│   ├── app/                    # Shell, routing, and auth bootstrap
+│   │   ├── AppShell.tsx
+│   │   ├── authBootstrap.ts
+│   │   └── routes.ts
+│   ├── api/                    # Domain API boundaries
+│   │   ├── auth.ts
+│   │   ├── patients.ts
+│   │   ├── appointments.ts
+│   │   ├── documents.ts
+│   │   ├── messages.ts
+│   │   ├── analytics.ts
+│   │   ├── portal.ts
+│   │   ├── workspace.ts
+│   │   └── client.ts
+│   ├── features/               # Feature-owned screens and workflows
+│   │   ├── auth/
+│   │   ├── appointments/
+│   │   ├── analytics/
+│   │   ├── dashboard/
+│   │   ├── documents/
+│   │   ├── landing/
+│   │   ├── messages/
+│   │   ├── patients/
+│   │   ├── settings/
+│   │   └── workspace/
+│   ├── components/             # Shared visual primitives
+│   │   ├── PageHeading.tsx
+│   │   ├── PanelHeading.tsx
+│   │   ├── Modal.tsx
+│   │   └── LoadingState.tsx
+│   ├── api.ts                  # Existing API compatibility surface
+│   ├── data.ts
+│   ├── i18n.ts
+│   ├── main.tsx
+│   └── styles.css
+├── backend/
+│   ├── app/
+│   │   ├── api.py
+│   │   ├── auth.py
+│   │   ├── config.py
+│   │   ├── contracts.py
+│   │   ├── db.py
+│   │   ├── email_service.py
+│   │   ├── integrations.py
+│   │   ├── main.py
+│   │   ├── models.py
+│   │   ├── rbac.py
+│   │   ├── sso.py
+│   │   ├── storage.py
+│   │   └── workspace.py
+│   ├── migrations/
+│   ├── tests/
+│   ├── Dockerfile
+│   ├── README.md
+│   ├── requirements.txt
+│   └── pyproject.toml
+├── docs/
+│   ├── API_REFERENCE.md
+│   └── IMPLEMENTATION_PLAN.md
+├── tests/
+│   └── e2e/
+│       ├── language.spec.ts
+│       └── feature-routes.spec.ts
+├── docker-compose.yml
+├── package.json
+├── playwright.config.ts
+├── README.md
+├── SECURITY.md
+├── ARCHITECTURE_ROADMAP.md
+├── HANDOFF.md
+├── index.html
+└── LICENSE
 ```
 
-وبالتالي:
+## 5. النطاق الحالي للمشروع
 
-- Email / Password source يمر عبر `apiLogin()` أو `apiRegister()` حسب الحالة.
-- Hospital SSO source يمر عبر `apiLoginWithSso()`.
-- `onboarding_complete` في payload الخاص بـ `AuthUser` يحدد التالي:
-  - `Dashboard` في حال وجود workspace جاهز
-  - `Onboarding` في حال عدم وجود workspace أو المؤسسة بعدية
+### تم تنفيذه بشكل فعلي
 
-ويتعامل UI مع هذا التقسيم عبر `setOnboardingComplete(Boolean(result.user.onboarding_complete))` في `App.tsx` والأثر المنطقي عليه داخل الرندر.
+- واجهة React/Vite تعمل كـ clinical workspace shell
+- landing page + auth flow
+- تسجيل الدخول داخل المؤسسة
+- نظام users + organizations + role-aware access
+- إدارة المرضى والمواعيد
+- ملاحظات سريرية + AI draft summaries
+- المهام وخطط الرعاية
+- patient portal
+- analytics + department metrics
+- audit / notifications
+- storage abstraction
+- SSO start/callback routes
 
-#### التهيئة والـfallback
+### ما لا يزال في مرحلة التكامل أو الـhardening
 
-- عند نجاح login/register/email-password flow أو SSO flow، يتم تمرير `authMethod: "email"` أو `authMethod: "sso"` إلى `App.tsx` handler.
-- عند `authMethod === "sso"` يتم استدعاء `apiLoginWithSso()`.
-- عند `authMethod === "email"` يتم استخدام `apiLogin()` أو `apiRegister()` حسب `mode`.
-- في حالات عدم توفر Backend/Request failed داخل DEV، يتم فتح Synthetic demo من خلال الـ UI مع `localStorage` و`notify()`، وهذا لا يكون تكاملًا حقيقيًا، وإنما fallback تجريبي فقط.
+- real external IdP integration
+- real LLM provider integration
+- RAG/vector memory layer
+- OCR real provider
+- production secrets and deployment security
+- full tenant isolation across every path
+- real email/SMS delivery layer
 
-### 3. Onboarding
+## 6. API contract الفعلي
 
-يجمع اسم المؤسسة ويكمل إعداد مساحة العمل. عند توفر API يتم حفظ المؤسسة عبر:
+Base URL:
+
+```text
+http://localhost:8000/api/v1
+```
+
+Header:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+### 6.1 System
+
+```http
+GET /health
+GET /readiness
+GET /metrics
+GET /system/status
+POST /system/audit/cleanup
+```
+
+### 6.2 Auth و onboarding
+
+```http
+POST /auth/register
+POST /auth/login
+POST /auth/logout
+GET /me
+POST /auth/verify-email
+POST /auth/sso/start
+POST /auth/sso/callback
+POST /auth/sso
+GET /organization
+GET /workspace
+POST /workspace
+PATCH /organization
+```
+
+### 6.3 Team / Audit / Notifications
+
+```http
+GET /team
+POST /team/invites
+GET /audit-events
+GET /notifications
+PATCH /notifications/{notification_id}/read
+```
+
+### 6.4 Clinical core
+
+```http
+GET /dashboard
+GET /patients
+POST /patients
+GET /patients/{patient_id}
+PATCH /patients/{patient_id}
+GET /appointments
+POST /appointments
+PATCH /appointments/{appointment_id}/status
+POST /clinical-notes
+POST /clinical-notes/{note_id}/summary
+POST /clinical-notes/{note_id}/sign
+POST /assistant/query
+POST /patients/{patient_id}/documents
+```
+
+### 6.5 Messages / Tasks / Care Plans
+
+```http
+GET /messages
+POST /messages
+GET /tasks
+POST /tasks
+GET /care-plans
+POST /care-plans
+```
+
+### 6.6 Patient portal
+
+```http
+GET /portal/patients/{patient_id}
+POST /patient-portal/register
+POST /patient-portal/login
+GET /patient-portal/me
+POST /patient-portal/documents
+GET /patient-portal/documents/{document_id}/download
+```
+
+### 6.7 Analytics and reports
+
+```http
+GET /department-metrics
+GET /analytics
+GET /reports
+```
+
+## 7. أمثلة payloads
+
+### Register
+
+```json
+{
+  "email": "admin@clinic.example",
+  "password": "StrongPass123!",
+  "full_name": "Dr. Sarah Ali",
+  "organization_name": "NorthCare Health",
+  "department": "General Medicine",
+  "project": "Outpatient",
+  "role": "administrator"
+}
+```
+
+### Login
+
+```json
+{
+  "email": "admin@clinic.example",
+  "password": "StrongPass123!"
+}
+```
+
+### Create patient
+
+```json
+{
+  "medical_record_number": "MRN-2001",
+  "given_name": "Nadia",
+  "family_name": "Youssef",
+  "department": "Cardiology",
+  "project": "Heart Clinic",
+  "date_of_birth": "1992-09-13",
+  "gender": "female",
+  "condition": "Follow-up review",
+  "care_status": "stable"
+}
+```
+
+### Create appointment
+
+```json
+{
+  "patient_id": "uuid",
+  "starts_at": "2026-09-20T09:00:00Z",
+  "reason": "Medication review",
+  "status": "pending"
+}
+```
+
+### Create note
+
+```json
+{
+  "patient_id": "uuid",
+  "body": "Patient reports improved sleep quality after medication adjustment.",
+  "ai_draft": "Optional AI draft summary"
+}
+```
+
+## 8. نموذج الأمان الحالي
+
+النظام الحالي يطبق الأساسيات الحيوية للأمان في تطبيق طبي:
+
+- JWT authentication
+- Argon2 password hashing
+- organization-scoped access
+- patient-level validation
+- portal token verification
+- audit logging
+- document upload isolation abstraction
+- OIDC-ready SSO design
+
+لكن لا يزال المشروع ضمن مرحلة production-hardening، وليس جاهزًا للاستخدام في بيئة الإنتاج الفعلية مع بيانات PHI دون مزيد من التحقق الأمني والتكامل الخارجي.
+
+## 9. مسار العمل داخل التطبيق
+
+### Landing Page
+
+- يشرح قيمة المنتج
+- يوضح الفرق بين CareOS و chatbot عادي
+- يتيح الدخول إلى Login أو إنشاء workspace
+
+### Login و Register
+
+- Email/password
+- organization-aware onboarding
+- SSO flow
+- onboarding state check
+
+### Dashboard
+
+- عدد المرضى
+- المواعيد القادمة
+- المهام
+- متابعة الفريق
+- مؤشرات الأقسام
+
+### Patient Profile
+
+- السجل الأساسي للمريض
+- الملاحظات
+- المواعيد
+- المستندات
+- المهام
+- care plans
+- الرسائل
+
+### Clinical Visit flow
+
+- كتابة ملاحظة
+- توليد مسودة AI
+- مراجعة الطبيب
+- التوقيع النهائي
+
+### Clinical Assistant
+
+- يعمل داخل سياق المريض
+- يجيب على أسئلة ذات صلة
+- يتيح traceability للمصادر
+- يراعي مراجعة بشرية قبل أي قرار حاسم
+
+## 10. تشغيل المشروع محليًا
+
+### Frontend
+
+```powershell
+npm install
+npm run dev
+```
+
+### Backend
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+### Docker
+
+```powershell
+Copy-Item .env.example .env
+# Set POSTGRES_PASSWORD and SECRET_KEY in .env before starting.
+docker compose up --build
+```
+
+Open the web app at `http://localhost:5173`. The API is available at `http://localhost:8000/api/v1`.
+For a deployed environment, replace `APP_URL`, `CORS_ORIGINS`, `ALLOWED_HOSTS`, and `SSO_ALLOWED_REDIRECT_HOSTS` with the real public hosts. Keep S3 private and provide credentials through workload identity or deployment secrets.
+
+## 11. متغيرات البيئة
+
+### Frontend
+
+```env
+VITE_API_URL=http://localhost:8000/api/v1
+```
+
+### Backend
+
+المتغيرات الأساسية تشمل:
+
+- APP_ENV
+- DATABASE_URL
+- SECRET_KEY
+- JWT_ALGORITHM
+- ACCESS_TOKEN_MINUTES
+- CORS_ORIGINS
+- OIDC_ISSUER_URL
+- OIDC_CLIENT_ID
+- OIDC_CLIENT_SECRET
+- AUDIT_RETENTION_DAYS
+- SMTP settings
+- S3/object storage settings
+
+## 12. ما الذي يميز المشروع
+
+CareOS ليس مجرد واجهة AI، بل نظام يضع الذكاء داخل سير العمل الطبي نفسه:
+
+- المريض في قلب العملية
+- الفريق يعمل على نفس السياق
+- الملاحظات، المواعيد، المهام، والمستندات مرتبطة
+- audit trail موجود
+- access control حسب المؤسسة
+- AI يعمل كـassistant وليس كـdecision-maker مستقل
+
+## 13. التوثيقات المرجعية
+
+- [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
+- [HANDOFF.md](HANDOFF.md)
+- [ARCHITECTURE_ROADMAP.md](ARCHITECTURE_ROADMAP.md)
+- [SECURITY.md](SECURITY.md)
+
+## 14. الخلاصة
+
+CareOS الآن مشروع عملي ومتماسك نسبيًا مع Frontend و Backend حقيقيين، و API contract واضح، وسير عمل طبي متكامل.المشكلة الحقيقية ليست في فكرة المشروع أو بنية الواجهة، بل في التوسع إلى مستوى الإنتاج الحقيقي عبر:
+
+- تكامل هوية حقيقي
+- tenant/organization enforcement صارم
+- LLM/RAG/OCR حقيقية
+- مراقبة، أمان، والتزام قانوني
+
+وهذا ما يجعل المشروع مناسبًا كـ MVP healthcare SaaS مع مسار واضح نحو المنتج الفعلي.
+
 
 ```text
 PATCH /api/v1/organization

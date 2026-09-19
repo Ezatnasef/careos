@@ -1,0 +1,20 @@
+import { useEffect, useState } from "react";
+import { Bell, LogOut, Moon, ShieldCheck, SlidersHorizontal, Sun, UserRound } from "lucide-react";
+import { completeOrganization, getOrganization } from "../../api/workspace";
+import { PageHeading } from "../../components/PageHeading";
+import { PanelHeading } from "../../components/PanelHeading";
+import type { Language, TranslationKey } from "../../i18n";
+
+type Translator = (key: TranslationKey) => string;
+type Theme = "light" | "dark";
+type Props = { language: Language; setLanguage: (language: Language) => void; theme: Theme; setTheme: (theme: Theme) => void; doctorName: string; setDoctorName: (name: string) => void; onLogout: () => void; t: Translator };
+
+export function SettingsPage({ language, setLanguage, theme, setTheme, doctorName, setDoctorName, onLogout, t }: Props) {
+  const [organizationName, setOrganizationName] = useState("");
+  const [organizationDepartment, setOrganizationDepartment] = useState("Clinical care");
+  const [organizationTimezone, setOrganizationTimezone] = useState("Africa/Cairo");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { getOrganization().then((organization) => { setOrganizationName(organization.name); setOrganizationDepartment(organization.department || "Clinical care"); setOrganizationTimezone(organization.timezone || "Africa/Cairo"); }).catch(() => undefined).finally(() => setLoading(false)); }, []);
+  return <><PageHeading eyebrow={t("workspace")} title={t("settingsTitle")} detail={t("settingsDetail")} /><div className="settings-layout"><section className="panel settings-nav"><button className="active"><UserRound size={16} /> {t("profile")}</button><button><SlidersHorizontal size={16} /> {t("preferences")}</button><button><ShieldCheck size={16} /> {t("security")}</button><button><Bell size={16} /> {t("notificationsSetting")}</button></section><section className="panel settings-form"><PanelHeading title={t("profile")} detail={t("demoProfile")} /><label>{t("displayName")}<input value={doctorName} onChange={(event) => setDoctorName(event.target.value)} /></label><label>{t("specialtyLabel")}<input defaultValue={t("internalMedicine")} /></label><label>{t("organizationName")}<input value={organizationName} disabled={loading} onChange={(event) => setOrganizationName(event.target.value)} /></label><label>Department<input value={organizationDepartment} disabled={loading} onChange={(event) => setOrganizationDepartment(event.target.value)} /></label><label>Timezone<select value={organizationTimezone} disabled={loading} onChange={(event) => setOrganizationTimezone(event.target.value)}><option value="Africa/Cairo">Africa/Cairo</option><option value="UTC">UTC</option><option value="Europe/London">Europe/London</option></select></label><label>Language<select value={language} onChange={(event) => setLanguage(event.target.value as Language)}><option value="en">English</option><option value="ar">العربية</option></select></label><div className="theme-setting"><span>{t("preferences")}</span><button type="button" className="glass-control-btn glass-icon-btn" aria-label={theme === "dark" ? t("lightMode") : t("darkMode")} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}</button></div><div className="settings-actions"><button className="primary-btn" disabled={saving || !organizationName.trim()} onClick={async () => { setSaving(true); try { await completeOrganization(organizationName.trim(), organizationDepartment.trim() || "Clinical care", organizationTimezone); window.dispatchEvent(new CustomEvent("careos:toast", { detail: t("savedChanges") })); } catch (error) { window.dispatchEvent(new CustomEvent("careos:toast", { detail: error instanceof Error ? error.message : "Could not save organization" })); } finally { setSaving(false); } }}>{saving ? t("working") : t("saveChanges")}</button><button className="danger-btn" onClick={onLogout}><LogOut size={15} /> {t("signOut")}</button></div></section></div></>;
+}

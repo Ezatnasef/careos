@@ -10,6 +10,8 @@ export type Patient = {
 };
 
 export type Appointment = {
+  id?: string;
+  date?: string;
   time: string;
   patientId: string;
   type:

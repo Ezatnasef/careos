@@ -1,17 +1,76 @@
-"""RBAC and role/permission placeholder.
+"""RBAC and role/permission definitions for CareOS.
 
-This module should be the single source of truth for role checks,
-resource scopes, organization-level permission mapping and clinical
-feature access policy.
+This is the single source of truth for mapped roles, permissions, and the
+organization-scoped access policy used by the clinical workspace.
 """
 
 from __future__ import annotations
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
-    "physician": {"patient.read", "patient.write", "clinic.note", "appointment.read"},
-    "nurse": {"patient.read", "patient.write", "clinic.note", "appointment.read"},
-    "care_coordinator": {"patient.read", "appointment.read", "team.invite"},
-    "administrator": {"patient.read", "patient.write", "team.invite", "organization.update", "audit.read"},
+    "admin": {
+        "dashboard.read",
+        "patient.read",
+        "patient.write",
+        "appointment.read",
+        "appointment.write",
+        "medical.summary",
+        "clinical.note",
+        "team.read",
+        "team.invite",
+        "organization.update",
+        "audit.read",
+        "analytics.read",
+    },
+    "doctor": {
+        "dashboard.read",
+        "patient.read",
+        "patient.write",
+        "appointment.read",
+        "appointment.write",
+        "medical.summary",
+        "clinical.note",
+        "analytics.read",
+    },
+    "nurse": {
+        "dashboard.read",
+        "patient.read",
+        "patient.write",
+        "appointment.read",
+        "clinical.note",
+        "medical.summary",
+    },
+    "receptionist": {
+        "dashboard.read",
+        "patient.read",
+        "appointment.read",
+        "appointment.write",
+        "team.read",
+    },
+    "patient": {
+        "dashboard.read",
+        "patient.read",
+        "appointment.read",
+        "medical.summary",
+    },
+}
+
+ROLE_ALIASES: dict[str, str] = {
+    "administrator": "admin",
+    "admin": "admin",
+    "physician": "doctor",
+    "doctor": "doctor",
+    "nurse": "nurse",
+    "care_coordinator": "receptionist",
+    "receptionist": "receptionist",
+    "patient": "patient",
+}
+
+ROLE_SECTION_ACCESS: dict[str, set[str]] = {
+    "admin": {"dashboard", "patients", "appointments", "team", "audit", "clinical", "analytics", "reports", "messages", "portal", "settings"},
+    "doctor": {"dashboard", "patients", "appointments", "clinical", "analytics", "messages", "portal", "settings"},
+    "nurse": {"dashboard", "patients", "appointments", "clinical", "messages", "portal", "settings"},
+    "receptionist": {"dashboard", "patients", "appointments", "messages", "portal", "settings"},
+    "patient": {"portal", "appointments", "messages", "settings"},
 }
 
 PERMISSION_MATRIX: dict[str, list[str]] = {
@@ -20,19 +79,80 @@ PERMISSION_MATRIX: dict[str, list[str]] = {
     "appointments": ["appointment.read", "appointment.write"],
     "team": ["team.invite", "team.read"],
     "audit": ["audit.read"],
+    "clinical": ["clinical.note", "medical.summary"],
+    "analytics": ["analytics.read"],
+    "messages": ["patient.read"],
+    "portal": ["patient.read"],
+    "reports": ["analytics.read"],
 }
 
 
-def require_permission(permission: str, role: str) -> bool:
-    """Return whether a role is allowed to perform the target permission.
+def normalize_role(role: str | None) -> str:
+    if not role:
+        return "doctor"
+    canonical = str(role).strip().lower().replace(" ", "_")
+    return ROLE_ALIASES.get(canonical, canonical)
 
-    Replace the placeholder boolean model with real permission checks against
-    organization scope, user attributes, workspace membership, and policy tables.
+
+def permissions_for_role(role: str | None) -> list[str]:
+    normalized = normalize_role(role)
+    return sorted(ROLE_PERMISSIONS.get(normalized, set()))
+
+
+def require_permission(permission: str, role: str) -> bool:
+    """Return whether a role is allowed to perform the target permission."""
+    normalized = normalize_role(role)
+    return permission in ROLE_PERMISSIONS.get(normalized, set())
+
+
+def has_any_role(role: str | None, *allowed_roles: str) -> bool:
+    """Check whether a user role matches one of the allowed roles after normalization."""
+    normalized_role = normalize_role(role)
+    normalized_allowed = {normalize_role(candidate) for candidate in allowed_roles}
+    return normalized_role in normalized_allowed
+
+
+def can_access_section(role: str | None, section: str) -> bool:
+    """Return whether a normalized role is allowed to access a section."""
+    normalized = normalize_role(role)
+    allowed = ROLE_SECTION_ACCESS.get(normalized, set())
+    return section in allowed
+
+
+def can_access_patient_scope(
+    role: str | None,
+    action: str,
+    same_organization: bool,
+    same_department: bool = True,
+    same_project: bool = True,
+) -> bool:
+    """Enforce patient-scoped access for clinical workflows, including department/project boundaries.
+
+    The first production guard is organization-level isolation, but the policy is designed to
+    fail closed when a caller lacks the required department/project match.
     """
-    allowed = role in ROLE_PERMISSIONS and permission in ROLE_PERMISSIONS[role]
-    return allowed
+    if not same_organization or not same_department or not same_project:
+        return False
+    normalized = normalize_role(role)
+    action = action.lower().strip()
+    if normalized == "admin":
+        return action in {"read", "write", "notes", "appointments", "documents"}
+    if normalized == "doctor":
+        return action in {"read", "write", "notes", "appointments", "documents"}
+    if normalized == "nurse":
+        return action in {"read", "write", "notes", "appointments", "documents"}
+    if normalized == "receptionist":
+        return action in {"read", "appointments"}
+    if normalized == "patient":
+        return action in {"read"}
+    return False
+
+
+def can_access_patient_resource(role: str | None, permission: str) -> bool:
+    """Alias for permission checks used by patient-sensitive resources."""
+    return require_permission(permission, normalize_role(role))
 
 
 def get_missing_policy(role: str, permission: str) -> str:
     """Return a human-readable policy note for teams that finish the project later."""
-    return f"Missing RBAC policy: role={role} permission={permission}"
+    return f"Missing RBAC policy: role={normalize_role(role)} permission={permission}"

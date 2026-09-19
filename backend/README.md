@@ -21,3 +21,9 @@ alembic upgrade head
 ```
 
 The service exposes database-backed registration, login, organization onboarding, team invites, and administrator audit events. The local synthetic workspace remains separate from real patient data. Production still requires hospital OIDC/SAML, MFA, refresh-token rotation, email delivery for invites, and managed secrets.
+
+## Storage and identity hardening
+
+Portal documents are written through `StorageService` using either local private filesystem storage or private S3. Documents are addressed by tenant-scoped keys and served through `GET /api/v1/patient-portal/documents/{document_id}/download`, which rechecks the portal account, patient, and organization before reading the object.
+
+For external identity, configure `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `SSO_ALLOWED_REDIRECT_HOSTS`. The current adapter is OIDC-ready and development-compatible; production must add provider-library signature, issuer, audience, nonce, state, expiry, and verified-claim validation before enabling real sign-in.

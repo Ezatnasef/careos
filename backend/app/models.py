@@ -34,10 +34,13 @@ class User(Base):
 
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    department: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    project: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default=UserRole.PHYSICIAN.value)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     onboarding_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     organization: Mapped[Organization] = relationship(back_populates="users")
@@ -93,6 +96,8 @@ class Patient(Base):
 
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    department: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    project: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     medical_record_number: Mapped[str] = mapped_column(String(64), nullable=False)
     given_name: Mapped[str] = mapped_column(String(120), nullable=False)
     family_name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -141,9 +146,98 @@ class PatientDocument(Base):
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
     patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_key: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    download_url: Mapped[str | None] = mapped_column(String(500))
+    content_type: Mapped[str] = mapped_column(String(80), nullable=False, default="application/octet-stream")
+    size_bytes: Mapped[int] = mapped_column(nullable=False, default=0)
     ocr_status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    review_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     extracted_text: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PatientMessage(Base):
+    __tablename__ = "patient_messages"
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    sender_type: Mapped[str] = mapped_column(String(32), nullable=False, default="care_team")
+    direction: Mapped[str] = mapped_column(String(24), nullable=False, default="outbound")
+    subject: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class PatientPortalAccount(Base):
+    __tablename__ = "patient_portal_accounts"
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
+    full_name: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class PatientPortalSession(Base):
+    __tablename__ = "patient_portal_sessions"
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    portal_account_id: Mapped[UUID] = mapped_column(ForeignKey("patient_portal_accounts.id"), nullable=False, index=True)
+    token_jti: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PatientPortalDocument(Base):
+    __tablename__ = "patient_portal_documents"
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    portal_account_id: Mapped[UUID | None] = mapped_column(ForeignKey("patient_portal_accounts.id"), nullable=True, index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    download_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(80), nullable=False, default="application/octet-stream")
+    size_bytes: Mapped[int] = mapped_column(nullable=False, default=0)
+    content: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class CarePlan(Base):
+    __tablename__ = "care_plans"
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    goals: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    assignee: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    priority: Mapped[str] = mapped_column(String(24), nullable=False, default="medium")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class ReminderJob(Base):

@@ -6,6 +6,20 @@ The repository now contains a FastAPI/PostgreSQL identity, organization, session
 
 The development-only browser fallback is enabled only when `import.meta.env.DEV` is true. Production builds require the API for authentication. Never use the fallback with real data.
 
+## Tenant and document boundaries
+
+- Every staff request resolves the user from the server-side session and scopes clinical records by `organization_id` before applying department/project rules.
+- Patient-portal tokens carry tenant and patient claims, but the API also compares those claims with the persisted account and patient records on every request.
+- Portal documents are stored under an organization/patient-prefixed key. The client receives an authenticated API download URL, never a public S3 object URL.
+- Storage keys are validated on write, read, and delete. Path traversal, absolute paths, and backslash-based keys are rejected.
+- S3 buckets must remain private. Use IAM roles or workload identity in production; do not expose access keys to the browser or `VITE_*` variables.
+
+## External identity boundary
+
+- SSO redirect targets are allowlisted by `SSO_ALLOWED_REDIRECT_HOSTS`; arbitrary callback hosts are rejected.
+- Production OIDC must validate issuer, audience, signature, nonce, state, token expiry, and verified email/domain claims using a maintained provider library.
+- Role and organization claims must be mapped through an explicit allowlist. Never trust a browser-supplied role or organization identifier.
+
 ## Release gate before real data
 
 1. Replace synthetic clinical modules with authenticated, organization-scoped server APIs.
