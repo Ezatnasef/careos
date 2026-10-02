@@ -20,6 +20,15 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "organization.update",
         "audit.read",
         "analytics.read",
+        "roles.view",
+        "roles.assign",
+        "roles.manage",
+        "permissions.view",
+        "users.invite",
+        "patients.create",
+        "clinical_notes.create",
+        "clinical_notes.approve",
+        "encounters.create", "encounters.view", "recordings.create", "recordings.view", "transcripts.create", "transcripts.view", "transcripts.update",
     },
     "doctor": {
         "dashboard.read",
@@ -30,6 +39,10 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "medical.summary",
         "clinical.note",
         "analytics.read",
+        "patients.create",
+        "clinical_notes.create",
+        "clinical_notes.approve",
+        "encounters.create", "encounters.view", "recordings.create", "recordings.view", "transcripts.create", "transcripts.view", "transcripts.update",
     },
     "nurse": {
         "dashboard.read",
@@ -38,6 +51,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "appointment.read",
         "clinical.note",
         "medical.summary",
+        "patients.create",
+        "clinical_notes.create",
+        "encounters.view", "recordings.view", "transcripts.view", "transcripts.update",
     },
     "receptionist": {
         "dashboard.read",
@@ -63,7 +79,53 @@ ROLE_ALIASES: dict[str, str] = {
     "care_coordinator": "receptionist",
     "receptionist": "receptionist",
     "patient": "patient",
+    "hospital_director": "hospital_director",
+    "director": "hospital_director",
+    "it_admin": "it_admin",
+    "it_administrator": "it_admin",
+    "administrative_staff": "administrative_staff",
+    "staff": "administrative_staff",
 }
+
+ROLE_PERMISSIONS.update({
+    "admin": ROLE_PERMISSIONS["admin"] | {
+        "dashboard.read", "patients.search", "patients.view", "patients.create", "patients.update", "appointments.view", "appointments.create", "appointments.update",
+        "clinical_notes.create", "clinical_notes.view", "clinical_notes.update", "clinical_notes.approve", "documents.create", "documents.download",
+        "encounters.create", "encounters.view", "recordings.create", "recordings.view", "transcripts.create", "transcripts.view", "transcripts.update",
+        "users.view", "audit_logs.view", "hospital.settings.view", "hospital.settings.manage", "roles.view", "roles.assign", "roles.manage", "permissions.view",
+        "sso.view", "sso.manage",
+        "analytics.view", "reports.view", "patient.read", "patient.write", "clinical.note", "medical.summary",
+    },
+    "doctor": ROLE_PERMISSIONS["doctor"] | {
+        "dashboard.read", "patients.search", "patients.view", "patients.create", "patients.update", "appointments.view", "appointments.create", "appointments.update",
+        "clinical_notes.create", "clinical_notes.view", "clinical_notes.update", "clinical_notes.approve", "documents.create", "documents.download",
+        "encounters.create", "encounters.view", "recordings.create", "recordings.view", "transcripts.create", "transcripts.view", "transcripts.update",
+        "patient.read", "patient.write", "analytics.view", "clinical.note", "medical.summary",
+    },
+    "nurse": ROLE_PERMISSIONS["nurse"] | {
+        "dashboard.read", "patients.search", "patients.view", "patients.create", "patients.update", "appointments.view", "appointments.create", "appointments.update",
+        "clinical_notes.create", "clinical_notes.view", "clinical_notes.update", "documents.create", "encounters.view", "recordings.view", "transcripts.view",
+        "patient.read", "patient.write", "clinical.note", "medical.summary",
+    },
+    "receptionist": ROLE_PERMISSIONS["receptionist"] | {
+        "patients.search", "patients.view", "appointments.view", "appointments.create", "appointments.update",
+    },
+    "hospital_director": {
+        "dashboard.read", "users.view", "users.create", "users.update", "users.disable", "users.invite",
+        "roles.view", "roles.assign", "roles.manage", "reports.view", "analytics.view", "audit_logs.view",
+        "hospital.view", "hospital.settings.view", "hospital.settings.manage", "departments.view", "departments.manage",
+        "patients.search", "patients.view", "patient.read",
+    },
+    "it_admin": {
+        "dashboard.read", "users.view", "users.create", "users.update", "users.disable", "users.invite",
+        "roles.view", "roles.assign", "permissions.view", "sso.view", "sso.manage", "security.view", "audit_logs.view",
+    },
+    "administrative_staff": {
+        "dashboard.read", "appointments.view", "appointments.create", "appointments.update",
+        "patients.search", "patients.view", "patients.demographics.view", "checkin.create", "checkin.view",
+        "departments.view", "reports.operational.view",
+    },
+})
 
 ROLE_SECTION_ACCESS: dict[str, set[str]] = {
     "admin": {"dashboard", "patients", "appointments", "team", "audit", "clinical", "analytics", "reports", "messages", "portal", "settings"},
@@ -71,6 +133,9 @@ ROLE_SECTION_ACCESS: dict[str, set[str]] = {
     "nurse": {"dashboard", "patients", "appointments", "clinical", "messages", "portal", "settings"},
     "receptionist": {"dashboard", "patients", "appointments", "messages", "portal", "settings"},
     "patient": {"portal", "appointments", "messages", "settings"},
+    "hospital_director": {"dashboard", "patients", "appointments", "team", "audit", "analytics", "reports", "settings"},
+    "it_admin": {"dashboard", "team", "audit", "settings"},
+    "administrative_staff": {"dashboard", "patients", "appointments", "reports", "settings"},
 }
 
 PERMISSION_MATRIX: dict[str, list[str]] = {
@@ -102,7 +167,24 @@ def permissions_for_role(role: str | None) -> list[str]:
 def require_permission(permission: str, role: str) -> bool:
     """Return whether a role is allowed to perform the target permission."""
     normalized = normalize_role(role)
-    return permission in ROLE_PERMISSIONS.get(normalized, set())
+    permissions = ROLE_PERMISSIONS.get(normalized, set())
+    aliases = {
+        "patients.create": "patient.write",
+        "patients.update": "patient.write",
+        "clinical_notes.create": "clinical.note",
+        "clinical_notes.update": "clinical.note",
+        "clinical_notes.approve": "clinical_notes.approve",
+        "users.invite": "team.invite",
+        "appointments.create": "appointment.write",
+        "appointments.update": "appointment.write",
+        "appointments.view": "appointment.read",
+        "documents.create": "patient.write",
+        "documents.view": "patient.read",
+        "documents.download": "patient.read",
+        "audit_logs.view": "audit.read",
+        "hospital.settings.manage": "organization.update",
+    }
+    return permission in permissions or aliases.get(permission) in permissions
 
 
 def has_any_role(role: str | None, *allowed_roles: str) -> bool:
@@ -145,6 +227,8 @@ def can_access_patient_scope(
         return action in {"read", "appointments"}
     if normalized == "patient":
         return action in {"read"}
+    if normalized in {"hospital_director", "it_admin", "administrative_staff"}:
+        return action in {"read", "appointments"} if normalized != "it_admin" else False
     return False
 
 

@@ -37,9 +37,13 @@ class StorageService:
 
     def save_document(self, *, organization_id: str, patient_id: str, filename: str, content: bytes | str, content_type: str = "application/octet-stream") -> tuple[str, str]:
         safe_filename = self._safe_filename(filename)
+        if content_type not in self.settings.allowed_upload_content_types:
+            raise ValueError("Unsupported upload content type")
         if self.settings.storage_backend.lower() == "s3":
             self._validate_storage_target(storage_backend=self.settings.storage_backend, bucket=self.settings.s3_bucket)
         payload = content.encode("utf-8") if isinstance(content, str) else content
+        if len(payload) > self.settings.max_upload_bytes:
+            raise ValueError("Upload exceeds the configured size limit")
         storage_prefix = (self.settings.storage_prefix or "careos").strip().strip("/")
         key = f"{storage_prefix}/{organization_id}/{patient_id}/{datetime.now(timezone.utc).strftime('%Y%m%d')}/{uuid4().hex}-{safe_filename}"
 

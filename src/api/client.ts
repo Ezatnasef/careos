@@ -33,4 +33,6 @@ export function portalRequest<T>(path: string, options: RequestInit = {}): Promi
 export function clearSession(): void {
   localStorage.removeItem("careos-access-token");
   localStorage.removeItem("careos-portal-token");
+  localStorage.removeItem("careos-demo-mode");
+  localStorage.removeItem("careos-demo-user");
 }

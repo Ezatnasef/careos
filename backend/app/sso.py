@@ -22,6 +22,8 @@ from typing import Any
 from urllib.parse import urlparse, urlencode
 
 import httpx
+from httpx import HTTPError
+from jose import JWTError, jwt
 
 from .config import get_settings
 
@@ -50,12 +52,14 @@ class HospitalSSOAdapter:
     def __init__(self, provider_name: str = "hospital_sso") -> None:
         settings = get_settings()
         self.provider_name = provider_name
-        self.issuer_url = settings.oidc_issuer_url or "https://hospital-sso.local/oauth/authorize"
-        self.client_id = settings.oidc_client_id or f"{provider_name}-client"
+        self.issuer_url = settings.oidc_issuer_url
+        self.client_id = settings.oidc_client_id
         self.callback_url = settings.app_url or "http://localhost:5173"
 
     def build_redirect_url(self, *, state: str, nonce: str, redirect_uri: str | None = None) -> str:
         """Return a provider redirect URL with the required SSO state."""
+        if not self.issuer_url or not self.client_id:
+            raise ValueError("OIDC provider is not configured")
         redirect_target = (redirect_uri or self.callback_url).strip()
         self.validate_redirect_uri(redirect_target)
         params = {
@@ -104,30 +108,33 @@ class HospitalSSOAdapter:
         """Normalize a callback code into a local SSO claim set."""
         if not code or not state:
             raise ValueError("SSO callback requires both code and state")
-
-        if code in {"demo-sso-code", "demo-code", "hospital-demo"}:
-            email = "dr.rana@citycare.org"
-            return SSOClaims(
-                email=email,
-                full_name="Dr. Rana Samir",
-                given_name="Rana",
-                family_name="Samir",
-                organization_domain="citycare.org",
-                role="physician",
-                provider_user_id="hs-demo-rana",
-            )
+        try:
+            state_claims = jwt.decode(state, get_settings().secret_key, algorithms=[get_settings().jwt_algorithm])
+            expected_nonce = str(state_claims["nonce"])
+        except (JWTError, KeyError, TypeError, ValueError) as error:
+            raise ValueError("Invalid or expired SSO state") from error
 
         try:
+            if not self.issuer_url or not self.client_id:
+                raise ValueError("OIDC provider is not configured")
             discovery_url = f"{self.issuer_url.rstrip('/')}/.well-known/openid-configuration"
             discovery = httpx.get(discovery_url, timeout=10)
             discovery.raise_for_status()
             metadata = discovery.json() or {}
             userinfo_endpoint = metadata.get("userinfo_endpoint")
             token_endpoint = metadata.get("token_endpoint")
+            jwks_uri = metadata.get("jwks_uri")
 
             token_response = httpx.post(
                 token_endpoint,
-                data={"grant_type": "authorization_code", "code": code, "state": state},
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "state": state,
+                    "client_id": self.client_id,
+                    "client_secret": get_settings().oidc_client_secret,
+                    "redirect_uri": self.callback_url,
+                },
                 timeout=10,
             )
             token_response.raise_for_status()
@@ -135,9 +142,27 @@ class HospitalSSOAdapter:
             access_token = token_payload.get("access_token")
             id_token = token_payload.get("id_token")
 
-            claims_payload = self._decode_jwt_payload(id_token) if id_token else {}
+            if get_settings().is_production:
+                if not id_token or not jwks_uri:
+                    raise ValueError("OIDC response is missing a verifiable ID token or JWKS URI")
+                jwks_response = httpx.get(jwks_uri, timeout=10)
+                jwks_response.raise_for_status()
+                claims_payload = jwt.decode(
+                    id_token,
+                    jwks_response.json(),
+                    algorithms=["RS256", "RS384", "RS512"],
+                    audience=get_settings().oidc_audience or self.client_id,
+                    issuer=self.issuer_url,
+                )
+            else:
+                claims_payload = self._decode_jwt_payload(id_token) if id_token else {}
+            if claims_payload.get("nonce") != expected_nonce:
+                raise ValueError("OIDC nonce validation failed")
             if userinfo_endpoint and access_token:
-                userinfo = httpx.get(userinfo_endpoint, headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
+                try:
+                    userinfo = httpx.get(userinfo_endpoint, headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
+                except TypeError:
+                    userinfo = httpx.get(userinfo_endpoint, timeout=10)
                 userinfo.raise_for_status()
                 userinfo_payload = userinfo.json() or {}
                 if userinfo_payload:
@@ -153,23 +178,11 @@ class HospitalSSOAdapter:
                     role=(claims_payload.get("role") or "physician").lower(),
                     provider_user_id=str(claims_payload.get("sub") or state),
                 )
-        except Exception as error:
+        except (JWTError, HTTPError, ValueError) as error:
             if get_settings().is_production:
                 raise ValueError("External identity provider exchange failed") from error
 
-        if get_settings().is_production:
-            raise ValueError("A real external identity response is required in production")
-
-        email = "dr.rana@citycare.org"
-        return SSOClaims(
-            email=email,
-            full_name="Dr. Rana Samir",
-            given_name="Rana",
-            family_name="Samir",
-            organization_domain="citycare.org",
-            role="physician",
-            provider_user_id=state,
-        )
+        raise ValueError("A verified external identity response is required")
 
     def map_claims_to_org_workspace(self, claims: SSOClaims) -> dict[str, Any]:
         """Resolve the mapped organization/workspace from SSO claims."""

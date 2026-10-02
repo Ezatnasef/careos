@@ -12,6 +12,7 @@ from .config import get_settings
 from .db import init_db
 
 settings = get_settings()
+_auth_rate_limit_state: dict[str, list[float]] = {}
 
 
 @asynccontextmanager
@@ -42,6 +43,14 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 async def security_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID", str(uuid4()))
     started = time.perf_counter()
+    if settings.is_production and request.method == "POST" and request.url.path.startswith(f"{settings.api_prefix}/auth/"):
+        now = time.monotonic()
+        client_key = request.client.host if request.client else "unknown"
+        recent = [timestamp for timestamp in _auth_rate_limit_state.get(client_key, []) if now - timestamp < settings.auth_rate_limit_window_seconds]
+        if len(recent) >= settings.auth_rate_limit_requests:
+            return JSONResponse(status_code=429, content={"detail": "Too many authentication attempts"}, headers={"Retry-After": str(settings.auth_rate_limit_window_seconds)})
+        recent.append(now)
+        _auth_rate_limit_state[client_key] = recent
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"

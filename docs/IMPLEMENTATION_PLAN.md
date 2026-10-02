@@ -11,12 +11,18 @@ CareOS is a clinician decision-support system. It does not diagnose, prescribe, 
 - Threat model: broken access control, leaked PHI, prompt injection, unsafe model output, malicious uploads, replayed sessions, and audit tampering.
 - Add CI checks for formatting, type checking, dependency vulnerabilities, secrets, and tests.
 
+## Current execution status
+
+The repository is being migrated to the requested 24-phase Care architecture. Phase 1 analysis identified FastAPI, SQLAlchemy/Alembic, React/Vite, JWT sessions, hash-based frontend routes, private filesystem/S3 storage, and an existing patient portal. Phase 2 has started with migration `0005_rbac_entities`; the automatic demo account and synthetic patient seeding were removed.
+
+The following legacy behavior is explicitly retired: development login fallback for `dr.rana@citycare.org`, automatic patient records during registration, and frontend authentication success when the API is unavailable.
+
 ## Phase 1: secure clinical API
 
 - FastAPI service with strict CORS, security headers, request IDs, structured error responses, health/readiness checks, and environment validation.
 - PostgreSQL with SQLAlchemy/Alembic, UTC timestamps, soft-delete policy, tenant/organization boundaries, and encrypted backups.
 - OIDC/SAML hospital identity integration. Local development uses an explicit synthetic-user mode only.
-- Server-side RBAC: physician, nurse, care coordinator, and administrator. Every patient, note, appointment, and AI request is authorized server-side.
+- Server-side RBAC: normalized roles and permissions with organization-scoped assignments. Every patient, note, appointment, and AI request must be authorized server-side.
 - Append-only audit events for login, patient access, record edits, exports, and AI actions. Never log raw PHI or prompts by default.
 
 ## Phase 2: clinical workflows

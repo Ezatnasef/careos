@@ -1,4 +1,11 @@
-from datetime import date, datetime, timedelta, timezone
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import struct
+import time
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from argon2 import PasswordHasher
@@ -11,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
 from .db import get_session
-from .models import AuthSession, AuditEvent, Organization, Patient, User
-from .rbac import has_any_role, normalize_role, permissions_for_role
+from .models import AuthSession, AuditEvent, Organization, Permission, Role, RolePermission, User, UserRole
+from .rbac import ROLE_PERMISSIONS, has_any_role, normalize_role
 
 settings = get_settings()
 password_hasher = PasswordHasher()
@@ -33,6 +40,8 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
     role: str | None = None
+    mfa_code: str | None = Field(default=None, pattern=r"^\d{6}$")
+    mfa_recovery_code: str | None = Field(default=None, min_length=10, max_length=10)
 
 
 class OrganizationUpdate(BaseModel):
@@ -43,7 +52,7 @@ class OrganizationUpdate(BaseModel):
 
 class InviteRequest(BaseModel):
     email: EmailStr
-    role: str = Field(pattern="^(physician|nurse|care_coordinator|administrator)$")
+    role: str = Field(pattern="^(physician|doctor|nurse|care_coordinator|receptionist|hospital_director|it_admin|administrative_staff|administrator)$")
 
 
 class VerifyEmailRequest(BaseModel):
@@ -63,6 +72,9 @@ class AuditEventResponse(BaseModel):
 
 def public_user(user: User) -> dict[str, object]:
     normalized_role = normalize_role(user.role)
+    effective_permissions = getattr(user, "_effective_permissions", None)
+    if effective_permissions is None:
+        effective_permissions = ROLE_PERMISSIONS.get(normalized_role, set())
     return {
         "id": user.id,
         "organization_id": user.organization_id,
@@ -72,8 +84,9 @@ def public_user(user: User) -> dict[str, object]:
         "email_verified": bool(getattr(user, "email_verified", False)),
         "full_name": user.full_name,
         "role": normalized_role,
-        "permissions": permissions_for_role(normalized_role),
+        "permissions": sorted(effective_permissions),
         "onboarding_complete": user.onboarding_complete,
+        "mfa_enabled": bool(user.mfa_enabled),
     }
 
 
@@ -105,14 +118,86 @@ async def current_user(credentials: HTTPAuthorizationCredentials | None = Depend
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if user is None or auth_session is None or expires_at is None or expires_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    user_permissions = await permissions_for_user(session, user)
+    expected_permissions = ROLE_PERMISSIONS.get(normalize_role(user.role), set())
+    if expected_permissions - user_permissions:
+        await provision_role_assignments(session, user)
+        await session.commit()
+        user_permissions = await permissions_for_user(session, user)
+    user._effective_permissions = user_permissions
     return user
 
 
+async def permissions_for_user(session: AsyncSession, user: User) -> set[str]:
+    assigned = (
+        await session.scalars(
+            select(Permission.key)
+            .join(RolePermission, RolePermission.permission_id == Permission.id)
+            .join(UserRole, UserRole.role_id == RolePermission.role_id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(UserRole.user_id == user.id, Role.organization_id == user.organization_id)
+        )
+    ).all()
+    return set(assigned)
+
+
+async def provision_role_assignments(session: AsyncSession, user: User) -> None:
+    role_key = normalize_role(user.role)
+    role = await session.scalar(select(Role).where(Role.organization_id == user.organization_id, Role.key == role_key))
+    if role is None:
+        role = Role(organization_id=user.organization_id, key=role_key, name=role_key.replace("_", " ").title())
+        session.add(role)
+        await session.flush()
+    assignment = await session.scalar(select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == role.id))
+    if assignment is None:
+        session.add(UserRole(user_id=user.id, role_id=role.id))
+    permission_keys = ROLE_PERMISSIONS.get(role_key, set())
+    existing_permissions = {
+        permission.key: permission
+        for permission in (await session.scalars(select(Permission).where(Permission.key.in_(permission_keys)))).all()
+    }
+    missing_permissions = [Permission(key=key, description="") for key in permission_keys if key not in existing_permissions]
+    session.add_all(missing_permissions)
+    await session.flush()
+    existing_permissions.update({permission.key: permission for permission in missing_permissions})
+    assigned_permission_ids = set(
+        (
+            await session.scalars(
+                select(RolePermission.permission_id).where(RolePermission.role_id == role.id)
+            )
+        ).all()
+    )
+    session.add_all(
+        RolePermission(role_id=role.id, permission_id=permission.id)
+        for permission in existing_permissions.values()
+        if permission.id not in assigned_permission_ids
+    )
+
+
 def require_roles(*roles: str):
-    async def dependency(user: User = Depends(current_user)) -> User:
-        if not has_any_role(user.role, *roles):
+    async def dependency(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)) -> User:
+        assigned_roles = (
+            await session.scalars(
+                select(Role.key)
+                .join(UserRole, UserRole.role_id == Role.id)
+                .where(UserRole.user_id == user.id, Role.organization_id == user.organization_id)
+            )
+        ).all()
+        normalized_roles = {normalize_role(role) for role in roles}
+        effective_roles = {normalize_role(role) for role in assigned_roles} or {normalize_role(user.role)}
+        if not effective_roles.intersection(normalized_roles):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         return user
+    return dependency
+
+
+def require_permission(permission: str):
+    async def dependency(user: User = Depends(current_user), session: AsyncSession = Depends(get_session)) -> User:
+        permissions = await permissions_for_user(session, user)
+        if permission not in permissions:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        return user
+
     return dependency
 
 
@@ -130,17 +215,12 @@ async def register_user(session: AsyncSession, request: RegisterRequest) -> tupl
         project=request.project.strip(),
         email=str(request.email).lower(),
         full_name=request.full_name,
-        role=normalize_role(request.role),
+        role="admin",
         password_hash=password_hasher.hash(request.password),
     )
     session.add(user)
     await session.flush()
-    # Synthetic records make a newly created development workspace demonstrable.
-    # They are intentionally created only at registration, never from real patient data.
-    session.add_all([
-        Patient(organization_id=organization.id, department=request.department.strip() or "General Medicine", project=request.project.strip() or "Outpatient", medical_record_number="DEMO-1001", given_name="Mariam", family_name="Hassan", date_of_birth=date(1982, 5, 12), gender="Female", condition="Hypertension", care_status="follow_up_due"),
-        Patient(organization_id=organization.id, department=request.department.strip() or "General Medicine", project=request.project.strip() or "Outpatient", medical_record_number="DEMO-1002", given_name="Omar", family_name="Khaled", date_of_birth=date(1995, 8, 3), gender="Male", condition="Type 2 Diabetes", care_status="stable"),
-    ])
+    await provision_role_assignments(session, user)
     await write_audit(session, user, "organization.created", request.organization_name)
     token = await _token_for(session, user)
     await session.commit()
@@ -150,52 +230,69 @@ async def register_user(session: AsyncSession, request: RegisterRequest) -> tupl
 async def authenticate(session: AsyncSession, request: LoginRequest) -> tuple[User, str]:
     email = str(request.email).lower()
     user = await session.scalar(select(User).where(User.email == email))
-    if user is None and settings.app_env.lower() in {"development", "test"} and email == "dr.rana@citycare.org" and request.password == "password123":
-        organization = await session.scalar(select(Organization).where(Organization.name == "CityCare"))
-        if organization is None:
-            organization = Organization(name="CityCare", department="General Medicine", timezone="UTC")
-            session.add(organization)
-            await session.flush()
-        user = User(
-            organization_id=organization.id,
-            department="General Medicine",
-            project="Outpatient",
-            email=email,
-            full_name="Dr. Rana Samir",
-            role="doctor",
-            password_hash=password_hasher.hash(request.password),
-            onboarding_complete=True,
-        )
-        session.add(user)
-        await session.flush()
-        session.add_all([
-            Patient(organization_id=organization.id, department="General Medicine", project="Outpatient", medical_record_number="CITY-1001", given_name="Mariam", family_name="Hassan", date_of_birth=date(1982, 5, 12), gender="female", condition="Hypertension follow-up", care_status="follow_up_due"),
-            Patient(organization_id=organization.id, department="General Medicine", project="Outpatient", medical_record_number="CITY-1002", given_name="Omar", family_name="Khaled", date_of_birth=date(1995, 8, 3), gender="male", condition="Type 2 Diabetes", care_status="stable"),
-        ])
-        await session.commit()
-
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    if settings.app_env.lower() in {"development", "test"} and email == "dr.rana@citycare.org" and request.password == "password123":
-        try:
-            password_hasher.verify(user.password_hash, request.password)
-        except Exception:
-            user.password_hash = password_hasher.hash(request.password)
-            user.full_name = user.full_name or "Dr. Rana Samir"
-            user.onboarding_complete = True
-            await session.commit()
 
     try:
         password_hasher.verify(user.password_hash, request.password)
     except Exception as error:
         raise HTTPException(status_code=401, detail="Invalid email or password") from error
-    if request.role is not None and request.role.strip():
-        user.role = normalize_role(request.role)
+    if user.mfa_enabled:
+        try:
+            secret = decrypt_mfa_secret(user.mfa_secret_ref or "")
+        except Exception:
+            secret = ""
+        if request.mfa_code and verify_totp(secret, request.mfa_code):
+            pass
+        elif request.mfa_recovery_code and user.mfa_recovery_codes:
+            recovery_hashes = json.loads(user.mfa_recovery_codes)
+            candidate = hashlib.sha256(request.mfa_recovery_code.encode("ascii")).hexdigest()
+            if candidate not in recovery_hashes:
+                raise HTTPException(status_code=401, detail="MFA_REQUIRED")
+            recovery_hashes.remove(candidate)
+            user.mfa_recovery_codes = json.dumps(recovery_hashes)
+        else:
+            raise HTTPException(status_code=401, detail="MFA_REQUIRED")
+    await provision_role_assignments(session, user)
+    user._effective_permissions = await permissions_for_user(session, user)
     await write_audit(session, user, "auth.signed_in", "workspace")
     token = await _token_for(session, user)
     await session.commit()
     return user, token
+
+
+def generate_totp_secret() -> str:
+    return base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
+
+
+def _mfa_cipher():
+    from cryptography.fernet import Fernet
+
+    key = base64.urlsafe_b64encode(hashlib.sha256(settings.secret_key.encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def encrypt_mfa_secret(secret: str) -> str:
+    return _mfa_cipher().encrypt(secret.encode("ascii")).decode("ascii")
+
+
+def decrypt_mfa_secret(secret_ref: str) -> str:
+    return _mfa_cipher().decrypt(secret_ref.encode("ascii")).decode("ascii")
+
+
+def totp_code(secret: str, timestamp: int | None = None) -> str:
+    padded = secret + "=" * (-len(secret) % 8)
+    key = base64.b32decode(padded, casefold=True)
+    counter = int((timestamp or int(time.time())) // 30)
+    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    value = (struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
+    return f"{value:06d}"
+
+
+def verify_totp(secret: str, code: str) -> bool:
+    now = int(time.time())
+    return any(hmac.compare_digest(totp_code(secret, now + offset), code) for offset in (-30, 0, 30))
 
 
 async def revoke_token(session: AsyncSession, credentials: HTTPAuthorizationCredentials, user: User) -> None:

@@ -39,6 +39,12 @@ services:
       CORS_ORIGINS: http://localhost:5173
       ALLOWED_HOSTS: localhost,127.0.0.1,testserver
       SSO_ALLOWED_REDIRECT_HOSTS: localhost,127.0.0.1
+      SPEECH_TO_TEXT_PROVIDER: ${SPEECH_TO_TEXT_PROVIDER:-unconfigured}
+      SPEECH_TO_TEXT_API_URL: ${SPEECH_TO_TEXT_API_URL:-}
+      SPEECH_TO_TEXT_API_KEY: ${SPEECH_TO_TEXT_API_KEY:-}
+      SPEECH_TO_TEXT_MODEL: ${SPEECH_TO_TEXT_MODEL:-gpt-4o-mini-transcribe}
+      SPEECH_TO_TEXT_LANGUAGE: ${SPEECH_TO_TEXT_LANGUAGE:-ar-EG}
+      SPEECH_TO_TEXT_DIARIZATION: ${SPEECH_TO_TEXT_DIARIZATION:-true}
       STORAGE_BACKEND: ${STORAGE_BACKEND:-filesystem}
       S3_BUCKET: ${S3_BUCKET:-}
       S3_REGION: ${S3_REGION:-us-east-1}
@@ -47,6 +53,29 @@ services:
       STORAGE_PREFIX: ${STORAGE_PREFIX:-careos}
     ports:
       - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    command: python -m app.worker
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://careos:${POSTGRES_PASSWORD}@postgres:5432/careos
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-filesystem}
+      STORAGE_PREFIX: ${STORAGE_PREFIX:-careos}
+      SPEECH_TO_TEXT_PROVIDER: ${SPEECH_TO_TEXT_PROVIDER:-unconfigured}
+      SPEECH_TO_TEXT_API_URL: ${SPEECH_TO_TEXT_API_URL:-}
+      SPEECH_TO_TEXT_API_KEY: ${SPEECH_TO_TEXT_API_KEY:-}
+      SPEECH_TO_TEXT_MODEL: ${SPEECH_TO_TEXT_MODEL:-gpt-4o-mini-transcribe}
+      SPEECH_TO_TEXT_LANGUAGE: ${SPEECH_TO_TEXT_LANGUAGE:-ar-EG}
+      SPEECH_TO_TEXT_DIARIZATION: ${SPEECH_TO_TEXT_DIARIZATION:-true}
+      AI_PROVIDER: ${AI_PROVIDER:-unconfigured}
+      AI_API_URL: ${AI_API_URL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-}
     depends_on:
       postgres:
         condition: service_healthy

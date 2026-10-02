@@ -1,10 +1,10 @@
 # CareOS
 
-> Current status: functional MVP with organization-scoped clinical APIs, authenticated patient-portal downloads, S3/filesystem storage abstraction, and an OIDC-ready identity boundary. Do not connect production PHI until the release gate in `SECURITY.md` is complete.
+> Verified local status (2026-10-03): the project is now running in a verified local development state. The backend startup issue was resolved by removing the stale process holding port 8000, the FastAPI app is serving successfully on `http://127.0.0.1:8000`, `/api/v1/health` returns `{"status":"ok"}`, the demo auth route returns a valid access token, `npm run build` succeeds, and the account/profile route test passes in Playwright. The project is still not PHI-ready for production release until the security and deployment gates in `SECURITY.md` are complete.
 
 CareOS هو منصة تشغيل ذكية للمنشأة الصحية تجمع بين Workflow السريري والذكاء الاصطناعي داخل النظام نفسه، وليس مجرد chatbot منفصل. النظام مصمم ليكون مساحة عمل متكاملة للمنشأة الطبية، تجمع بين المريض، الفريق، الملاحظات، المهام، المستندات، المواعيد، والتقارير في واجهة واحدة.
 
-> المشروع الحالي هو MVP عملي ومتماسك، لا مجرد concept. تم بناء Frontend حقيقي، Backend حقيقي، auth/organization scoping، SSO-ready flow، storage abstraction، و patient portal. ما زال المشروع يحتاج hardening إضافي قبل التشغيل في بيئة إنتاج حقيقية مع PHI حقيقي.
+> المشروع يحتوي على Frontend وBackend حقيقيين، وقد تم التحقق من أن الـ backend يعمل محليًا، وأن الواجهة يمكن بناءها واختبارها. ما زالت هناك مراحل مطلوبة قبل التشغيل مع PHI حقيقي أو النشر الإنتاجي، لكن الحالة الحالية أصبحت مستقرة محليًا ومناسبة للتطوير والتجربة الواقعية.
 
 ## 1. لماذا هذا المشروع
 
@@ -32,10 +32,20 @@ CareOS يهدف إلى توحيد هذا السياق في نظام واحد ي�
 
 ## 3. ما تم تنفيذه فعليًا
 
+### الحالة المعتمدة محليًا في هذا التحديث
+
+- تم إصلاح فشل startup عبر إزالة العملية القديمة التي كانت تحتل منفذ 8000
+- تم تشغيل FastAPI بنجاح على `127.0.0.1:8000`
+- تم فحص الـ health endpoint بشكل مباشر
+- تم فحص الـ demo auth endpoint بشكل مباشر، وقد عاد بـ `access_token`
+- تم بناء الواجهة بنجاح عبر `npm run build`
+- تم التحقق من فتح صفحة الحساب عبر Playwright بنجاح
+
 ### Frontend
 
 - React + TypeScript + Vite
 - Landing page
+- Public bilingual guest assistant with Chat and Voice modes
 - Login / Register
 - Organization-aware auth
 - Dashboard الرئيسي
@@ -44,6 +54,7 @@ CareOS يهدف إلى توحيد هذا السياق في نظام واحد ي�
 - إدارة المواعيد
 - Clinical notes
 - AI assistant داخل سياق المريض
+- Guest Chat/Voice assistant via public, rate-limited backend APIs
 - Tasks و Care Plans
 - Patient portal
 - Team و Audit
@@ -62,6 +73,11 @@ CareOS يهدف إلى توحيد هذا السياق في نظام واحد ي�
 - OIDC-ready SSO flow
 - storage abstraction for documents
 - patient portal validation and uploads
+- normalized `Role`, `Permission`, `UserRole`, and `RolePermission` schema migration (`0005_rbac_entities`)
+- encounter, audio-file, transcript, and clinical-note-version schema migrations (`0006_clinical_workflow_foundation`)
+- password-reset tokens, invitation acceptance lifecycle, and MFA-ready user fields (`0007_auth_recovery_and_mfa`)
+- tenant-scoped patient profiles and organization SSO configuration (`0008_profiles_and_sso_configuration`)
+- queued email delivery jobs, worker processing, and soft-delete timestamps (`0009_email_jobs_and_soft_delete`)
 
 ### Domain model
 
@@ -174,18 +190,42 @@ CareOS يهدف إلى توحيد هذا السياق في نظام واحد ي�
 - audit / notifications
 - storage abstraction
 - SSO start/callback routes
+- `/assistant/guest-chat` for guest text conversations
+- `/assistant/guest-voice` for WebM upload, server-side transcription, and AI replies
 
 ### ما لا يزال في مرحلة التكامل أو الـhardening
 
 - real external IdP integration
-- real LLM provider integration
+- production AI credentials, monitoring, and deployment configuration (OpenAI adapters and guest Chat/Voice API flows are implemented)
 - RAG/vector memory layer
 - OCR real provider
 - production secrets and deployment security
 - full tenant isolation across every path
 - real email/SMS delivery layer
+- replacing the legacy role string with database-backed permission evaluation on every protected endpoint
+- encounter, recording, transcript, retention, and clinical-note version API workflows
+- full RolePermission administration and production permission seed execution through Alembic
+- production IdP signature/JWKS validation and provider-specific SAML implementation
+- browser E2E execution in a clean Playwright process; current workspace tests require a running authenticated frontend/backend state
+- production Egyptian Arabic ASR provider integration; `BelMasryProvider` must remain an abstraction and is not assumed configured
+- full clean-process pytest verification after the legacy Windows terminal session is discarded
+- legacy permission fallback has been removed; users must have organization-scoped `UserRole` and `RolePermission` assignments
 
-## 6. API contract الفعلي
+### Public Chat and Voice assistant
+
+The landing page includes a bilingual assistant that guests can use before signing in. Chat sends text to `POST /api/v1/assistant/guest-chat`. Voice records WebM in the browser and sends it to `POST /api/v1/assistant/guest-voice`; the backend transcribes it, sends the transcript to the configured AI provider, and returns the spoken reply. Both guest endpoints are limited to 10 requests per IP per minute, and voice uploads are limited to 10 MB.
+
+To enable real OpenAI replies and transcription, set `AI_PROVIDER=openai`, `AI_MODEL=gpt-4o-mini`, and `AI_API_KEY` in `backend/.env`, then restart the backend. The server-side AI key is reused for transcription when `SPEECH_TO_TEXT_PROVIDER` is `unconfigured`; a separate speech provider/key can also be configured. Without provider credentials, development Chat uses the labeled sandbox response and Voice reports that its provider is unavailable. Never expose provider keys in frontend environment variables.
+
+## 7. قواعد التطوير المرحلي
+
+التنفيذ يتبع الترتيب المطلوب: schema وmigrations، authentication، multi-tenancy، RBAC، route protection، dashboards، patient workflows، appointments، encounters، secure recording، ASR، transcript review، AI draft، approval/versioning، PDF delivery، audit/security hardening، responsive QA، ثم الاختبارات النهائية.
+
+كل مرحلة يجب أن تحقق API حقيقية، authorization server-side، loading/error/empty states، واختبارًا قابلًا لإعادة التشغيل قبل الانتقال للمرحلة التالية. أي provider خارجي غير مضبوط يظهر كـ “غير مُكوّن” ولا ينتج نجاحًا أو نصًا وهميًا.
+
+> لا تستخدم حسابات demo مضمّنة. أنشئ حسابًا عبر `POST /auth/register`، وأنشئ المرضى عبر API فقط.
+
+## 8. API contract الفعلي
 
 Base URL:
 
@@ -251,6 +291,8 @@ POST /clinical-notes
 POST /clinical-notes/{note_id}/summary
 POST /clinical-notes/{note_id}/sign
 POST /assistant/query
+POST /assistant/guest-chat        # public, rate-limited; no bearer token
+POST /assistant/guest-voice       # public, rate-limited; WebM base64, max 10 MB
 POST /patients/{patient_id}/documents
 ```
 
@@ -513,12 +555,12 @@ PATCH /api/v1/organization
 
 الـ Dashboard لا يتم بنائه من بيانات ثابتة فقط؛ يجب أن يُغذى من `GET /dashboard` و`GET /patients` مع scope المؤسسة، ويجب أن تبقي الأرقام مرتبطة بـ `organization_id` و `user.role` و `RBAC` الصحيح.
 
-في الواجهة الحالية، هذا الـ Dashboard هو UI/demo، والبيانات Synthetic فقط أو مصادر ثابتة داخل `src/data.ts`. نظام حقيقي يحتاج إلى:
+الواجهة الحالية تطبق dashboards مختلفة حسب الدور، ولا تستخدم fallback أو أرقام synthetic:
 
-- `GET /dashboard` يعيد اليوميات والـmetrics المصرح بها.
-- `GET /patients` و`GET /appointments` من backend مع organization scoping.
-- `GET /audit-events` و`GET /team` حسب صلاحيات المؤسسة.
-- `RBAC` و `org` و `team` permissions لكل شاشة.
+- الأدوار السريرية والتشغيلية تستخدم `GET /dashboard` مع organization/department/project scope.
+- Hospital Director يرى مؤشرات التشغيل والفريق، مع `GET /team` و`GET /audit-events`.
+- IT Admin يرى المستخدمين والتدقيق والأمن فقط، ولا يرى مؤشرات سريرية.
+- `RBAC` و`RolePermission` يحددان الـ views والـ panels المتاحة في الواجهة، مع بقاء enforcement النهائي في backend.
 
 وهذا يثبت أن الصفحة لا تملك صلاحية حقيقية إن لم تكن `onboarding_complete = true` و`organization_id` منتجًا فعليًا في الـ backend.
 
@@ -571,11 +613,41 @@ PATCH /api/v1/organization
 - New appointment modal.
 - Confirm appointment demo action.
 
-المطلوب لاحقًا: conflict detection، idempotent writes، reminder jobs، rescheduling، cancellation، وcalendar integration.
+يدعم الآن conflict detection داخل المؤسسة، status transitions، cancellation غير القابلة لإعادة الفتح، rescheduling مع فحص الموعد الجديد، وserver-side filtering/pagination حسب الحالة والنطاق الزمني.
+
+### 8.2 Clinical Encounters
+
+من قائمة المرضى يمكن للمستخدم المصرح له تنفيذ `Start Encounter`. ينشئ backend الـ encounter ويربطه بالمريض والمؤسسة والـ clinician، ثم يحفظه كـ active encounter في الواجهة وينقل المستخدم لمساحة الملاحظات. إنشاء clinical note يقبل `encounter_id` فقط إذا كان encounter نشطًا ومطابقًا للمريض والمؤسسة.
+
+داخل encounter نشط يمكن تسجيل الصوت من المتصفح ورفعه إلى private storage. ينشئ backend transcript مرتبطًا بنفس encounter، ويستخدم provider قابلًا للتبديل مثل `belmasry` مع `ar-EG`. عند عدم إعداد credentials تظهر حالة فشل واضحة بدل اختلاق نص. بعد مراجعة النص يمكن إنشاء clinical note draft ثم طلب AI draft، ويظل الناتج `DRAFT` ويحتاج مراجعة clinician.
+
+### Hardening verification
+
+- Backend regression suite: `34 passed` with one upstream Starlette/AnyIO deprecation warning.
+- Frontend production build and TypeScript typecheck pass.
+- Alembic revision graph is linear through `0013_mfa_recovery_codes`.
+- Production configuration rejects the development secret and SQLite database; staff roles are provisioned through controlled invitations rather than public self-assignment.
+- Authentication endpoints have configurable production rate limiting, and storage rejects unsupported upload types and oversized files before persistence.
+- MFA enrollment returns one-time recovery codes, stores only their hashes, and supports one-time recovery-code login plus regeneration.
+- Docker Compose interpolation validates when deployment-only `SECRET_KEY` and `POSTGRES_PASSWORD` are supplied; these values must come from deployment secrets, not source control.
+- Full Playwright browser suite: `16 passed` with clean API/Vite servers and Chromium `--disable-gpu` stability configuration.
+- The suite covers mobile overflow, direct doctor route protection, role-matrix navigation for six staff roles, localization, and deep links.
+- Transcription runs through the `worker` Compose service: recording requests create durable `transcription_jobs`, the API returns `202 QUEUED`, and the worker performs provider calls with retry/backoff and explicit `FAILED` states.
+- The E2E suite runs serially with the API and Vite servers managed by Playwright and includes route-guard cases for doctor, nurse, receptionist, hospital director, IT admin, and administrative staff.
+- Approved clinical notes create immutable versions and private PDFs linked to the encounter. Signed notes cannot be edited; document downloads create audit events, and the patient portal exposes approved documents only.
+
+### 8.1 Patient Search
+
+Patient search is server-side and organization-scoped. `GET /patients` supports name, MRN, and date-of-birth matching plus `page` and `page_size` pagination. The frontend does not seed or locally filter demo patients; it displays loading, error, empty, and pagination states from the API response.
 
 ### 9. Messages وPatient Portal
 
-هما operational demos لعرض شكل تجربة التواصل والوصول المستقبلي للمريض. لا يتم إرسال رسائل حقيقية حاليًا ولا توجد patient-facing authentication كاملة.
+Patient Portal يستخدم patient token مستقلًا ويقرأ بيانات المريض المرتبط بالجلسة فقط:
+
+- `GET /patient-portal/overview` يعيد patient profile والمواعيد والرسائل والمستندات المعتمدة.
+- `POST /patient-portal/messages` ينشئ رسالة مرتبطة بالمريض server-side، ولا يقبل `patient_id` من الواجهة.
+- تنزيل المستندات يمر عبر portal Authorization token، وليس رابطًا عامًا.
+- الواجهة تعرض loading/error/empty states ولا تستخدم مواعيد أو رسائل ثابتة.
 
 ### 10. Analytics وDepartments وReports
 

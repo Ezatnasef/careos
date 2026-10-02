@@ -9,3 +9,7 @@ def test_health_endpoint() -> None:
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
+    assert response.headers["x-request-id"]

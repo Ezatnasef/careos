@@ -16,7 +16,15 @@ import {
 import type { TranslationKey } from "../../i18n";
 import type { AppView } from "../../app/routes";
 
-export type Role = "admin" | "doctor" | "nurse" | "receptionist" | "patient";
+export type Role =
+  | "admin"
+  | "doctor"
+  | "nurse"
+  | "receptionist"
+  | "patient"
+  | "hospital_director"
+  | "it_admin"
+  | "administrative_staff";
 
 export type NavItem = {
   id: AppView;
@@ -41,35 +49,42 @@ export const navItems: NavItem[] = [
 
 export const roleNavMap: Record<Role, AppView[]> = {
   admin: ["dashboard", "patients", "documents", "appointments", "analytics", "departments", "reports", "teamAudit", "settings"],
-  doctor: ["dashboard", "patients", "assistant", "notes", "documents", "appointments", "analytics", "messages", "settings"],
-  nurse: ["dashboard", "patients", "notes", "documents", "appointments", "messages", "analytics", "settings"],
-  receptionist: ["dashboard", "patients", "documents", "appointments", "messages", "analytics", "settings"],
-  patient: ["portal", "appointments", "messages", "settings"],
+  doctor: ["dashboard", "patients", "assistant", "notes", "documents", "appointments", "analytics", "messages"],
+  nurse: ["dashboard", "patients", "notes", "documents", "appointments", "messages", "analytics"],
+  receptionist: ["dashboard", "patients", "documents", "appointments", "messages", "analytics"],
+  patient: ["portal", "appointments", "messages"],
+  hospital_director: ["dashboard", "patients", "appointments", "analytics", "departments", "reports", "teamAudit", "settings"],
+  it_admin: ["dashboard", "integrations", "teamAudit"],
+  administrative_staff: ["dashboard", "patients", "appointments", "documents", "departments", "reports"],
 };
 
 export const rolePermissions: Record<Role, string[]> = {
-  admin: ["dashboard.read", "patient.read", "patient.write", "appointment.read", "appointment.write", "clinical.note", "analytics.read", "team.read", "team.invite"],
+  admin: ["dashboard.read", "patient.read", "patient.write", "appointment.read", "appointment.write", "clinical.note", "analytics.read", "team.read", "team.invite", "hospital.settings.view", "hospital.settings.manage"],
   doctor: ["dashboard.read", "patient.read", "patient.write", "appointment.read", "appointment.write", "clinical.note", "analytics.read"],
   nurse: ["dashboard.read", "patient.read", "patient.write", "appointment.read", "clinical.note"],
   receptionist: ["dashboard.read", "patient.read", "appointment.read", "appointment.write"],
   patient: ["dashboard.read", "patient.read", "appointment.read"],
+  hospital_director: ["dashboard.read", "users.view", "hospital.view", "hospital.settings.view", "hospital.settings.manage", "departments.view", "reports.view", "analytics.view", "audit_logs.view", "team.read", "patients.view", "patients.search", "patient.read"],
+  it_admin: ["dashboard.read", "users.view", "roles.view", "permissions.view", "sso.view", "sso.manage", "audit_logs.view"],
+  administrative_staff: ["dashboard.read", "patients.search", "patients.demographics.view", "appointments.view", "appointments.create", "appointments.update", "checkin.view", "departments.view", "reports.operational.view"],
 };
 
 export const viewPermissions: Record<AppView, string[]> = {
   dashboard: ["dashboard.read"],
-  patients: ["patient.read", "patient.write"],
-  assistant: ["clinical.note"],
-  notes: ["clinical.note"],
-  documents: ["patient.read", "clinical.note"],
-  appointments: ["appointment.read", "appointment.write"],
-  portal: ["patient.read", "appointment.read"],
-  analytics: ["analytics.read"],
-  messages: ["dashboard.read"],
-  departments: ["team.read"],
-  reports: ["analytics.read"],
-  settings: ["dashboard.read"],
-  integrations: ["dashboard.read"],
-  teamAudit: ["team.read"],
+  patients: ["patient.read", "patients.view", "patients.demographics.view"],
+  assistant: ["clinical.note", "clinical_notes.create"],
+  notes: ["clinical.note", "clinical_notes.view"],
+  documents: ["patient.read", "documents.view", "documents.create"],
+  appointments: ["appointment.read", "appointments.view"],
+  portal: ["patient.read", "patient.self.view"],
+  analytics: ["analytics.read", "analytics.view"],
+  messages: ["patient.read", "messages.self.view"],
+  departments: ["team.read", "departments.view"],
+  reports: ["analytics.read", "reports.view", "reports.operational.view"],
+  settings: ["hospital.settings.view", "hospital.settings.manage"],
+  integrations: ["dashboard.read", "sso.view", "sso.manage"],
+  account: ["dashboard.read"],
+  teamAudit: ["team.read", "users.view", "audit.read", "audit_logs.view"],
 };
 
 export const roleAccessWarning: Partial<Record<Role, string>> = {
@@ -78,6 +93,32 @@ export const roleAccessWarning: Partial<Record<Role, string>> = {
   nurse: "Nurses can access the patient queue and notes, but not staff-level admin or audit settings.",
 };
 
-export function canAccessView(role: Role, view: AppView): boolean {
-  return (viewPermissions[view] ?? ["dashboard.read"]).some((permission) => rolePermissions[role]?.includes(permission));
+const roleAliases: Record<string, Role> = {
+  administrator: "admin",
+  physician: "doctor",
+  director: "hospital_director",
+  it_administrator: "it_admin",
+  staff: "administrative_staff",
+};
+
+export function normalizeFrontendRole(role: string | null | undefined): Role {
+  const normalized = String(role || "").trim().toLowerCase().replaceAll(" ", "_");
+  const canonical = roleAliases[normalized] ?? normalized;
+  return (Object.hasOwn(roleNavMap, canonical) ? canonical : "receptionist") as Role;
+}
+
+export function permissionsForRole(role: Role): string[] {
+  return rolePermissions[role] ?? [];
+}
+
+export function canAccessView(role: Role, view: AppView, permissions?: readonly string[]): boolean {
+  if (view === "portal") return role === "patient" && (!permissions || permissions.length === 0);
+  const required = viewPermissions[view] ?? ["dashboard.read"];
+  const effectivePermissions = permissions && permissions.length > 0 ? permissions : permissionsForRole(role);
+  return required.some((permission) => effectivePermissions.includes(permission));
+}
+
+export function firstAllowedView(role: Role, permissions?: readonly string[]): AppView {
+  const candidates = roleNavMap[role] ?? roleNavMap.receptionist;
+  return candidates.find((candidate) => canAccessView(role, candidate, permissions)) ?? "dashboard";
 }

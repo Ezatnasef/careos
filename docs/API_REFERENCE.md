@@ -311,8 +311,12 @@ Protected.
 Query params:
 
 ```text
-q=search term (optional)
+q=search term (optional; name, MRN, or date of birth)
+page=1-based page number (optional, default 1)
+page_size=page size (optional, default 50, maximum 100)
 ```
+
+Results are organization-scoped and filtered by the authenticated user's department/project policy. The endpoint returns only the requested page; it never trusts an organization identifier from the client.
 
 ### POST /patients
 Protected: physician, nurse, care coordinator, or administrator.
@@ -342,6 +346,16 @@ Protected.
 ### GET /appointments
 Protected.
 
+Query params:
+
+```text
+status=pending|confirmed|arrived|cancelled (optional)
+from_at=ISO timestamp (optional)
+to_at=ISO timestamp (optional)
+page=1-based page number (optional)
+page_size=1..100 (optional)
+```
+
 ### POST /appointments
 Protected.
 
@@ -350,11 +364,21 @@ Request:
 ```json
 {
   "patient_id": "uuid",
+  "encounter_id": "uuid",
   "starts_at": "2026-09-20T09:00:00Z",
   "reason": "Medication review",
   "status": "pending"
 }
 ```
+
+### POST /encounters/{encounter_id}/recordings
+Protected. Stores private audio linked server-side to the active encounter and creates a transcript record.
+
+### GET /transcripts/{transcript_id}
+Protected. Returns transcript status, language (`ar-EG` by default), confidence, and failure code when applicable.
+
+### POST /recordings/{audio_id}/transcribe
+Protected. Runs the configured server-side speech-to-text provider. When no provider is configured it returns `503` and marks the transcript `FAILED`; no fake text is generated.
 
 ### PATCH /appointments/{appointment_id}/status
 Protected.
@@ -364,6 +388,26 @@ Query param:
 ```text
 status=pending|confirmed|arrived|cancelled
 ```
+
+Cancelled appointments cannot be reopened. New appointments must be scheduled in the future, and active appointments cannot share the same organization time slot.
+
+### PATCH /appointments/{appointment_id}
+Protected. Reschedules an active appointment or updates its reason. Rescheduling validates the future timestamp and rejects conflicts with other active appointments.
+
+Request example:
+
+```json
+{
+  "starts_at": "2026-09-22T10:30:00Z",
+  "reason": "Medication review"
+}
+```
+
+### POST /encounters
+Protected. Creates an active encounter for an organization-scoped patient.
+
+### GET /encounters/{encounter_id}
+Protected. Returns the encounter only when the authenticated user can access its organization and patient scope.
 
 ### POST /clinical-notes
 Protected: physician, nurse, or administrator.
@@ -383,6 +427,18 @@ Protected.
 
 ### POST /clinical-notes/{note_id}/sign
 Protected: physician or administrator.
+
+### PATCH /clinical-notes/{note_id}
+Protected. Updates a draft and creates an immutable `ClinicalNoteVersion`. Signed notes cannot be edited.
+
+### GET /clinical-notes/{note_id}/versions
+Protected. Returns the immutable note history.
+
+### POST /clinical-notes/{note_id}/approve
+Protected. Approves/signs the note and creates the approved immutable version.
+
+### POST /clinical-notes/{note_id}/document
+Protected. Generates a private PDF only after approval and attaches it to the patient and encounter.
 
 ### POST /assistant/query
 Protected.

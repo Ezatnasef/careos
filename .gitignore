@@ -34,3 +34,7 @@ tempCodeRunnerFile.py
 # Database / local state (sensitive - keep ignoring)
 *.sqlite3
 *.db
+
+# Local uploaded clinical documents and recordings may contain PHI
+/storage/uploads/
+/backend/storage/uploads/
