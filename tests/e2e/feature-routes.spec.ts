@@ -1,6 +1,6 @@
 import { expect, test, type Page, type APIRequestContext } from '@playwright/test'
 
-async function openWorkspace(page: Page, request: APIRequestContext, role = 'admin') {
+async function openWorkspace(page: Page, request: APIRequestContext, role = 'doctor') {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
   const ownerEmail = `owner-${suffix}@example.org`
   const email = role === 'admin' ? ownerEmail : `member-${role}-${suffix}@example.org`
@@ -121,6 +121,14 @@ test('feature controls are interactive', async ({ page, request }) => {
     window.history.pushState({}, '', '#app/settings')
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
+})
+
+test('workspace settings controls are interactive', async ({ page, request }) => {
+  await openWorkspace(page, request, 'admin')
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '#app/settings')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
   const settingsTabs = page.locator('.settings-nav button')
   await settingsTabs.filter({ hasText: 'Preferences' }).click()
   await expect(page.locator('.settings-form .panel-heading h2')).toHaveText('Preferences')
@@ -150,20 +158,18 @@ test('general chat is available to non-clinical staff without patient context', 
 
 test('patient code is visible and can find the patient record', async ({ page, request }) => {
   const login = await request.post('/api/v1/auth/demo-login', {
-    data: { role: 'admin', username: 'admin.demo', password: 'Admin@123' },
+    data: { role: 'doctor', username: 'doctor.demo', password: 'Doctor@123' },
   })
   expect(login.ok()).toBeTruthy()
   const token = (await login.json()).access_token as string
-  await page.goto('/#app')
-  await page.evaluate((accessToken) => localStorage.setItem('careos-access-token', accessToken), token)
-  await page.reload()
+  await page.addInitScript((accessToken) => localStorage.setItem('careos-access-token', accessToken), token)
   await page.goto('/#app/patients')
 
   const patientCode = page.locator('.patient-code').first()
   await expect(patientCode).toBeVisible()
   const code = (await patientCode.textContent())?.trim() ?? ''
   expect(code).toMatch(/^CARE-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/)
-  await page.locator('.patient-qr-button').first().click()
+  await page.locator('.patient-qr-preview').first().click()
   await expect(page.locator('#patient-qr-code svg')).toBeVisible()
   await page.locator('.patient-qr-modal .patient-modal-actions .outline-btn').click()
   await page.getByPlaceholder(/Search by name or patient ID|البحث بالاسم أو رقم المريض/).fill(code)
@@ -202,10 +208,13 @@ test('demo patient opens the patient portal with its own record', async ({ page,
   const response = await request.post('/api/v1/auth/demo-login', { data: { role: 'patient', username: 'patient.demo', password: 'Patient@123' } })
   expect(response.ok()).toBeTruthy()
   const token = (await response.json()).portal_access_token as string
+  const account = await request.get('/api/v1/patient-portal/me', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  expect(account.ok(), await account.text()).toBeTruthy()
+  await page.addInitScript((portalToken) => localStorage.setItem('careos-portal-token', portalToken), token)
   await page.goto('/#app')
-  await page.evaluate((portalToken) => localStorage.setItem('careos-portal-token', portalToken), token)
-  await page.reload()
-  await expect(page.getByText('Mariam Hassan')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Mariam Hassan' })).toBeVisible()
   await expect(page.locator('.portal-patient-id code')).toHaveText(/^CARE-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/)
   const portalTabs = page.locator('.portal-tabs button')
   await expect(portalTabs).toHaveCount(4)
@@ -234,17 +243,17 @@ test('staff users are redirected from the patient-only portal', async ({ page, r
   await expect(page.getByText('Authentication required')).toHaveCount(0)
 })
 
-test('clinical assistant clearly reports patient-data search is not enabled in the MVP', async ({ page }) => {
+test('clinical assistant reports when no references are indexed', async ({ page }) => {
   await page.goto('/#app')
   await page.getByRole('button', { name: 'Switch to English' }).click()
   await page.getByRole('button', { name: 'Sign in to your workspace' }).last().click()
-  await page.getByRole('button', { name: 'Login as Doctor', exact: true }).click()
+  await page.locator('.demo-account-card').filter({ hasText: 'doctor.demo' }).getByRole('button').click()
   await expect(page.locator('.app-shell')).toBeVisible()
   await page.evaluate(() => {
     window.history.pushState({}, '', '#app/assistant')
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
-  await expect(page.locator('.assistant-answer')).toContainText(/not enabled in this MVP|غير متاح في نسخة MVP/i)
+  await expect(page.locator('.assistant-answer')).toContainText(/No clinical documents or guidelines are indexed yet/)
 })
 
 test('operations dashboard excludes clinical and admin-only controls', async ({ page, request }) => {

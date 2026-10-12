@@ -4,7 +4,7 @@ test('demo login still opens the app without backend database', async ({ page })
   await page.goto('http://127.0.0.1:5173/#app')
 
   await page.getByRole('button', { name: 'Switch to English' }).click()
-  await page.getByRole('button', { name: 'Login as Doctor', exact: true }).click()
+  await page.locator('.demo-account-card').filter({ hasText: 'doctor.demo' }).getByRole('button').click()
 
   await expect(page.locator('.app-shell')).toBeVisible({ timeout: 15000 })
   await expect(page).toHaveURL(/#app(?:\/(dashboard|portal|account))?$/)
@@ -38,7 +38,7 @@ test('offline demo session is upgraded when the API comes back', async ({ page }
 
   await page.goto('http://127.0.0.1:5173/#app')
   await page.getByRole('button', { name: 'Switch to English' }).click()
-  await page.getByRole('button', { name: 'Login as Doctor', exact: true }).click()
+  await page.locator('.demo-account-card').filter({ hasText: 'doctor.demo' }).getByRole('button').click()
   await expect(page.locator('.app-shell')).toBeVisible({ timeout: 15000 })
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem('careos-demo-mode')))
@@ -58,7 +58,7 @@ test('mobile Arabic header controls keep their size and stay inside the viewport
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('http://127.0.0.1:5173/#app')
   await page.getByRole('button', { name: 'Switch to English' }).click()
-  await page.getByRole('button', { name: 'Login as Doctor', exact: true }).click()
+  await page.locator('.demo-account-card').filter({ hasText: 'doctor.demo' }).getByRole('button').click()
   await expect(page.locator('.app-shell')).toBeVisible({ timeout: 15000 })
   await page.getByRole('button', { name: 'Switch to Arabic' }).click()
 

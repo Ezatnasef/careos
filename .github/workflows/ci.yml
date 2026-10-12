@@ -40,11 +40,16 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://careos:ci-password@127.0.0.1:5432/careos
           SECRET_KEY: ci-only-secret
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: sentence-transformers-all-MiniLM-L6-v2
       - run: pytest -q
         working-directory: backend
         env:
           DATABASE_URL: postgresql+asyncpg://careos:ci-password@127.0.0.1:5432/careos
           SECRET_KEY: ci-only-secret
+          RAG_ALLOW_MODEL_DOWNLOAD: 'true'
 
   e2e:
     runs-on: ubuntu-latest

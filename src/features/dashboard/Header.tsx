@@ -54,10 +54,14 @@ export function Header({
   >([]);
 
   useEffect(() => {
+    if (view === "portal") {
+      setNotifications([]);
+      return;
+    }
     getNotifications()
       .then((items) => setNotifications(items.slice(0, 5)))
       .catch(() => setNotifications([]));
-  }, [showNotifications]);
+  }, [showNotifications, view]);
 
   return (
     <header className="topbar">
