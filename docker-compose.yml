@@ -1,85 +1,65 @@
 services:
-  web:
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - ./:/app
-      - careos-node-modules:/app/node_modules
-    environment:
-      VITE_API_URL: http://localhost:8000/api/v1
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
-    ports:
-      - "5173:5173"
-    depends_on:
-      - api
-
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_DB: careos
-      POSTGRES_USER: careos
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-careos}
+      POSTGRES_USER: ${POSTGRES_USER:-careos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-careos}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - careos-postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U careos -d careos"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-careos} -d ${POSTGRES_DB:-careos}"]
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 
   api:
-    build: ./backend
+    build:
+      context: ./backend
+    env_file:
+      - ./backend/.env.example
     environment:
-      APP_ENV: development
-      APP_URL: http://localhost:5173
-      DATABASE_URL: postgresql+asyncpg://careos:${POSTGRES_PASSWORD}@postgres:5432/careos
-      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
-      CORS_ORIGINS: http://localhost:5173
-      ALLOWED_HOSTS: localhost,127.0.0.1,testserver
-      SSO_ALLOWED_REDIRECT_HOSTS: localhost,127.0.0.1
-      SPEECH_TO_TEXT_PROVIDER: ${SPEECH_TO_TEXT_PROVIDER:-unconfigured}
-      SPEECH_TO_TEXT_API_URL: ${SPEECH_TO_TEXT_API_URL:-}
-      SPEECH_TO_TEXT_API_KEY: ${SPEECH_TO_TEXT_API_KEY:-}
-      SPEECH_TO_TEXT_MODEL: ${SPEECH_TO_TEXT_MODEL:-gpt-4o-mini-transcribe}
-      SPEECH_TO_TEXT_LANGUAGE: ${SPEECH_TO_TEXT_LANGUAGE:-ar-EG}
-      SPEECH_TO_TEXT_DIARIZATION: ${SPEECH_TO_TEXT_DIARIZATION:-true}
-      STORAGE_BACKEND: ${STORAGE_BACKEND:-filesystem}
-      S3_BUCKET: ${S3_BUCKET:-}
-      S3_REGION: ${S3_REGION:-us-east-1}
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
-      STORAGE_PREFIX: ${STORAGE_PREFIX:-careos}
+      APP_ENV: ${APP_ENV:-development}
+      SECRET_KEY: ${SECRET_KEY:-change-this-in-production-to-a-32plus-char-secret}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://careos:careos@postgres:5432/careos}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,api,testserver}
+      RAG_ALLOW_MODEL_DOWNLOAD: ${RAG_ALLOW_MODEL_DOWNLOAD:-true}
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - careos_uploads:/app/storage/uploads
     depends_on:
       postgres:
         condition: service_healthy
-
-  worker:
-    build: ./backend
-    command: python -m app.worker
-    environment:
-      APP_ENV: development
-      DATABASE_URL: postgresql+asyncpg://careos:${POSTGRES_PASSWORD}@postgres:5432/careos
-      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
-      STORAGE_BACKEND: ${STORAGE_BACKEND:-filesystem}
-      STORAGE_PREFIX: ${STORAGE_PREFIX:-careos}
-      SPEECH_TO_TEXT_PROVIDER: ${SPEECH_TO_TEXT_PROVIDER:-unconfigured}
-      SPEECH_TO_TEXT_API_URL: ${SPEECH_TO_TEXT_API_URL:-}
-      SPEECH_TO_TEXT_API_KEY: ${SPEECH_TO_TEXT_API_KEY:-}
-      SPEECH_TO_TEXT_MODEL: ${SPEECH_TO_TEXT_MODEL:-gpt-4o-mini-transcribe}
-      SPEECH_TO_TEXT_LANGUAGE: ${SPEECH_TO_TEXT_LANGUAGE:-ar-EG}
-      SPEECH_TO_TEXT_DIARIZATION: ${SPEECH_TO_TEXT_DIARIZATION:-true}
-      AI_PROVIDER: ${AI_PROVIDER:-unconfigured}
-      AI_API_URL: ${AI_API_URL:-}
-      AI_API_KEY: ${AI_API_KEY:-}
-      AI_MODEL: ${AI_MODEL:-}
-    depends_on:
-      postgres:
+      redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/healthz', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
 volumes:
-  careos-postgres:
-  careos-node-modules:
+  postgres_data:
+  redis_data:
+  careos_uploads:

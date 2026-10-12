@@ -12,5 +12,18 @@ cryptography==44.0.2
 python3-saml==1.16.0
 httpx==0.28.1
 reportlab==4.4.3
+edge-tts==6.1.13
+pypdf>=4.0.0
+PyMuPDF>=1.24.0
+python-docx>=1.1.0
+Pillow>=10.0.0
+numpy>=1.26.0
+sentence-transformers>=2.6.0
+langchain-text-splitters>=0.2.0
+# Optional OCR engines (lazy-loaded when installed):
+# paddlepaddle>=2.6.0
+# paddleocr>=2.8.0
+# torch>=2.2.0
+# transformers>=4.45.0
 pytest==8.3.5
 pytest-asyncio==0.25.3

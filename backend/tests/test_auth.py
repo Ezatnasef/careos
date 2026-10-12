@@ -1,11 +1,12 @@
 from uuid import uuid4
 import base64
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
-from app.integrations import OcrProvider
 from app.main import app
 from app.rbac import ROLE_PERMISSIONS, can_access_patient_scope
 from app.auth import totp_code
@@ -77,6 +78,116 @@ def test_openai_speech_provider_transcribes_arabic_audio(monkeypatch) -> None:
     assert requests[0]["files"]["file"] == ("recording.webm", b"fake-webm", "audio/webm")
 
 
+def test_groq_speech_provider_uses_compatible_transcription_endpoint(monkeypatch) -> None:
+    from app.config import get_settings
+    from app.integrations import get_speech_to_text_provider
+
+    monkeypatch.setenv("AI_PROVIDER", "groq")
+    monkeypatch.setenv("SPEECH_TO_TEXT_PROVIDER", "groq")
+    monkeypatch.setenv(
+        "SPEECH_TO_TEXT_API_URL",
+        "https://api.groq.com/openai/v1/audio/transcriptions",
+    )
+    monkeypatch.setenv("SPEECH_TO_TEXT_API_KEY", "unit-test-token")
+    monkeypatch.setenv("SPEECH_TO_TEXT_MODEL", "whisper-large-v3-turbo")
+    get_settings.cache_clear()
+    requests: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"text": "تفريغ تجريبي"}
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            assert timeout == 120
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs):
+            requests.append({"url": url, **kwargs})
+            return FakeResponse()
+
+    monkeypatch.setattr("app.integrations.httpx.AsyncClient", FakeAsyncClient)
+    try:
+        result = asyncio.run(
+            get_speech_to_text_provider().transcribe(b"fake-webm", language="ar-EG")
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert result == {"text": "تفريغ تجريبي", "confidence": None, "provider": "groq"}
+    assert requests[0]["url"] == "https://api.groq.com/openai/v1/audio/transcriptions"
+    assert requests[0]["data"] == {
+        "model": "whisper-large-v3-turbo",
+        "language": "ar",
+    }
+
+
+def test_voicetut_retries_unauthenticated_when_space_rejects_token(monkeypatch) -> None:
+    from app.config import get_settings
+    from app.integrations import get_text_to_speech_provider
+
+    monkeypatch.setenv("TEXT_TO_SPEECH_PROVIDER", "voicetut")
+    monkeypatch.setenv("TEXT_TO_SPEECH_API_URL", "https://voice.example")
+    monkeypatch.setenv("TEXT_TO_SPEECH_API_KEY", "unit-test-token")
+    get_settings.cache_clear()
+    client_headers: list[bool] = []
+
+    class FakeResponse:
+        def __init__(self, *, text: str = "", content: bytes = b"") -> None:
+            self.text = text
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"event_id": "test-event"}
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int, headers: dict[str, str]) -> None:
+            assert timeout == 180
+            client_headers.append("Authorization" in headers)
+            self.authenticated = "Authorization" in headers
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def get(self, url: str):
+            if "/gradio_api/call/run_b_oneshot/" in url:
+                if self.authenticated:
+                    return FakeResponse(text="event: error\ndata: null\n")
+                audio = json.dumps([{"url": "https://voice.example/audio.wav"}])
+                return FakeResponse(text=f"event: complete\ndata: {audio}\n")
+            if url.endswith("/audio.wav"):
+                return FakeResponse(content=b"RIFFfake-wav")
+            return FakeResponse()
+
+        async def post(self, url: str, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.integrations.httpx.AsyncClient", FakeAsyncClient)
+    try:
+        audio = asyncio.run(
+            get_text_to_speech_provider().synthesize("Test", language="en-US")
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert audio.startswith(b"RIFF")
+    assert client_headers == [True, False]
+
+
 def test_speech_provider_defaults_to_openai_when_ai_provider_is_openai(monkeypatch) -> None:
     from app.config import get_settings
     from app.integrations import OpenAISpeechToTextProvider, get_speech_to_text_provider
@@ -88,6 +199,59 @@ def test_speech_provider_defaults_to_openai_when_ai_provider_is_openai(monkeypat
         assert isinstance(get_speech_to_text_provider(), OpenAISpeechToTextProvider)
     finally:
         get_settings.cache_clear()
+
+
+def test_openai_speech_provider_normalizes_browser_webm_audio(monkeypatch) -> None:
+    from app.config import get_settings
+    from app.integrations import OpenAISpeechToTextProvider
+
+    monkeypatch.setenv("SPEECH_TO_TEXT_PROVIDER", "openai")
+    monkeypatch.setenv("SPEECH_TO_TEXT_API_URL", "")
+    monkeypatch.setenv("SPEECH_TO_TEXT_API_KEY", "unit-test-token")
+    monkeypatch.setenv("SPEECH_TO_TEXT_MODEL", "whisper-large-v3-turbo")
+    get_settings.cache_clear()
+    requests: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"text": "تم التعرف على الصوت"}
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            assert timeout == 120
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs):
+            requests.append({"url": url, **kwargs})
+            return FakeResponse()
+
+    def fake_run(command: list[str], **kwargs: object) -> object:
+        assert command[0].endswith("ffmpeg")
+        output_path = command[-1]
+        with open(output_path, "wb") as fh:
+            fh.write(b"converted-wav")
+        return object()
+
+    monkeypatch.setattr("app.integrations.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("app.integrations.shutil.which", lambda name: "ffmpeg")
+    monkeypatch.setattr("app.integrations.subprocess.run", fake_run)
+    try:
+        provider = OpenAISpeechToTextProvider()
+        result = asyncio.run(provider.transcribe(b"\x1aE\xdf\xa3\x9fB\x86\x81\x00webmstub", language="ar-EG"))
+    finally:
+        get_settings.cache_clear()
+
+    assert result["text"] == "تم التعرف على الصوت"
+    assert requests[0]["files"]["file"] == ("recording.wav", b"converted-wav", "audio/wav")
+    assert requests[0]["data"] == {"model": "whisper-large-v3-turbo", "language": "ar"}
 
 
 def test_openai_general_assistant_uses_chat_completions(monkeypatch) -> None:
@@ -135,7 +299,54 @@ def test_openai_general_assistant_uses_chat_completions(monkeypatch) -> None:
     assert requests[0]["json"]["messages"][1] == {"role": "user", "content": "Hello"}
 
 
-def register_invited_user(client: TestClient, role: str) -> dict:
+def test_groq_general_assistant_reuses_speech_key(monkeypatch) -> None:
+    from app.config import get_settings
+    from app.integrations import RagProvider
+
+    monkeypatch.setenv("AI_PROVIDER", "groq")
+    monkeypatch.setenv("AI_API_KEY", "")
+    monkeypatch.setenv("AI_API_URL", "")
+    monkeypatch.setenv("AI_MODEL", "openai/gpt-oss-20b")
+    monkeypatch.setenv("SPEECH_TO_TEXT_API_KEY", "groq-test-token")
+    get_settings.cache_clear()
+    requests: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "مرحبا"}}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            assert timeout == 60
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs):
+            requests.append({"url": url, **kwargs})
+            return FakeResponse()
+
+    monkeypatch.setattr("app.integrations.httpx.AsyncClient", FakeAsyncClient)
+    try:
+        result = asyncio.run(RagProvider().answer_general("قل مرحبا"))
+    finally:
+        get_settings.cache_clear()
+
+    assert result["answer"] == "مرحبا"
+    assert result["provider"] == "groq"
+    assert result["sources"]
+    assert requests[0]["url"] == "https://api.groq.com/openai/v1/chat/completions"
+    assert requests[0]["headers"] == {"Authorization": "Bearer groq-test-token"}
+    assert requests[0]["json"]["model"] == "openai/gpt-oss-20b"
+
+
+def register_invited_user_with_owner(client: TestClient, role: str) -> tuple[dict, object]:
     owner_email = f"owner-{uuid4().hex[:8]}@example.org"
     member_email = f"member-{role}-{uuid4().hex[:8]}@example.org"
     owner = client.post("/api/v1/auth/register", json={"email": owner_email, "password": "strong-password", "full_name": "Workspace Owner", "organization_name": "Role Care"})
@@ -145,12 +356,31 @@ def register_invited_user(client: TestClient, role: str) -> dict:
     assert invite.status_code == 201
     accepted = client.post("/api/v1/auth/invitations/accept", json={"token": invite.json()["development_token"], "full_name": f"Invited {role}", "password": "strong-password"})
     assert accepted.status_code == 200
-    return accepted.json()
+    return accepted.json(), owner
+
+
+class RegisteredUserResponse:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+        self.status_code = 201
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def register_invited_user(client: TestClient, role: str) -> dict:
+    invited, _ = register_invited_user_with_owner(client, role)
+    return invited
+
+
+def register_clinician(client: TestClient) -> tuple[RegisteredUserResponse, object]:
+    clinician, owner = register_invited_user_with_owner(client, "physician")
+    return RegisteredUserResponse(clinician), owner
 
 
 def test_recording_transcription_is_queued_for_worker() -> None:
     client = TestClient(app)
-    register = client.post("/api/v1/auth/register", json={"email": f"worker-{uuid4().hex[:8]}@example.org", "password": "strong-password", "full_name": "Worker User", "organization_name": "Worker Care"})
+    register, _ = register_clinician(client)
     assert register.status_code == 201
     headers = {"Authorization": f"Bearer {register.json()['access_token']}"}
     patient = client.post("/api/v1/patients", headers=headers, json={"medical_record_number": f"WRK-{uuid4().hex[:6]}", "given_name": "Worker", "family_name": "Patient", "date_of_birth": "1990-01-01"})
@@ -164,7 +394,13 @@ def test_recording_transcription_is_queued_for_worker() -> None:
     assert queued.json()["status"] == "QUEUED"
 
 
-def test_general_assistant_chat_is_available_without_patient_context() -> None:
+def test_general_assistant_chat_is_available_without_patient_context(monkeypatch) -> None:
+    from app import api
+
+    async def answer_general(message: str) -> dict[str, object]:
+        return {"answer": f"Sandbox reply: {message}", "sources": [], "provider": "sandbox"}
+
+    monkeypatch.setattr(api.rag_provider, "answer_general", answer_general)
     client = TestClient(app)
     receptionist = register_invited_user(client, "receptionist")
     headers = {"Authorization": f"Bearer {receptionist['access_token']}"}
@@ -176,7 +412,13 @@ def test_general_assistant_chat_is_available_without_patient_context() -> None:
     assert response.json()["sources"] == []
 
 
-def test_guest_assistant_chat_is_available_without_authentication() -> None:
+def test_guest_assistant_chat_is_available_without_authentication(monkeypatch) -> None:
+    from app import api
+
+    async def answer_general(message: str) -> dict[str, object]:
+        return {"answer": f"Sandbox reply: {message}", "sources": [], "provider": "sandbox"}
+
+    monkeypatch.setattr(api.rag_provider, "answer_general", answer_general)
     client = TestClient(app)
     response = client.post("/api/v1/assistant/guest-chat", json={"message": "Hello"})
 
@@ -186,10 +428,141 @@ def test_guest_assistant_chat_is_available_without_authentication() -> None:
     assert response.json()["sources"] == []
 
 
+def test_platform_knowledge_retrieval_finds_bilingual_patient_services() -> None:
+    from app.platform_knowledge import retrieve_platform_knowledge
+
+    chunks = retrieve_platform_knowledge("خدمات المرضى والمواعيد")
+
+    assert chunks
+    assert chunks[0]["id"] == "patient_services_and_portal"
+
+
+def test_guest_chat_forwards_bounded_conversation_history(monkeypatch) -> None:
+    from app import api
+
+    monkeypatch.setattr(api, "_guest_chat_windows", {})
+    history = [
+        {"role": "user", "content": "What is CareOS?"},
+        {"role": "assistant", "content": "A clinical workflow platform."},
+    ]
+
+    async def answer_general(
+        message: str,
+        conversation_history: list[dict[str, str]],
+    ) -> dict[str, object]:
+        assert message == "What can patients do?"
+        assert conversation_history == history
+        return {"answer": "Patients can manage appointments.", "sources": [], "provider": "test"}
+
+    monkeypatch.setattr(api.rag_provider, "answer_general", answer_general)
+    response = TestClient(app).post(
+        "/api/v1/assistant/guest-chat",
+        json={"message": "What can patients do?", "conversation_history": history},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Patients can manage appointments."
+
+
+def test_general_assistant_grounds_groq_request_in_platform_knowledge(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app import integrations
+
+    captured_request: dict[str, object] = {}
+    settings = SimpleNamespace(
+        ai_provider="groq",
+        ai_api_key="test-token",
+        speech_to_text_api_key="",
+        ai_api_url="https://example.test/v1/chat/completions",
+        ai_model="test-model",
+    )
+    monkeypatch.setattr(integrations, "get_settings", lambda: settings)
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": "Patients can manage appointments."}}]}
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            assert timeout == 60
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            captured_request.update(url=url, headers=headers, payload=json)
+            return FakeResponse()
+
+    monkeypatch.setattr(integrations.httpx, "AsyncClient", FakeAsyncClient)
+    response = asyncio.run(
+        integrations.RagProvider().answer_general(
+            "What can patients do?",
+            conversation_history=[
+                {"role": "user", "content": "What is CareOS?"},
+                {"role": "assistant", "content": "A clinical workflow platform."},
+            ],
+        )
+    )
+
+    payload = captured_request["payload"]
+    assert isinstance(payload, dict)
+    messages = payload["messages"]
+    assert isinstance(messages, list)
+    assert "Patient Portal & Services" in messages[0]["content"]
+    assert [message["role"] for message in messages[1:]] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert response["sources"][0]["id"] == "patient_services_and_portal"
+
+
+def test_guest_chat_synthesizes_assistant_answer_when_requested(monkeypatch) -> None:
+    from app import api
+
+    monkeypatch.setattr(api, "_guest_chat_windows", {})
+
+    async def answer_general(message: str) -> dict[str, object]:
+        assert message == "Hello"
+        return {"answer": "Hello from CareOS", "sources": [], "provider": "test-ai"}
+
+    class FakeTTSProvider:
+        name = "voicetut"
+
+        async def synthesize(self, text: str, *, speaker: str, language: str) -> bytes:
+            assert text == "Hello from CareOS"
+            assert language == "en-US"
+            return b"chat-audio"
+
+    monkeypatch.setattr(api.rag_provider, "answer_general", answer_general)
+    monkeypatch.setattr(api, "get_text_to_speech_provider", lambda: FakeTTSProvider())
+    response = TestClient(app).post(
+        "/api/v1/assistant/guest-chat",
+        json={"message": "Hello", "language": "en-US", "synthesize_speech": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Hello from CareOS"
+    assert response.json()["audio_base64"] == base64.b64encode(b"chat-audio").decode()
+    assert response.json()["audio_content_type"] == "audio/wav"
+
+
 def test_guest_assistant_chat_is_rate_limited(monkeypatch) -> None:
     from app import api
 
     monkeypatch.setattr(api, "_guest_chat_windows", {})
+
+    async def answer_general(message: str) -> dict[str, object]:
+        return {"answer": f"Sandbox reply: {message}", "sources": [], "provider": "sandbox"}
+
+    monkeypatch.setattr(api.rag_provider, "answer_general", answer_general)
     client = TestClient(app)
     for _ in range(api._GUEST_CHAT_LIMIT):
         response = client.post("/api/v1/assistant/guest-chat", json={"message": "Hello"})
@@ -216,8 +589,18 @@ def test_guest_assistant_voice_transcribes_and_answers_without_auth(monkeypatch)
         assert message == "مرحبا"
         return {"answer": "أهلا بك", "sources": [], "provider": "test-ai"}
 
+    class FakeTTSProvider:
+        name = "voicetut"
+
+        async def synthesize(self, text: str, *, speaker: str, language: str) -> bytes:
+            assert text == "أهلا بك"
+            assert speaker == "Mohamed"
+            assert language == "ar-EG"
+            return b"assistant-reply-audio"
+
     monkeypatch.setattr(api, "get_speech_to_text_provider", FakeSpeechProvider)
     monkeypatch.setattr(api.rag_provider, "answer_general", answer_general)
+    monkeypatch.setattr(api, "get_text_to_speech_provider", lambda: FakeTTSProvider())
     client = TestClient(app)
     response = client.post(
         "/api/v1/assistant/guest-voice",
@@ -232,19 +615,12 @@ def test_guest_assistant_voice_transcribes_and_answers_without_auth(monkeypatch)
     assert response.json()["transcript"] == "مرحبا"
     assert response.json()["answer"] == "أهلا بك"
     assert response.json()["speech_provider"] == "test-speech"
+    assert response.json()["audio_base64"] == base64.b64encode(b"assistant-reply-audio").decode()
 
 
 def test_patient_code_is_generated_and_searchable() -> None:
     client = TestClient(app)
-    owner = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": f"patient-code-{uuid4().hex[:8]}@example.org",
-            "password": "strong-password",
-            "full_name": "Patient Code Owner",
-            "organization_name": "Patient Code Care",
-        },
-    )
+    owner, _ = register_clinician(client)
     assert owner.status_code == 201
     headers = {"Authorization": f"Bearer {owner.json()['access_token']}"}
     patient = client.post(
@@ -258,18 +634,278 @@ def test_patient_code_is_generated_and_searchable() -> None:
         },
     )
     assert patient.status_code == 201
-    patient_code = patient.json()["patient_code"]
-    assert len(patient_code) == 16
-    assert patient_code.startswith("PAT-")
+    patient_data = patient.json()
+    assert patient_data["patient_code"].startswith("CARE-")
+    assert len(patient_data["patient_code"]) == 16
+    results = client.get(
+        f"/api/v1/patients?q={patient_data['patient_code']}",
+        headers=headers,
+    )
+    assert results.status_code == 200
+    assert any(item["id"] == patient_data["id"] for item in results.json())
+    registered = client.post(
+        "/api/v1/patients",
+        headers=headers,
+        json={
+            "given_name": "New",
+            "family_name": "Registration",
+            "date_of_birth": "1988-03-12",
+            "preferred_name": "Noura",
+            "preferred_language": "en",
+            "gender": "female",
+            "phone": "+201000000000",
+            "email": f"patient-{uuid4().hex[:8]}@example.org",
+        },
+    )
+    assert registered.status_code == 201
+    registration_data = registered.json()
+    assert registration_data["medical_record_number"].startswith("MRN-")
+    profile = client.get(
+        f"/api/v1/patients/{registration_data['id']}/profile",
+        headers=headers,
+    )
+    assert profile.status_code == 200
+    assert profile.json()["phone"] == "+201000000000"
+    assert profile.json()["email"].startswith("patient-")
+    assert profile.json()["preferred_name"] == "Noura"
+    assert profile.json()["preferred_language"] == "en"
 
-    matches = client.get("/api/v1/patients", headers=headers, params={"q": patient_code})
-    assert matches.status_code == 200
-    assert [item["id"] for item in matches.json()] == [patient.json()["id"]]
+
+def test_legacy_patient_code_has_pretty_code_and_round_trips() -> None:
+    from app.api import legacy_patient_code, public_patient_code
+
+    legacy_code = "PAT-000123456789"
+    pretty_code = public_patient_code(legacy_code)
+    assert pretty_code.startswith("CARE-")
+    assert len(pretty_code) == 16
+    assert legacy_patient_code(pretty_code) == legacy_code
+
+
+def test_default_tts_provider_uses_working_gtts_backend(monkeypatch) -> None:
+    from app.config import get_settings
+    from app.integrations import get_text_to_speech_provider
+
+    monkeypatch.setenv("TEXT_TO_SPEECH_PROVIDER", "unconfigured")
+    get_settings.cache_clear()
+    try:
+        provider = get_text_to_speech_provider()
+        assert provider.name == "gtts"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_huggingface_tts_provider_alias_uses_voicetut_backend(monkeypatch) -> None:
+    from app.config import get_settings
+    from app.integrations import get_text_to_speech_provider
+
+    monkeypatch.setenv("TEXT_TO_SPEECH_PROVIDER", "huggingface")
+    monkeypatch.setenv("TEXT_TO_SPEECH_API_URL", "https://tts.example")
+    get_settings.cache_clear()
+    try:
+        provider = get_text_to_speech_provider()
+        assert provider.name == "voicetut"
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_voice_tut_tts_provider_generates_wav_bytes(monkeypatch) -> None:
+    import json
+
+    from app.config import get_settings
+    from app.integrations import get_text_to_speech_provider
+
+    monkeypatch.setenv("TEXT_TO_SPEECH_PROVIDER", "voicetut")
+    monkeypatch.setenv("TEXT_TO_SPEECH_API_URL", "https://tts.example")
+    monkeypatch.setenv("TEXT_TO_SPEECH_API_KEY", "hf_test_token")
+    get_settings.cache_clear()
+
+    class FakeResponse:
+        def __init__(self, *, payload=None, text="", content=b"") -> None:
+            self.payload = payload
+            self.text = text
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeAsyncClient:
+        requests: list[tuple[str, str, object]] = []
+        client_headers: dict[str, str] = {}
+
+        def __init__(self, *, timeout: int, headers: dict[str, str]) -> None:
+            self.timeout = timeout
+            type(self).client_headers = headers
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def post(self, url: str, *, json: dict[str, object]):
+            self.requests.append(("POST", url, json))
+            return FakeResponse(payload={"event_id": "job-123"})
+
+        async def get(self, url: str):
+            self.requests.append(("GET", url, None))
+            if url.endswith("job-123"):
+                result = [{"url": "https://tts.example/gradio_api/file=/audio.wav"}, ""]
+                return FakeResponse(text=f"event: complete\ndata: {json.dumps(result)}\n")
+            return FakeResponse(content=b"RIFF-test-WAVE")
+
+    monkeypatch.setattr("app.integrations.httpx.AsyncClient", FakeAsyncClient)
+    try:
+        provider = get_text_to_speech_provider()
+        result = await provider.synthesize("ازيك عامل ايه النهاردة؟", speaker="Mohamed")
+        assert result == b"RIFF-test-WAVE"
+        assert provider.name == "voicetut"
+        assert FakeAsyncClient.client_headers == {"Authorization": "Bearer hf_test_token"}
+        assert FakeAsyncClient.requests[0] == ("GET", "https://tts.example", None)
+        assert FakeAsyncClient.requests[1][2] == {
+            "data": ["Mohamed", "ازيك عامل ايه النهاردة؟", "العربية (Egyptian)", 32, 2.5, 0.95, True]
+        }
+        assert FakeAsyncClient.requests[2][1].endswith("/job-123")
+        assert FakeAsyncClient.requests[3][1].endswith("/audio.wav")
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_voice_tut_tts_provider_raises_when_space_reports_error(monkeypatch) -> None:
+    from app.config import get_settings
+    from app.integrations import get_text_to_speech_provider
+
+    monkeypatch.setenv("TEXT_TO_SPEECH_PROVIDER", "voicetut")
+    monkeypatch.setenv("TEXT_TO_SPEECH_API_URL", "https://tts.example")
+    monkeypatch.setenv("TEXT_TO_SPEECH_API_KEY", "hf_test_token")
+    get_settings.cache_clear()
+
+    class FakeResponse:
+        def __init__(self, *, payload=None, text="", content=b"") -> None:
+            self.payload = payload
+            self.text = text
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int, headers: dict[str, str]) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def post(self, url: str, *, json: dict[str, object]):
+            return FakeResponse(payload={"event_id": "job-123"})
+
+        async def get(self, url: str):
+            if url.endswith("job-123"):
+                return FakeResponse(text="event: error\ndata: null\n")
+            return FakeResponse(content=b"RIFF-test-WAVE")
+
+    monkeypatch.setattr("app.integrations.httpx.AsyncClient", FakeAsyncClient)
+    try:
+        provider = get_text_to_speech_provider()
+        with pytest.raises(RuntimeError, match="VoiceTut API"):
+            await provider.synthesize("السلام عليكم، ده اختبار للصوت.", speaker="Mohamed")
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_guest_voice_keeps_non_wav_audio_mime(monkeypatch) -> None:
+    from app import api
+
+    monkeypatch.setattr(api, "_guest_chat_windows", {})
+
+    class FakeSpeechProvider:
+        async def transcribe(self, audio: bytes, *, language: str) -> dict[str, str]:
+            return {"text": "مرحبا", "provider": "fake-speech"}
+
+    async def answer_general(message: str) -> dict[str, object]:
+        assert message == "مرحبا"
+        return {"answer": "إجابة المساعد", "sources": [], "provider": "test-ai"}
+
+    class FakeTTSProvider:
+        name = "voicetut"
+        audio_content_type = "audio/mpeg"
+
+        async def synthesize(self, text: str, *, speaker: str = "Mohamed", language: str = "ar-EG") -> bytes:
+            assert text == "إجابة المساعد"
+            assert speaker == "Mohamed"
+            assert language == "ar-EG"
+            return b"fake-mp3-bytes"
+
+    monkeypatch.setattr(api, "get_speech_to_text_provider", lambda: FakeSpeechProvider())
+    monkeypatch.setattr(api, "get_text_to_speech_provider", lambda: FakeTTSProvider())
+    monkeypatch.setattr(api.rag_provider, "answer_general", answer_general)
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/assistant/guest-voice",
+        json={
+            "audio_base64": base64.b64encode(b"fake-webm-audio").decode(),
+            "content_type": "audio/webm",
+            "language": "ar-EG",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["audio_content_type"] == "audio/mpeg"
+    assert response.json()["audio_base64"] == base64.b64encode(b"fake-mp3-bytes").decode()
+
+
+def test_guest_voice_returns_audio_when_tts_is_configured(monkeypatch) -> None:
+    from app import api
+
+    monkeypatch.setattr(api, "_guest_chat_windows", {})
+
+    class FakeSpeechProvider:
+        async def transcribe(self, audio: bytes, *, language: str) -> dict[str, str]:
+            return {"text": "مرحبا", "provider": "fake-speech"}
+
+    async def answer_general(message: str) -> dict[str, object]:
+        assert message == "مرحبا"
+        return {"answer": "إجابة المساعد", "sources": [], "provider": "test-ai"}
+
+    class FakeTTSProvider:
+        name = "voicetut"
+
+        async def synthesize(self, text: str, *, speaker: str = "Mohamed", language: str = "ar-EG") -> bytes:
+            assert text == "إجابة المساعد"
+            assert speaker == "Mohamed"
+            assert language == "ar-EG"
+            return b"fake-audio-bytes"
+
+    monkeypatch.setattr(api, "get_speech_to_text_provider", lambda: FakeSpeechProvider())
+    monkeypatch.setattr(api, "get_text_to_speech_provider", lambda: FakeTTSProvider())
+    monkeypatch.setattr(api.rag_provider, "answer_general", answer_general)
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/assistant/guest-voice",
+        json={
+            "audio_base64": base64.b64encode(b"fake-webm-audio").decode(),
+            "content_type": "audio/webm",
+            "language": "ar-EG",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "إجابة المساعد"
+    assert response.json()["audio_base64"] == base64.b64encode(b"fake-audio-bytes").decode()
+    assert response.json()["audio_content_type"] == "audio/wav"
 
 
 def test_approved_note_generates_versioned_pdf_and_audits_download() -> None:
     client = TestClient(app)
-    register = client.post("/api/v1/auth/register", json={"email": f"pdf-{uuid4().hex[:8]}@example.org", "password": "strong-password", "full_name": "PDF Clinician", "organization_name": "PDF Care"})
+    register, owner = register_clinician(client)
     assert register.status_code == 201
     headers = {"Authorization": f"Bearer {register.json()['access_token']}"}
     patient = client.post("/api/v1/patients", headers=headers, json={"medical_record_number": f"PDF-{uuid4().hex[:6]}", "given_name": "PDF", "family_name": "Patient", "date_of_birth": "1990-01-01"})
@@ -289,7 +925,28 @@ def test_approved_note_generates_versioned_pdf_and_audits_download() -> None:
     downloaded = client.get(f"/api/v1/patients/{patient.json()['id']}/documents/{document.json()['id']}/download", headers=headers)
     assert downloaded.status_code == 200
     assert downloaded.headers["content-type"] == "application/pdf"
-    audit = client.get("/api/v1/audit-events", headers=headers)
+
+    uploaded = client.post(
+        f"/api/v1/patients/{patient.json()['id']}/documents",
+        headers=headers,
+        json={
+            "filename": "patient-upload.pdf",
+            "content": base64.b64encode(b"%PDF-1.4 uploaded document").decode(),
+            "content_type": "application/pdf",
+        },
+    )
+    assert uploaded.status_code == 201
+    assert uploaded.json()["ocr_status"] == "not_configured"
+    assert uploaded.json()["extracted_text"] is None
+    uploaded_download = client.get(
+        f"/api/v1/patients/{patient.json()['id']}/documents/{uploaded.json()['id']}/download",
+        headers=headers,
+    )
+    assert uploaded_download.status_code == 200
+    assert uploaded_download.content == b"%PDF-1.4 uploaded document"
+
+    owner_headers = {"Authorization": f"Bearer {owner.json()['access_token']}"}
+    audit = client.get("/api/v1/audit-events", headers=owner_headers)
     assert any(event["action"] == "document.downloaded" for event in audit.json())
 
 
@@ -312,8 +969,7 @@ def test_register_login_and_audit_flow() -> None:
     assert client.get("/api/v1/me", headers=headers).status_code == 200
     assert client.get("/api/v1/team", headers=headers).status_code == 200
     patients = client.get("/api/v1/patients", headers=headers)
-    assert patients.status_code == 200
-    assert patients.json() == []
+    assert patients.status_code == 403
 
     login = client.post("/api/v1/auth/login", json={"email": email, "password": "strong-password"})
     assert login.status_code == 200
@@ -329,7 +985,7 @@ def test_register_login_and_audit_flow() -> None:
 
 def test_appointments_reject_conflicts_and_cancelled_reopening() -> None:
     client = TestClient(app)
-    register = client.post("/api/v1/auth/register", json={"email": f"schedule-{uuid4().hex[:8]}@example.org", "password": "strong-password", "full_name": "Scheduler", "organization_name": "ScheduleCare"})
+    register, _ = register_clinician(client)
     assert register.status_code == 201
     headers = {"Authorization": f"Bearer {register.json()['access_token']}"}
     patient = client.post("/api/v1/patients", headers=headers, json={"medical_record_number": f"SCH-{uuid4().hex[:6]}", "given_name": "Hana", "family_name": "Ali", "date_of_birth": "1990-01-01", "gender": "female", "condition": "Review", "care_status": "stable"})
@@ -474,10 +1130,7 @@ def test_role_and_permission_management_is_organization_scoped() -> None:
 
 def test_encounter_recording_and_transcript_remain_patient_linked() -> None:
     client = TestClient(app)
-    register = client.post(
-        "/api/v1/auth/register",
-        json={"email": f"clinical-{uuid4().hex[:8]}@example.org", "password": "strong-password", "full_name": "Clinical Owner", "organization_name": "Clinical Care"},
-    )
+    register, _ = register_clinician(client)
     headers = {"Authorization": f"Bearer {register.json()['access_token']}"}
     patient = client.post(
         "/api/v1/patients",
@@ -488,6 +1141,12 @@ def test_encounter_recording_and_transcript_remain_patient_linked() -> None:
     encounter = client.post("/api/v1/encounters", headers=headers, json={"patient_id": patient.json()["id"]})
     assert encounter.status_code == 201
     encounter_id = encounter.json()["id"]
+    latest_encounter = client.get(
+        f"/api/v1/patients/{patient.json()['id']}/encounters/latest",
+        headers=headers,
+    )
+    assert latest_encounter.status_code == 200
+    assert latest_encounter.json()["id"] == encounter_id
     note = client.post("/api/v1/clinical-notes", headers=headers, json={"patient_id": patient.json()["id"], "encounter_id": encounter_id, "body": "Encounter-linked draft"})
     assert note.status_code == 201
     assert note.json()["encounter_id"] == encounter_id
@@ -510,14 +1169,8 @@ def test_encounter_recording_and_transcript_remain_patient_linked() -> None:
 
 def test_patient_and_encounter_are_isolated_between_organizations() -> None:
     client = TestClient(app)
-    first = client.post(
-        "/api/v1/auth/register",
-        json={"email": f"tenant-a-{uuid4().hex[:8]}@example.org", "password": "strong-password", "full_name": "Tenant A", "organization_name": "Tenant A Care"},
-    )
-    second = client.post(
-        "/api/v1/auth/register",
-        json={"email": f"tenant-b-{uuid4().hex[:8]}@example.org", "password": "strong-password", "full_name": "Tenant B", "organization_name": "Tenant B Care"},
-    )
+    first, _ = register_clinician(client)
+    second, _ = register_clinician(client)
     first_headers = {"Authorization": f"Bearer {first.json()['access_token']}"}
     second_headers = {"Authorization": f"Bearer {second.json()['access_token']}"}
     patient = client.post(
@@ -550,7 +1203,7 @@ def test_role_permission_matrix_keeps_clinical_and_it_boundaries() -> None:
 
 def test_all_supported_roles_have_explicit_permission_boundaries() -> None:
     expected = {
-        "admin": {"dashboard.read", "users.view", "patients.view", "appointments.view"},
+        "admin": {"dashboard.read", "users.view", "hospital.settings.manage"},
         "doctor": {"dashboard.read", "patients.view", "encounters.create", "clinical_notes.approve"},
         "nurse": {"dashboard.read", "patients.view", "encounters.view", "clinical_notes.create"},
         "receptionist": {"dashboard.read", "patients.view", "appointments.view", "appointments.create"},
@@ -560,6 +1213,8 @@ def test_all_supported_roles_have_explicit_permission_boundaries() -> None:
     }
     for role, permissions in expected.items():
         assert permissions.issubset(ROLE_PERMISSIONS[role])
+    assert not ROLE_PERMISSIONS["admin"].intersection({"patients.view", "patient.read", "clinical_notes.create", "appointments.view"})
+    assert not ROLE_PERMISSIONS["hospital_director"].intersection({"patients.view", "patient.read"})
     assert not ROLE_PERMISSIONS["it_admin"].intersection({"patients.view", "clinical_notes.create", "clinical_notes.approve", "recordings.view"})
     assert "clinical_notes.approve" not in ROLE_PERMISSIONS["nurse"]
 
@@ -578,7 +1233,7 @@ def test_settings_and_director_patient_permissions_match_route_policy() -> None:
     director = client.post("/api/v1/auth/invitations/accept", json={"token": director_invite.json()["development_token"], "full_name": "Policy Director", "password": "strong-password"})
     assert director.status_code == 200
     director_headers = {"Authorization": f"Bearer {director.json()['access_token']}"}
-    assert client.get("/api/v1/patients", headers=director_headers).status_code == 200
+    assert client.get("/api/v1/patients", headers=director_headers).status_code == 403
     assert client.get("/api/v1/organization", headers=director_headers).status_code == 200
 
     doctor_invite = client.post("/api/v1/team/invites", headers=owner_headers, json={"email": f"doctor-{uuid4().hex[:8]}@example.org", "role": "doctor"})
@@ -656,17 +1311,7 @@ def test_unknown_credentials_are_rejected_without_development_seed() -> None:
 
 def test_messages_portal_and_analytics_endpoints_are_real_and_scoped() -> None:
     client = TestClient(app)
-    email = f"ops-{uuid4().hex[:8]}@example.org"
-    register = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": email,
-            "password": "strong-password",
-            "full_name": "Operations Lead",
-            "organization_name": "NorthCare",
-            "role": "administrator",
-        },
-    )
+    register, owner = register_clinician(client)
     assert register.status_code == 201
     headers = {"Authorization": f"Bearer {register.json()['access_token']}"}
 
@@ -713,7 +1358,8 @@ def test_messages_portal_and_analytics_endpoints_are_real_and_scoped() -> None:
     assert "overview" in payload
     assert payload["overview"]["patients"] >= 1
 
-    reports = client.get("/api/v1/reports", headers=headers)
+    owner_headers = {"Authorization": f"Bearer {owner.json()['access_token']}"}
+    reports = client.get("/api/v1/reports", headers=owner_headers)
     assert reports.status_code == 200
     assert isinstance(reports.json(), list)
     assert len(reports.json()) >= 1
@@ -721,17 +1367,7 @@ def test_messages_portal_and_analytics_endpoints_are_real_and_scoped() -> None:
 
 def test_tasks_care_plans_and_department_metrics_are_real_and_scoped() -> None:
     client = TestClient(app)
-    email = f"ops-task-{uuid4().hex[:8]}@example.org"
-    register = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": email,
-            "password": "strong-password",
-            "full_name": "Operations Lead",
-            "organization_name": "NorthCare Ops",
-            "role": "administrator",
-        },
-    )
+    register, _ = register_clinician(client)
     assert register.status_code == 201
     headers = {"Authorization": f"Bearer {register.json()['access_token']}"}
 
@@ -800,17 +1436,7 @@ def test_tasks_care_plans_and_department_metrics_are_real_and_scoped() -> None:
 
 def test_patient_portal_auth_and_storage_contract_are_secure() -> None:
     client = TestClient(app)
-    email = f"portal-{uuid4().hex[:8]}@example.org"
-    register = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": email,
-            "password": "strong-password",
-            "full_name": "Portal Admin",
-            "organization_name": "PortalCare",
-            "role": "administrator",
-        },
-    )
+    register, _ = register_clinician(client)
     assert register.status_code == 201
     staff_headers = {"Authorization": f"Bearer {register.json()['access_token']}"}
 
@@ -903,16 +1529,6 @@ def test_email_verification_and_retention_cleanup_are_supported() -> None:
     audit_cleanup = client.post("/api/v1/system/audit/cleanup", headers=headers)
     assert audit_cleanup.status_code == 200
     assert "deleted" in audit_cleanup.json()
-
-
-def test_ocr_provider_extracts_clinically_meaningful_findings() -> None:
-    provider = OcrProvider()
-    text = provider.extract("lab_report.pdf")
-
-    assert isinstance(text, str)
-    assert len(text) > 80
-    assert "troponin" in text.lower() or "ecg" in text.lower() or "lab" in text.lower()
-    assert "review" in text.lower() or "follow-up" in text.lower()
 
 
 def test_s3_storage_backend_uses_object_storage(monkeypatch) -> None:
@@ -1022,15 +1638,7 @@ def test_portal_tokens_are_rejected_when_org_or_patient_claims_do_not_match(monk
     get_settings.cache_clear()
 
     client = TestClient(app)
-    org_admin = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": f"tenant-{uuid4().hex[:8]}@example.org",
-            "password": "strong-password",
-            "full_name": "Tenant Admin",
-            "organization_name": "Tenant Org",
-        },
-    )
+    org_admin, _ = register_clinician(client)
     assert org_admin.status_code == 201
     staff_headers = {"Authorization": f"Bearer {org_admin.json()['access_token']}"}
 

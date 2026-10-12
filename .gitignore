@@ -1,40 +1,54 @@
-# Node / frontend
+# Node / Frontend
 node_modules/
 dist/
+dist-ssr/
+*.local
 .vite/
-*.log
+playwright-report/
+test-results/
 
-# Python / backend
-.venv/
+# Python / Backend
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
+*$py.class
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.venv/
+.venv-*/
+venv/
+env/
 
-# Env / secrets
+# Environment & Secrets (keep .env.example tracked)
 .env
 .env.*
 !.env.example
-*.pem
+backend/.env
+backend/.env.*
+!backend/.env.example
 
-# IDE / OS
-.vscode/
+# Local Databases & Runtime Storage
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+storage/
+backend/storage/
+.local-smoke-test/
+
+# Model Caches & Local Verification Scratch Outputs
+models/
+.cache/
+huggingface_cache/
+paddleocr_cache/
+backend/out.txt
+backend/verification_output.txt
+backend/verification_result.txt
+
+# Editor / OS
 .DS_Store
 Thumbs.db
-
-# Coverage / tooling
-coverage/
-htmlcov/
-test-results/
-tempCodeRunnerFile.py
-
-# Database / local state (sensitive - keep ignoring)
-*.sqlite3
-*.db
-
-# Local uploaded clinical documents and recordings may contain PHI
-/storage/uploads/
-/backend/storage/uploads/
+*.log

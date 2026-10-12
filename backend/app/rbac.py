@@ -127,13 +127,30 @@ ROLE_PERMISSIONS.update({
     },
 })
 
+# Organization-level administrators manage the workspace, not clinical records.
+ROLE_PERMISSIONS["admin"].difference_update({
+    "patient.read", "patient.write", "patients.search", "patients.view",
+    "patients.create", "patients.update", "clinical.note", "medical.summary",
+    "clinical_notes.create", "clinical_notes.view", "clinical_notes.update",
+    "clinical_notes.approve", "documents.create", "documents.download",
+    "documents.view", "encounters.create", "encounters.view", "recordings.create",
+    "recordings.view", "transcripts.create", "transcripts.view",
+    "transcripts.update", "appointment.read", "appointment.write",
+    "appointments.view", "appointments.create", "appointments.update",
+})
+ROLE_PERMISSIONS["hospital_director"].difference_update({
+    "patients.search", "patients.view", "patient.read",
+})
+ROLE_PERMISSIONS["receptionist"].add("patients.create")
+ROLE_PERMISSIONS["administrative_staff"].add("patients.create")
+
 ROLE_SECTION_ACCESS: dict[str, set[str]] = {
-    "admin": {"dashboard", "patients", "appointments", "team", "audit", "clinical", "analytics", "reports", "messages", "portal", "settings"},
+    "admin": {"dashboard", "team", "audit", "analytics", "reports", "settings"},
     "doctor": {"dashboard", "patients", "appointments", "clinical", "analytics", "messages", "portal", "settings"},
     "nurse": {"dashboard", "patients", "appointments", "clinical", "messages", "portal", "settings"},
     "receptionist": {"dashboard", "patients", "appointments", "messages", "portal", "settings"},
     "patient": {"portal", "appointments", "messages", "settings"},
-    "hospital_director": {"dashboard", "patients", "appointments", "team", "audit", "analytics", "reports", "settings"},
+    "hospital_director": {"dashboard", "team", "audit", "analytics", "reports", "settings"},
     "it_admin": {"dashboard", "team", "audit", "settings"},
     "administrative_staff": {"dashboard", "patients", "appointments", "reports", "settings"},
 }
@@ -179,8 +196,8 @@ def require_permission(permission: str, role: str) -> bool:
         "appointments.update": "appointment.write",
         "appointments.view": "appointment.read",
         "documents.create": "patient.write",
-        "documents.view": "patient.read",
-        "documents.download": "patient.read",
+        "documents.view": "clinical_notes.view",
+        "documents.download": "clinical_notes.view",
         "audit_logs.view": "audit.read",
         "hospital.settings.manage": "organization.update",
     }

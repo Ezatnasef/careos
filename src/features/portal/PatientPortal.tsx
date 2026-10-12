@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { CalendarDays, FileText, MessageCircle, Send } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { PageHeading } from "../../components/PageHeading";
 import { PanelHeading } from "../../components/PanelHeading";
 import type { TranslationKey } from "../../i18n";
@@ -133,8 +134,23 @@ export function PatientPortal({ t }: { t: Translator }) {
       />
       {overview?.patient && (
         <div className="portal-patient-id">
-          <span>{t("patientCode")}</span>
-          <code>{overview.patient.patient_code}</code>
+          <div className="portal-patient-id-details">
+            <span>{t("patientCode")}</span>
+            <code>{overview.patient.patient_code}</code>
+            <p>{t("patientQrPrivacy")}</p>
+          </div>
+          <div
+            className="portal-patient-qr"
+            role="img"
+            aria-label={`${t("patientQrTitle")}: ${overview.patient.patient_code}`}
+          >
+            <QRCodeSVG
+              value={`${window.location.origin}${window.location.pathname}#app/patients?code=${encodeURIComponent(overview.patient.patient_code)}`}
+              size={144}
+              level="M"
+              includeMargin
+            />
+          </div>
         </div>
       )}
       <div className="tabs portal-tabs">
@@ -266,7 +282,7 @@ export function PatientPortal({ t }: { t: Translator }) {
                     <div>
                       <strong>{document.filename}</strong>
                       <p>
-                        {document.ocr_status} ·{" "}
+                        {t("documentStatusOcrReady")} ·{" "}
                         {formatDate(document.created_at)}
                       </p>
                     </div>

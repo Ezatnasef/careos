@@ -1,9 +1,15 @@
 from datetime import date, datetime
-from enum import StrEnum
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        pass
 import secrets
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -179,7 +185,9 @@ class EmailDeliveryJob(Base):
 
 
 def generate_patient_code() -> str:
-    return f"PAT-{secrets.randbelow(1_000_000_000_000):012d}"
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    code = "".join(secrets.choice(alphabet) for _ in range(10))
+    return f"CARE-{code[:5]}-{code[5:]}"
 
 
 class Patient(Base):
@@ -214,6 +222,8 @@ class PatientProfile(Base):
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
     patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    preferred_name: Mapped[str | None] = mapped_column(String(120))
+    preferred_language: Mapped[str] = mapped_column(String(12), nullable=False, default="ar")
     phone: Mapped[str | None] = mapped_column(String(40))
     email: Mapped[str | None] = mapped_column(String(320))
     address: Mapped[str | None] = mapped_column(String(500))
@@ -476,3 +486,22 @@ class ReminderJob(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
     scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
+    patient_id: Mapped[UUID | None] = mapped_column(ForeignKey("patients.id"), nullable=True, index=True)
+    document_id: Mapped[UUID | None] = mapped_column(ForeignKey("patient_documents.id"), nullable=True, index=True)
+    chunk_id: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    page: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(JSON, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(24), nullable=False, default="guideline")
+    ocr_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ocr_engine: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+

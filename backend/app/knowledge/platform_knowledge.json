@@ -1,0 +1,108 @@
+[
+  {
+    "id": "careos_platform_overview",
+    "title": "About CareOS | عن منصة كير أو إس",
+    "category": "overview",
+    "keywords": [
+      "what is careos", "careos", "platform", "overview", "importance", "features", "clinical workspace",
+      "ما هو كير او اس", "ما هي المنصة", "أهمية المنصة", "الهدف", "منصة صحية", "ذكاء سريري", "مساحة عمل"
+    ],
+    "content": "CareOS is an intelligent clinical workspace designed to unify healthcare operations into a single seamless environment. Instead of medical teams and patients juggling disconnected tools (separate appointment books, isolated patient records, fragmented notes, and third-party chat apps), CareOS brings everything together in one patient-centered workspace.\n\nKey Platform Highlights:\n1. Faster Notes, Clearer Decisions: Combines consultation documentation, patient history, and clinical guidelines in one place.\n2. Traceable Suggestions: Keeps healthcare providers in complete control—every AI-assisted suggestion references verified clinical sources with full transparency.\n3. Human-in-the-Loop Philosophy: Designed to empower doctors and care teams, not replace them. Clinicians always review and approve clinical notes and care decisions.\n4. Complete Operational Harmony: Unites clinic front desks, doctors, nurses, and patients in one synchronized workflow.\n\nباللغة العربية:\nمنصة CareOS هي مساحة عمل سريرية ذكية مصممة لتوحيد سير العمل الطبي والرعاية الصحية في بيئة واحدة متكاملة. بدلاً من تشتت المنشأة الطبية بين أنظمة منفصلة للمواعيد وسجلات ورقية وتطبيقات محادثة متفرقة، تجمع CareOS كل ما يحتاجه الطبيب والمريض في منصة واحدة.\n\nأهم مبادئ المنصة:\n- توثيق سريري أسرع وقرارات أوضح.\n- دعم القرار الطبي مع بقاء الطبيب هو صاحب القرار النهائي والمراجع لكل الملاحظات.\n- توحيد التواصل بين الاستقبال، الأطباء، التمريض، والمرضى.\n- شفافية كاملة في كل معلومة وتوصية صحية.",
+    "links": {
+      "signin": "https://careos-pearl.vercel.app/signin",
+      "home": "https://careos-pearl.vercel.app/"
+    }
+  },
+  {
+    "id": "patient_services_and_portal",
+    "title": "Patient Portal & Services | خدمات المرضى وبوابة المريض",
+    "category": "patient_services",
+    "keywords": [
+      "patient", "patients", "patient portal", "records", "my tests", "lab results", "appointments", "message doctor", "care plan",
+      "مريض", "مرضى", "بوابة المريض", "خدمات المريض", "حجز موعد", "مواعيد", "تحاليل", "أشعة", "ملفي الطبي", "تواصل مع الطبيب", "روشتة"
+    ],
+    "content": "CareOS offers a dedicated, easy-to-use Patient Portal designed to empower patients with immediate, secure access to their health journey.\n\nWhat Patients Can Do on CareOS:\n1. View & Manage Appointments: Check upcoming visit schedules, track appointment status (Confirmed, Arrived, Pending), and request new bookings or reschedules.\n2. Access Approved Medical Records & Lab Results: View verified diagnostic reports, lab test results, and physician summary notes that have been approved by their healthcare provider.\n3. Secure Messaging with Care Teams: Send direct, confidential inquiries to their doctors or clinic staff and receive timely follow-up guidance without unnecessary phone calls.\n4. Follow Personalized Care Plans: Keep track of treatment regimens, medications, daily health milestones, and follow-up recommendations.\n5. Complete Privacy: Each patient's medical data is strictly private and isolated; only authorized treating providers and the patient have access.\n\nباللغة العربية - ما تقدمه المنصة للمرضى:\n- بوابة المريض الخاصة (Patient Portal): مساحة رقمية سهلة وآمنة لمتابعة حالتك الصحية.\n- إدارة المواعيد: معرفة مواعيدك القادمة وحالتها (مؤكد، قيد الانتظار، تم الحضور) وإمكانية حجز وتعديل المواعيد.\n- الاطلاع على التحاليل والتقارير: عرض الفحوصات الطبية، نتائج التحاليل، وملاحظات الأطباء بعد اعتمادها من الفريق الطبي.\n- التواصل الآمن مع الفريق المعالج: إرسال استفسارات واستقبال تعليمات المتابعة الطبية بخصوصية وسرية تامة.\n- متابعة خطة العلاج: معرفة الأدوية والتعليمات الصحية ومواعيد المتابعة بكل وضوح.",
+    "links": {
+      "signin": "https://careos-pearl.vercel.app/signin",
+      "home": "https://careos-pearl.vercel.app/"
+    }
+  },
+  {
+    "id": "clinician_and_staff_tools",
+    "title": "Clinician & Care Team Features | مميزات الأطباء والفريق الطبي",
+    "category": "clinician_services",
+    "keywords": [
+      "doctor", "doctors", "clinician", "nurse", "receptionist", "clinical notes", "dictation", "voice recording", "soap notes", "workflow",
+      "طبيب", "أطباء", "دكتور", "تمريض", "استقبال", "ملاحظات سريرية", "إملاء صوتي", "تسجيل صوتي", "توثيق طبي", "سير العمل"
+    ],
+    "content": "For physicians, nurses, and clinic administrators, CareOS dramatically cuts down administrative fatigue and lets providers focus on patients:\n\n1. Ambient Voice Dictation: Doctors can record consultations or dictate patient notes directly in the platform, converting spoken dialogue into accurate medical text.\n2. AI Draft Clinical Notes: Automatically formats consultation details into organized clinical notes (History of Present Illness, Assessment, and Plan). Clinicians review, edit, and approve every line.\n3. Searchable Patient Care Directory: Instant access to patient demographics, past medical history, visit chronologies, and active care plans.\n4. Care Plans & Task Delegation: Doctors and nurses can assign tasks (e.g., follow-up calls, lab orders, cardiology referrals) with clear accountability.\n5. Departmental Overview: Real-time dashboard showing clinic patient queues, pending reviews, and today's schedule at a glance.\n\nباللغة العربية - مميزات الأطباء والفريق الطبي:\n- الإملاء والتسجيل الصوتي الذكي (Speech-to-Text): تحويل الحوار السريري أو إملاء الطبيب إلى نصوص وملاحظات طبية دقيقة لتقليل الوقت المستغرق في الكتابة اليدوية.\n- توليد مسودة الملاحظات السريرية: صياغة الملاحظات بتنسيق طبي منظم مع بقاء الطبيب هو المتحكم النهائي للمراجعة والاعتماد.\n- دليل المرضى الشامل: بحث فوري في السجلات الطبية السابقة وتاريخ الزيارات.\n- توزيع المهام وخطط الرعاية: توجيه مهام المتابعة والتحويلات بين الأطباء وطاقم التمريض والاستقبال.\n- لوحة تحكم المنشأة: متابعة الحالات وقوائم الانتظار ومواعيد اليوم بسهولة.",
+    "links": {
+      "signin": "https://careos-pearl.vercel.app/signin",
+      "home": "https://careos-pearl.vercel.app/"
+    }
+  },
+  {
+    "id": "document_intake_and_ocr",
+    "title": "Document Scanning & OCR Intake | مسح المستندات والتقارير الطبية",
+    "category": "documents_ocr",
+    "keywords": [
+      "document", "documents", "ocr", "scan", "paper", "reports", "upload", "pdf", "evidence", "lab results",
+      "مستندات", "مسح ضوئي", "قراءة النصوص", "تقارير", "تحاليل ورقية", "أشعة", "رفع تقرير", "استخراج البيانات"
+    ],
+    "content": "CareOS bridges the gap between paper records and digital clinical charts through its integrated Document Intake & OCR features:\n\n1. Simple Uploads: Patients or staff can upload PDF reports, lab results, discharge summaries, or smartphone photos of physical documents.\n2. Automated Text Extraction (OCR): Converts printed and scanned documents into structured, readable clinical data.\n3. Staff Verification: Clinical staff can review the extracted text side-by-side with the original scan to ensure 100% accuracy before approving it.\n4. Evidence Traceability: Approved data is permanently attached to the patient's medical file, creating an unbroken chain of clinical evidence.\n\nباللغة العربية:\n- رفع سهل وسريع للتقارير والأوراق الطبية وصور الفحوصات وملفات PDF.\n- قراءة ذكية واستخراج فوري للبيانات (OCR) من التقارير الورقية والمطبوعة.\n- مراجعة وتأكيد من الفريق الطبي لمطابقة النص المستخرج مع الصورة الأصلية قبل اعتماده.\n- حفظ النتائج المستخرجة مباشرة في الملف الطبي للمريض وربطها بسياق العلاج.",
+    "links": {
+      "signin": "https://careos-pearl.vercel.app/signin"
+    }
+  },
+  {
+    "id": "appointments_and_scheduling",
+    "title": "Appointment Scheduling & Calendar | نظام حجز وإدارة المواعيد",
+    "category": "appointments",
+    "keywords": [
+      "appointment", "appointments", "schedule", "calendar", "reschedule", "booking", "status", "cancel", "pending",
+      "موعد", "مواعيد", "حجز", "جدولة", "تقويم", "تأكيد موعد", "إلغاء موعد", "تأجيل", "مواعيد اليوم"
+    ],
+    "content": "CareOS provides a real-time scheduling suite for clinics and patients:\n\n1. Multi-View Calendars: Daily, weekly, and monthly views to track clinic appointments.\n2. Clear Operational Statuses: Every appointment moves through clear states: Pending Confirmation, Confirmed, Arrived (in clinic), and Cancelled.\n3. Effortless Rescheduling: Staff or patients can adjust appointment times with automatic notification updates.\n4. Department & Doctor Filtering: Easily view visits by department (General Medicine, Cardiology, Pediatrics, etc.) or individual practitioner.\n\nباللغة العربية:\n- تقويم مواعيد تفاعلي بمشاهدات يومية وشهرية.\n- تتبع فوري لحالة الموعد: مؤكد (Confirmed)، وصل للمنشأة (Arrived)، قيد المراجعة (Pending)، أو ملغي (Cancelled).\n- سهولة تعديل وإعادة جدولة المواعيد مع تحديث الجدول فوريًا.\n- تصنيف المواعيد حسب التخصص الطبي أو الطبيب المعالج.",
+    "links": {
+      "signin": "https://careos-pearl.vercel.app/signin"
+    }
+  },
+  {
+    "id": "security_privacy_and_access",
+    "title": "Security, Privacy & Role Permissions | الأمان وخصوصية البيانات",
+    "category": "security",
+    "keywords": [
+      "security", "privacy", "hipaa", "roles", "permissions", "access", "doctor access", "patient privacy",
+      "أمان", "خصوصية", "سرية", "صلاحيات", "أدوار", "حماية البيانات", "من يرى بياناتي", "خصوصية المريض"
+    ],
+    "content": "Security and patient confidentiality are top priorities in CareOS:\n\n1. Role-Based Permissions: Access is strictly controlled based on role (Physicians, Nurses, Reception Staff, Administrators, and Patients). Team members only see the information required for their duties.\n2. Patient Record Isolation: Patients only have access to their own records, visits, and messages, with no risk of seeing other patients' data.\n3. Audit Logging: The platform maintains strict audit trails of all file views and updates to ensure regulatory accountability.\n4. Multi-Factor Protection: Enhanced authentication options to keep medical accounts safe from unauthorized access.\n\nباللغة العربية:\n- صلاحيات دقيقة ومحددة لكل دور (أطباء، تمريض، موظفو استقبال، مرضى)، بحيث لا يرى أي شخص إلا البيانات المصرح له بها فقط.\n- حماية تامة لخصوصية المريض؛ لا يمكن لأي مريض الاطلاع إلا على سجله وبياناته الخاصة فقط.\n- تسجيل كامل لكافة العمليات لضمان أمان البيانات والمسؤولية المهنية.\n- تشفير وحماية متقدمة للحسابات لمنع أي وصول غير مصرح به.",
+    "links": {
+      "signin": "https://careos-pearl.vercel.app/signin"
+    }
+  },
+  {
+    "id": "how_to_use_and_navigation",
+    "title": "How to Use CareOS & Access Links | كيفية البدء وتسجيل الدخول",
+    "category": "navigation",
+    "keywords": [
+      "how to use", "sign in", "login", "sign up", "register", "create account", "get started", "demo", "link",
+      "كيف استخدم المنصة", "تسجيل الدخول", "دخول", "إنشاء حساب", "تسجيل جديد", "رابط المنصة", "تجربة"
+    ],
+    "content": "How to Get Started with CareOS:\n\n• For Registered Patients & Staff: You can log into your account directly at the Sign In page: https://careos-pearl.vercel.app/signin\n• For New Patients: You can register or activate your portal account following your clinic's invitation or sign-up link.\n• For Clinics & Medical Centers: You can explore the platform features, view live workflows, and request an organization workspace at: https://careos-pearl.vercel.app/\n• Need Help? This assistant is available 24/7 to answer questions about platform services, features, and patient tools!\n\nروابط الوصول:\n- رابط تسجيل الدخول المباشر: https://careos-pearl.vercel.app/signin\n- رابط الموقع الرئيسي وبدء الاستخدام: https://careos-pearl.vercel.app/",
+    "links": {
+      "signin": "https://careos-pearl.vercel.app/signin",
+      "signup": "https://careos-pearl.vercel.app/"
+    }
+  },
+  {
+    "id": "medical_safety_notice",
+    "title": "Medical Safety Notice | إخلاء المسؤولية الطبية",
+    "category": "safety",
+    "keywords": [
+      "emergency", "medical advice", "urgent", "diagnosis", "doctor substitute",
+      "طوارئ", "حالة طارئة", "تشخيص فوري", "بديل للطبيب", "علاج فوري"
+    ],
+    "content": "Important Medical Notice:\nCareOS and this platform assistant are clinical operating and informational tools. The assistant does NOT provide emergency medical triage, medical diagnoses, or prescription decisions. If you are experiencing a medical emergency, please call your local emergency medical services or visit the nearest emergency room immediately.\n\nتنبيه طبي هام:\nمنصة CareOS والمساعد الرقمي هما أدوات تنظيمية وإرشادية. المساعد لا يقدم تشخيصات طبية فورية ولا يحل محل الطبيب المعالج أو خدمات الطوارئ. في الحالات الطارئة، يرجى التوجه فورًا إلى أقرب قسم طوارئ أو الاتصال بالإسعاف.",
+    "links": {}
+  }
+]

@@ -8,7 +8,12 @@ import {
 import type { Language, TranslationKey } from "../../i18n";
 import type { AppView } from "../../app/routes";
 import { viewFromLocation } from "../../app/routes";
-import { navItems, roleNavMap, type Role } from "../workspace/navigation";
+import {
+  canAccessView,
+  navItems,
+  roleNavMap,
+  type Role,
+} from "../workspace/navigation";
 
 type Translator = (key: TranslationKey) => string;
 
@@ -24,7 +29,9 @@ type SidebarProps = {
 };
 
 export function Sidebar({ view, setView, mobileNav, setMobileNav, language, doctorName, role, t }: SidebarProps) {
-  const visibleViews = roleNavMap[role] ?? roleNavMap.doctor;
+  const visibleViews = (roleNavMap[role] ?? roleNavMap.doctor).filter((item) =>
+    canAccessView(role, item),
+  );
   const routeView = viewFromLocation();
   const displayedView = role === "patient" && view === "portal" && (routeView === "appointments" || routeView === "messages") ? routeView : view;
 

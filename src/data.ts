@@ -15,6 +15,8 @@ export type Appointment = {
   date?: string;
   time: string;
   patientId: string;
+  patientName?: string;
+  patientCode?: string;
   type:
     | "Follow-up consultation"
     | "Diabetes review"

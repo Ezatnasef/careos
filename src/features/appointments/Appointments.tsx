@@ -234,32 +234,48 @@ export function Appointments({
   const [live, setLive] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const locale = language === "ar" ? "ar-EG" : "en-US";
   const load = () => {
     setLoading(true);
     return Promise.all([getAppointments({ pageSize: 100 }), getPatients()])
       .then(([records, people]) => {
-        const ids = new Map(
-          people.map((person) => [person.id, person.patient_code]),
+        const patientsById = new Map(
+          people.map((person) => [
+            person.id,
+            {
+              name: `${person.given_name} ${person.family_name}`.trim(),
+              code: person.patient_code,
+            },
+          ]),
         );
         setLive(
-          records.map((item) => ({
-            id: item.id,
-            startsAt: item.starts_at,
-            date: new Date(item.starts_at).toDateString(),
-            time: new Date(item.starts_at).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            }),
-            patientId: ids.get(item.patient_id) || item.patient_id,
-            type: item.reason as Appointment["type"],
-            status: ({
-              confirmed: "Confirmed",
-              arrived: "Arrived",
-              pending: "Pending",
-              cancelled: "Cancelled",
-            }[item.status] || "Pending") as Appointment["status"],
-          })),
+          records.map((item) => {
+            const patient = patientsById.get(item.patient_id);
+            return {
+              id: item.id,
+              startsAt: item.starts_at,
+              date: new Date(item.starts_at).toLocaleDateString(locale, {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              }),
+              time: new Date(item.starts_at).toLocaleTimeString(locale, {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+              }),
+              patientId: patient?.code || item.patient_id,
+              patientName: patient?.name,
+              patientCode: patient?.code,
+              type: item.reason as Appointment["type"],
+              status: ({
+                confirmed: "Confirmed",
+                arrived: "Arrived",
+                pending: "Pending",
+                cancelled: "Cancelled",
+              }[item.status] || "Pending") as Appointment["status"],
+            };
+          }),
         );
         setLoadError(null);
       })
@@ -281,7 +297,6 @@ export function Appointments({
   rangeStart.setDate(rangeStart.getDate() + dayOffset);
   const rangeEnd = new Date(rangeStart);
   rangeEnd.setDate(rangeEnd.getDate() + 1);
-  const locale = language === "ar" ? "ar-EG" : "en-US";
   const rangeLabel = rangeStart.toLocaleDateString(locale, {
     weekday: "long",
     day: "numeric",
@@ -484,9 +499,33 @@ export function Appointments({
               className="appointment-row"
               key={`${item.id || item.time}-${item.patientId}`}
             >
-              <div>
-                <strong>{item.time}</strong>
-                <span>{item.patientId}</span>
+              <div className="appointment-time-details">
+                <time dateTime={item.startsAt} dir="ltr">
+                  {item.startsAt
+                    ? new Date(item.startsAt).toLocaleTimeString(locale, {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        hour12: false,
+                      })
+                    : item.time}
+                </time>
+                <time dateTime={item.startsAt}>
+                  {item.startsAt
+                    ? new Date(item.startsAt).toLocaleDateString(locale, {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })
+                    : item.date}
+                </time>
+              </div>
+              <div className="appointment-patient-details">
+                <strong>{item.patientName || item.patientId}</strong>
+                {item.patientCode && (
+                  <span className="appointment-patient-code" dir="ltr">
+                    {item.patientCode}
+                  </span>
+                )}
               </div>
               <span>{item.type}</span>
               <span
@@ -502,30 +541,78 @@ export function Appointments({
                   Reschedule
                 </button>
               )}
-              <button
-                className="text-btn"
-                onClick={async () => {
-                  if (!item.id) return;
-                  try {
-                    await updateAppointmentStatus(
-                      item.id,
-                      item.status === "Confirmed" ? "cancelled" : "confirmed",
-                    );
-                    await load();
-                  } catch (error) {
-                    window.dispatchEvent(
-                      new CustomEvent("careos:toast", {
-                        detail:
-                          error instanceof Error
-                            ? error.message
-                            : t("appointmentSaveFailed"),
-                      }),
-                    );
-                  }
-                }}
-              >
-                {item.status === "Confirmed" ? "Cancel" : t("updateStatus")}
-              </button>
+              {item.status === "Pending" && (
+                <button
+                  className="text-btn"
+                  onClick={async () => {
+                    if (!item.id) return;
+                    try {
+                      await updateAppointmentStatus(item.id, "confirmed");
+                      await load();
+                    } catch (error) {
+                      window.dispatchEvent(
+                        new CustomEvent("careos:toast", {
+                          detail:
+                            error instanceof Error
+                              ? error.message
+                              : t("appointmentSaveFailed"),
+                        }),
+                      );
+                    }
+                  }}
+                >
+                  Accept
+                </button>
+              )}
+              {item.status === "Pending" && (
+                <button
+                  className="text-btn"
+                  onClick={async () => {
+                    if (!item.id) return;
+                    try {
+                      await updateAppointmentStatus(item.id, "cancelled");
+                      await load();
+                    } catch (error) {
+                      window.dispatchEvent(
+                        new CustomEvent("careos:toast", {
+                          detail:
+                            error instanceof Error
+                              ? error.message
+                              : t("appointmentSaveFailed"),
+                        }),
+                      );
+                    }
+                  }}
+                >
+                  Reject
+                </button>
+              )}
+              {item.status !== "Pending" && (
+                <button
+                  className="text-btn"
+                  onClick={async () => {
+                    if (!item.id) return;
+                    try {
+                      await updateAppointmentStatus(
+                        item.id,
+                        item.status === "Confirmed" ? "cancelled" : "confirmed",
+                      );
+                      await load();
+                    } catch (error) {
+                      window.dispatchEvent(
+                        new CustomEvent("careos:toast", {
+                          detail:
+                            error instanceof Error
+                              ? error.message
+                              : t("appointmentSaveFailed"),
+                        }),
+                      );
+                    }
+                  }}
+                >
+                  {item.status === "Confirmed" ? "Cancel" : t("updateStatus")}
+                </button>
+              )}
             </div>
           ))}
         {!loading && !loadError && visible.length === 0 && (

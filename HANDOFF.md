@@ -1,126 +1,61 @@
-# CareOS handoff guide
+# CareOS — Technical Handoff Summary
 
-## Verified local status
+This document summarizes the portable architecture, key verification commands, and handoff checklist for the CareOS codebase. For complete step-by-step setup instructions, see [`README.md`](./README.md).
 
-This project is now verified in a working local development state.
+---
 
-The following checks were completed successfully in the current session:
+## 1. Quick Handoff Commands (Windows PowerShell)
 
-- FastAPI backend started successfully after clearing the stale process on port 8000
-- `GET http://127.0.0.1:8000/api/v1/health` returned `{"status":"ok"}`
-- `POST /api/v1/auth/demo-login` returned a valid access token and user payload
-- `npm run build` completed successfully
-- Playwright route test for the account/profile page passed: `1 passed (13.9s)`
-
-This means the application is currently stable enough for local development and live feature validation, but it is not yet a production PHI-ready deployment.
-
-## What runs today
-
-The project currently runs as:
-
-- Vite + React frontend on the local browser app
-- FastAPI backend serving API routes on `127.0.0.1:8000`
-- SQLite local database used for development verification
-- Local auth/session flow with working demo login and token restoration
-
-This is a functioning local runtime baseline, not a final production deployment.
-
-## Runtime flow
-
-```text
-React app -> /api/v1 -> FastAPI -> SQLite local DB
-                     -> auth/session validation
-                     -> feature APIs (dashboard, patients, appointments, notes, docs, portal)
-```
-
-The frontend is connected to the API layer and can validate real route access and auth state. The project is now in a working local state, which is the correct foundation before full production hardening.
-
-## Current verified working areas
-
-- Backend startup and app boot
-- Health endpoint
-- Demo auth flow
-- Access token generation and user payload
-- Frontend build
-- Profile/account route navigation
-- Session-oriented app shell behavior
-- Core functional UI shell and route flow
-
-## Current status by area
-
-### Ready / verified
-
-- backend startup
-- health endpoint
-- demo login
-- session restore path
-- build pipeline
-- account page navigation
-- role-aware front-end shell
-
-### Still requiring hardening or real production setup
-
-- production-grade database deployment
-- production secrets and environment configuration
-- full RBAC validation across all routes and features
-- end-to-end verification of every feature page with real data
-- SSO provider cert/JWKS and callback hardening
-- object storage and document pipeline scale validation
-- background workers and notification delivery
-- real PHI deployment controls and release checks
-
-## Provider replacement points
-
-`backend/app/integrations.py` remains the correct place to isolate vendor implementations behind backend interfaces.
-
-Keep provider code server-side only.
-
-- `ClinicalSummaryProvider.summarize`: approved LLM backend
-- `RagProvider.answer`: retrieval backend with citations and policy controls
-- `OcrProvider.extract`: OCR implementation only on the backend
-- `NotificationProvider.queue`: email, SMS, or messaging system integration
-
-Do not call provider logic from React and do not expose credentials to the browser.
-
-## Operational expectations
-
-- The app must not be treated as production-ready until the security gates in `SECURITY.md` are met.
-- Local development is valid for feature verification and route validation.
-- Demo user flows are okay for local testing, but real launch must use controlled environment configuration and production-safe DB/storage setup.
-
-## Required next work
-
-1. Validate every feature page against real API data instead of just demo flow.
-2. Complete a full RBAC/access review for every protected route.
-3. Harden SSO callback and provider verification.
-4. Move from SQLite local verification to a production-safe storage strategy.
-5. Finish security and deployment gates before any PHI or production exposure.
-6. Keep a clean startup process by preventing stale API processes from reusing port 8000.
-
-## Useful local command pattern
-
-Run the backend locally with the correct development environment:
+From the `newcareos-main` folder on any Windows 10/11 machine with Python 3.11/3.12 and Node.js 20+:
 
 ```powershell
-Set-Location 'F:\all work\careos-main\backend'
-$env:APP_ENV='development'
-$env:DATABASE_URL='sqlite+aiosqlite:///./careos-local.db'
-& 'C:\Users\Nasef\anaconda3\python.exe' -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+# 1. Initialize .venv, install backend/frontend dependencies, create .env from .env.example, and cache the RAG model
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
+
+# 2. Run non-destructive health, DB, OCR, RAG, and TypeScript readiness checks
+powershell -ExecutionPolicy Bypass -File scripts/check.ps1
+
+# 3. Start Backend (http://127.0.0.1:8000) and Frontend (http://127.0.0.1:5173)
+powershell -ExecutionPolicy Bypass -File scripts/start.ps1
 ```
 
-Then verify:
+---
+
+## 2. Core Subsystem Locations
+
+- **Configuration & Path Portability**: `backend/app/config.py`
+  - Automatically loads `.env` from either the repository root or `backend/.env`.
+  - Normalizes relative SQLite `DATABASE_URL` paths (`sqlite+aiosqlite:///./careos-local.db`) against `backend/` so commands work from any working directory.
+- **Upload Storage**: `backend/app/storage.py`
+  - Resolves relative `STORAGE_LOCAL_ROOT` paths against `backend/` (defaulting to `backend/storage/uploads`).
+- **OCR & Structured Clinical Extraction**:
+  - `backend/app/rag/parsers/` (`pdf_parser.py`, `docx_parser.py`, `image_parser.py`, `unified_document.py`)
+  - `backend/app/rag/ocr/` (`ocr_router.py`, `ocr_engine.py`, `handwriting_ocr.py`)
+  - `backend/app/ocr.py` (`extract_document_bytes`, `extract_structured_clinical_candidates`)
+- **Clinical RAG & Vector Store**:
+  - `backend/app/rag/chunker.py` — Overlapping text chunker with page/source provenance.
+  - `backend/app/rag/embeddings.py` — Local 384-dim `SentenceTransformer` (`sentence-transformers/all-MiniLM-L6-v2`).
+  - `backend/app/rag/store.py` — Dual-backend vector store supporting both SQLite (exact cosine similarity) and PostgreSQL (`pgvector`).
+  - `backend/app/rag/pipeline.py` & `backend/app/rag/llm.py` — 3-mode query classification (`guideline_only`, `patient_only`, `mixed`), negation/uncertainty classification, extractive fallback synthesis, and citation verification.
+  - `backend/app/rag/guideline_importer.py` — Optional read-only importer for pre-embedded clinical guideline SQLite databases (`LEGACY_RAG_DB_PATH` or `backend/data/careos_rag.db`).
+- **Frontend Modules**:
+  - `src/components/DocumentWorkflow.tsx` — Document upload, bilingual OCR preview, structured clinical candidate cards, approve/reject review workflow, and soft-delete with confirmation.
+  - `src/components/ClinicalKnowledgeSearch.tsx` — Grounded clinical RAG assistant with citation badges and expandable retrieved evidence chunks.
+
+---
+
+## 3. Automated Test Suites
+
+Run from `newcareos-main/backend`:
 
 ```powershell
-Invoke-WebRequest -Uri 'http://127.0.0.1:8000/api/v1/health' -Method GET
+$env:PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK = "True"
+..\.venv\Scripts\python.exe -m pytest tests/test_health.py tests/test_ocr_and_parsers.py tests/test_clinical_rag.py -q
 ```
 
-And build the frontend:
+Run from `newcareos-main`:
 
 ```powershell
-Set-Location 'F:\all work\careos-main'
-npm run build
+npm.cmd run typecheck
+npm.cmd run build
 ```
-
-## Final summary
-
-The project is now in a valid local working state, with the critical startup/auth/build problems resolved and verified. The next phase is not “rewrite from scratch”; it is focused hardening, production configuration, and broader feature validation before any production release.

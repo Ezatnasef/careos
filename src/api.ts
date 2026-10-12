@@ -1,4 +1,4 @@
-import { portalRequest, request } from "./api/client";
+import { ApiError, clearSession, portalRequest, request } from "./api/client";
 import { demoAccounts } from "./features/auth/LoginRoute";
 
 export type AuthUser = {
@@ -34,6 +34,7 @@ export type Workspace = {
 
 export type DashboardContract = {
   patient_count: number;
+  upcoming_appointment_count?: number;
   upcoming_appointments: ApiAppointment[];
   followups: ApiPatient[];
   kpi?: Record<string, number | string>;
@@ -51,11 +52,28 @@ export type ApiPatient = {
   department?: string; project?: string;
   date_of_birth: string; gender: string; condition: string; care_status: string;
 };
+export type PatientRegistrationInput = {
+  medical_record_number?: string;
+  given_name: string;
+  family_name: string;
+  preferred_name?: string;
+  preferred_language?: "ar" | "en";
+  date_of_birth: string;
+  gender?: string;
+  condition?: string;
+  care_status?: string;
+  department?: string;
+  project?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  emergency_contact?: string;
+};
 export type SystemStatus = { app: string; environment: string; deployment: string; metrics_enabled: boolean; sso_ready: boolean; providers?: Record<string, { configured: boolean; provider?: string; backend?: string }> };
 export type ApiAppointment = { id: string; patient_id: string; starts_at: string; reason: string; status: string; reminder_status: string };
 export type ApiNote = { id: string; patient_id: string; encounter_id?: string | null; body: string; ai_draft: string | null; status: string; signed_at: string | null };
 export type ApiEncounter = { id: string; organization_id: string; patient_id: string; clinician_id: string; encounter_type: string; status: string; started_at: string; ended_at: string | null };
-export type ApiTranscript = { id: string; encounter_id: string; audio_file_id: string; provider: string; language: string; dialect: string; transcript_text: string | null; status: string; confidence: number | null; error_code: string | null; created_at: string; completed_at: string | null };
+export type ApiTranscript = { id: string; encounter_id: string; audio_file_id: string; provider: string; language: string; dialect: string; transcript_text: string | null; status: string; job_status?: string | null; confidence: number | null; error_code: string | null; created_at: string; completed_at: string | null };
 export type ApiMessage = {
   id: string;
   patient_id: string;
@@ -78,9 +96,117 @@ export type PortalOverview = {
   messages: ApiMessage[];
   documents: Array<{ id: string; filename: string; ocr_status: string; created_at: string; download_url?: string | null }>;
 };
+export type StructuredClinicalCandidates = {
+  document_type: string;
+  document_date?: string | null;
+  patient_metadata?: {
+    patient_name?: string | null;
+    mrn?: string | null;
+    age?: number | string | null;
+    sex?: string | null;
+  };
+  diagnoses?: Array<{
+    value: string;
+    status: string;
+    confidence?: number;
+    page?: number | null;
+  }>;
+  medications?: Array<{
+    name: string;
+    strength?: string | null;
+    dosage?: string | null;
+    dose?: string | null;
+    frequency?: string | null;
+    duration?: string | null;
+    raw?: string;
+    status?: string;
+    confidence?: number;
+    page?: number | null;
+  }>;
+  allergies?: Array<{
+    substance: string;
+    status: string;
+    confidence?: number;
+    page?: number | null;
+  }>;
+  labs?: Array<{
+    test: string;
+    value: string;
+    unit?: string | null;
+    date?: string | null;
+    raw?: string;
+    status?: string;
+    confidence?: number;
+    page?: number | null;
+  }>;
+  clinical_findings?: Array<{
+    value: string;
+    status?: string;
+    page?: number | null;
+  }>;
+  follow_up?: Array<{
+    value: string;
+    status?: string;
+    page?: number | null;
+  }>;
+  unreadable_segments?: Array<{
+    raw: string;
+    status: string;
+    field_hint?: string;
+    requires_human_review?: boolean;
+    confidence?: number;
+    page?: number | null;
+  }>;
+  conflicts?: Array<{
+    domain: string;
+    description: string;
+    items?: string[];
+  }>;
+  field_status?: Record<string, string>;
+  provenance?: {
+    source?: string;
+    source_document_id?: string | null;
+    ocr_applied?: boolean;
+    ocr_engine?: string | null;
+    ocr_confidence?: number | null;
+    review_status?: string;
+    candidate_only?: boolean;
+    requires_human_review?: boolean;
+  };
+};
+
+export type OcrDiagnostics = {
+  filename?: string;
+  ocr_status?: string;
+  raw_text_length: number;
+  safe_preview_synthetic_only?: string | null;
+  document_type?: string | null;
+  document_date?: string | null;
+  ocr_applied: boolean;
+  ocr_engine?: string | null;
+  ocr_confidence?: number | null;
+  requires_human_review: boolean;
+  chunks_indexed: number;
+  field_status: Record<string, string>;
+  extracted_counts: Record<string, number>;
+};
+
 export type PatientDetailResponse = ApiPatient & {
   notes: Array<{ id: string; body: string; ai_draft: string | null; status: string; created_at?: string }>;
-  documents: Array<{ id: string; filename: string; ocr_status: string; extracted_text?: string | null }>;
+  documents: Array<{
+    id: string;
+    filename: string;
+    encounter_id?: string | null;
+    content_type: string;
+    ocr_status: string;
+    review_status: string;
+    extracted_text?: string | null;
+    normalized_text?: string | null;
+    structured_candidates?: StructuredClinicalCandidates;
+    chunks_indexed?: number;
+    created_at: string;
+    download_url?: string | null;
+  }>;
 };
 export type AnalyticsResponse = {
   overview: { patients: number; appointments: number; follow_up_due: number; today_count: number };
@@ -117,9 +243,31 @@ export type DocumentUploadResponse = {
   filename: string;
   ocr_status: string;
   extracted_text?: string | null;
+  normalized_text?: string | null;
+  structured_candidates?: StructuredClinicalCandidates;
+  ocr_applied?: boolean;
+  ocr_engine?: string | null;
+  ocr_confidence?: number | null;
+  page_count?: number;
+  chunks_indexed?: number;
+  ocr_diagnostics?: OcrDiagnostics;
   storage_key?: string;
   download_url?: string;
   review_status?: string;
+};
+export type OcrStatusResponse = {
+  default_engine: string;
+  supported_extensions: string[];
+  parsers: {
+    pdf_pymupdf: boolean;
+    pdf_pypdf: boolean;
+    docx: boolean;
+    image_pillow: boolean;
+  };
+  engines: {
+    printed: { engine: string; available: boolean; language: string };
+    handwriting: { engine: string; available: boolean; model: string; device: string };
+  };
 };
 
 type AuthResponse = { access_token: string; token_type: string; user: AuthUser };
@@ -197,9 +345,25 @@ function getDemoAccountByRole(role: string) {
 }
 
 function isDemoRequestFailure(error: unknown): boolean {
+  if (error && typeof error === "object" && "status" in error) {
+    const status = Number((error as { status?: number }).status);
+    if ([500, 502, 503, 504].includes(status)) {
+      return true;
+    }
+  }
+
   if (error instanceof Error) {
     const message = error.message.toLowerCase();
-    if (message.includes("failed to fetch") || message.includes("network") || message.includes("offline") || message.includes("load failed")) {
+    if (
+      message.includes("failed to fetch") ||
+      message.includes("network") ||
+      message.includes("offline") ||
+      message.includes("load failed") ||
+      message.includes("request failed") ||
+      message.includes("service unavailable") ||
+      message.includes("bad gateway") ||
+      message.includes("gateway timeout")
+    ) {
       return true;
     }
   }
@@ -234,11 +398,9 @@ export async function demoLogin(role: string, username: string, password: string
   try {
     const result = await request<DemoAuthResponse>("/auth/demo-login", { method: "POST", body: JSON.stringify({ role, username, password }) });
     if (result.portal_access_token) {
-      localStorage.setItem("careos-portal-token", result.portal_access_token);
-      localStorage.removeItem("careos-access-token");
+      storePortalToken(result.portal_access_token);
     } else if (result.access_token) {
-      localStorage.setItem("careos-access-token", result.access_token);
-      localStorage.removeItem("careos-portal-token");
+      storeStaffToken(result.access_token);
     }
     return result;
   } catch (error) {
@@ -295,7 +457,30 @@ export async function exchangeHospitalSso(code: string, state: string, provider 
 export async function getCurrentUser(): Promise<AuthUser> {
   if (localStorage.getItem(DEMO_MODE_KEY) === "true") {
     const user = getDemoUser();
-    if (user) return user;
+    if (user && localStorage.getItem("careos-access-token") !== "demo-staff-token") {
+      return user;
+    }
+    if (user) {
+      const account = getDemoAccountByRole(user.role);
+      try {
+        const restored = await demoLogin(
+          account.role,
+          account.username,
+          account.password,
+        );
+        if (
+          restored.access_token &&
+          restored.access_token !== "demo-staff-token" &&
+          "organization_id" in restored.user
+        ) {
+          return restored.user;
+        }
+        return user;
+      } catch (error) {
+        if (isDemoRequestFailure(error)) return user;
+        throw error;
+      }
+    }
   }
 
   try {
@@ -347,7 +532,28 @@ export function getPortalAccount(): Promise<PortalAuthResponse["user"]> {
   if (localStorage.getItem(DEMO_MODE_KEY) === "true") {
     const user = getDemoUser();
     if (user) {
-      return Promise.resolve({ id: user.id, patient_id: user.id, email: user.email, full_name: user.full_name, role: user.role });
+      if (localStorage.getItem("careos-portal-token") !== "demo-portal-token") {
+        return Promise.resolve({ id: user.id, patient_id: user.id, email: user.email, full_name: user.full_name, role: user.role });
+      }
+      const account = getDemoAccountByRole("patient");
+      return demoLogin(account.role, account.username, account.password).then(
+        (restored) => {
+          if (
+            restored.portal_access_token &&
+            restored.portal_access_token !== "demo-portal-token" &&
+            "patient_id" in restored.user
+          ) {
+            return restored.user;
+          }
+          return {
+            id: user.id,
+            patient_id: user.id,
+            email: user.email,
+            full_name: user.full_name,
+            role: user.role,
+          };
+        },
+      );
     }
   }
 
@@ -463,6 +669,7 @@ export const getPatients = (q = "", page = 1, pageSize = 50) => {
 export const getPatientById = (id: string) => request<PatientDetailResponse>(`/patients/${id}`);
 export const createEncounter = (patientId: string, encounterType = "consultation") => request<ApiEncounter>("/encounters", { method: "POST", body: JSON.stringify({ patient_id: patientId, encounter_type: encounterType }) });
 export const getEncounter = (id: string) => request<ApiEncounter>(`/encounters/${id}`);
+export const getLatestPatientEncounter = (patientId: string) => request<ApiEncounter>(`/patients/${patientId}/encounters/latest`);
 export async function uploadEncounterRecording(encounterId: string, blob: Blob, filename = "consultation.webm"): Promise<{ id: string; encounter_id: string; patient_id: string; transcript_id: string; transcript_status: string }> {
   const content = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1] || ""); reader.onerror = () => reject(new Error("Could not read recording")); reader.readAsDataURL(blob); });
   return request(`/encounters/${encounterId}/recordings`, { method: "POST", body: JSON.stringify({ content, filename, content_type: blob.type || "audio/webm" }) });
@@ -470,7 +677,7 @@ export async function uploadEncounterRecording(encounterId: string, blob: Blob, 
 export const getTranscript = (id: string) => request<ApiTranscript>(`/transcripts/${id}`);
 export const transcribeRecording = (id: string) => request<{ id: string; status: string; transcript_text: string; confidence: number | null; provider: string }>(`/recordings/${id}/transcribe`, { method: "POST" });
 export const reviewTranscript = (id: string, transcriptText: string) => request<{ id: string; version: number; transcript_text: string; status: string }>(`/transcripts/${id}/review`, { method: "PATCH", body: JSON.stringify({ transcript_text: transcriptText }) });
-export const createPatient = (patient: Omit<ApiPatient, "id">) => request<ApiPatient>("/patients", { method: "POST", body: JSON.stringify({ ...patient, department: patient.department ?? "", project: patient.project ?? "" }) });
+export const createPatient = (patient: PatientRegistrationInput) => request<ApiPatient>("/patients", { method: "POST", body: JSON.stringify({ ...patient, department: patient.department ?? "", project: patient.project ?? "" }) });
 export const getAppointments = (filters: { status?: string; fromAt?: string; toAt?: string; page?: number; pageSize?: number } = {}) => {
   const params = new URLSearchParams({ page: String(filters.page ?? 1), page_size: String(filters.pageSize ?? 100) });
   if (filters.status) params.set("status", filters.status);
@@ -486,8 +693,11 @@ export const updateClinicalNote = (id: string, note: { body: string; ai_draft?: 
 export const getClinicalNoteVersions = (id: string) => request<Array<{ id: string; version: number; body: string; ai_draft: string | null; status: string; author_id: string; created_at: string }>>(`/clinical-notes/${id}/versions`);
 export const generateClinicalSummary = (id: string) => request<ApiNote & { provider: string; summary?: string }>(`/clinical-notes/${id}/summary`, { method: "POST" });
 export const signClinicalNote = (id: string) => request<ApiNote>(`/clinical-notes/${id}/sign`, { method: "POST" });
-export const askAssistant = (patient_id: string, question = patient_id) => request<{ answer: string; response?: string; confidence: number; sources: Array<{ title: string; page?: string }>; provider: string }>("/assistant/query", { method: "POST", body: JSON.stringify({ patient_id, question }) });
-export async function uploadPatientDocument(patientId: string, file: File): Promise<DocumentUploadResponse> {
+export async function uploadPatientDocument(
+  patientId: string,
+  file: File,
+  ocrEngine?: "printed" | "handwriting",
+): Promise<DocumentUploadResponse> {
   const content = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
@@ -496,7 +706,55 @@ export async function uploadPatientDocument(patientId: string, file: File): Prom
   });
   return request<DocumentUploadResponse>(`/patients/${patientId}/documents`, {
     method: "POST",
-    body: JSON.stringify({ filename: file.name, content, content_type: file.type || "application/octet-stream" }),
+    body: JSON.stringify({
+      filename: file.name,
+      content,
+      content_type: file.type || "application/octet-stream",
+      ...(ocrEngine ? { ocr_engine: ocrEngine } : {}),
+    }),
   });
 }
-export const reviewPatientDocument = (patientId: string, documentId: string, status: "pending" | "approved" | "rejected") => request<{ id: string; review_status: string }>(`/patients/${patientId}/documents/${documentId}/review?status=${status}`, { method: "PATCH" });
+export const getOcrStatus = () => request<OcrStatusResponse>("/ocr/status");
+export const extractPatientDocumentText = (
+  patientId: string,
+  documentId: string,
+  ocrEngine?: "printed" | "handwriting",
+) =>
+  request<DocumentUploadResponse & { ocr_applied?: boolean; ocr_engine?: string | null; page_count?: number }>(
+    `/patients/${patientId}/documents/${documentId}/ocr`,
+    {
+      method: "POST",
+      body: JSON.stringify(ocrEngine ? { ocr_engine: ocrEngine } : {}),
+    },
+  );
+export const reviewPatientDocument = (
+  patientId: string,
+  documentId: string,
+  status: "pending" | "approved" | "rejected",
+) =>
+  request<{
+    id: string;
+    review_status: string;
+    chunks_indexed?: number;
+    ocr_diagnostics?: OcrDiagnostics;
+  }>(`/patients/${patientId}/documents/${documentId}/review?status=${status}`, {
+    method: "PATCH",
+  });
+export const deletePatientDocument = (patientId: string, documentId: string) =>
+  request<{ id: string; deleted: boolean; deleted_at: string; chunks_removed?: number }>(
+    `/patients/${patientId}/documents/${documentId}`,
+    { method: "DELETE" },
+  );
+export async function downloadPatientDocument(patientId: string, documentId: string): Promise<Blob> {
+  const token = localStorage.getItem("careos-access-token");
+  const response = await fetch(
+    `${import.meta.env.VITE_API_URL || "/api/v1"}/patients/${patientId}/documents/${documentId}/download`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+  );
+  if (!response.ok) {
+    if (response.status === 401) clearSession();
+    const body = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, body.detail || "Could not download document");
+  }
+  return response.blob();
+}

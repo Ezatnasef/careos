@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, MessageCircle, Send, X } from "lucide-react";
-import { askGeneralChat } from "../../api/chat";
-import type { TranslationKey } from "../../i18n";
+import { createPortal } from "react-dom";
+import { MessageCircle, Send, Sparkles, X } from "lucide-react";
+import { askGeneralChat, askGuestChat } from "../../api/chat";
+import type { Language, TranslationKey } from "../../i18n";
 
 type Translator = (key: TranslationKey) => string;
-type ChatMessage = { id: string; role: "user" | "assistant"; text: string };
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  sources?: Array<{ title?: string }>;
+};
+type Props = { t: Translator; guest?: boolean; language?: Language };
 
-export function GlobalChat({ t }: { t: Translator }) {
+export function GlobalChat({ t, guest = false, language = "en" }: Props) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -18,7 +25,7 @@ export function GlobalChat({ t }: { t: Translator }) {
     if (open) endOfMessages.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading, open]);
 
-  if (!localStorage.getItem("careos-access-token")) return null;
+  if (!guest && !localStorage.getItem("careos-access-token")) return null;
 
   const send = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -32,10 +39,22 @@ export function GlobalChat({ t }: { t: Translator }) {
     ]);
     setLoading(true);
     try {
-      const response = await askGeneralChat(message);
+      const response = guest
+        ? await askGuestChat(
+            message,
+            language === "ar" ? "ar-EG" : "en-US",
+            false,
+            messages.slice(-12).map(({ role, text }) => ({ role, content: text })),
+          )
+        : await askGeneralChat(message);
       setMessages((current) => [
         ...current,
-        { id: `assistant-${Date.now()}`, role: "assistant", text: response.answer },
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          text: response.answer,
+          sources: response.sources,
+        },
       ]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t("generalChatError"));
@@ -44,27 +63,37 @@ export function GlobalChat({ t }: { t: Translator }) {
     }
   };
 
-  return (
-    <div className="global-chat">
+  const chat = (
+    <div className="global-chat" dir={guest ? (language === "ar" ? "rtl" : "ltr") : undefined}>
       {open && (
-        <section className="global-chat-panel" role="dialog" aria-label={t("generalChatTitle")}>
+        <section className="global-chat-panel" role="dialog" aria-label={guest ? t("platformChatTitle") : t("generalChatTitle")}>
           <header className="global-chat-header">
             <div className="global-chat-identity">
-              <span className="global-chat-avatar"><Bot size={17} /></span>
+              <span className="global-chat-avatar"><Sparkles size={17} strokeWidth={2} /></span>
               <div>
-                <strong>{t("generalChatTitle")}</strong>
-                <span>{t("generalChatPrivacy")}</span>
+                <strong>{guest ? t("platformChatTitle") : t("generalChatTitle")}</strong>
+                <span>{guest ? t("platformChatPrivacy") : t("generalChatPrivacy")}</span>
               </div>
             </div>
             <button type="button" className="icon-btn" aria-label={t("closeChat")} onClick={() => setOpen(false)}>
-              <X size={17} />
+              <X size={20} strokeWidth={2.2} />
             </button>
           </header>
           <div className="global-chat-messages" aria-live="polite">
-            {messages.length === 0 && <p className="global-chat-welcome">{t("generalChatWelcome")}</p>}
+            {messages.length === 0 && <p className="global-chat-welcome">{guest ? t("platformChatWelcome") : t("generalChatWelcome")}</p>}
             {messages.map((message) => (
               <div className={`global-chat-message ${message.role}`} key={message.id}>
                 {message.text}
+                {message.sources && message.sources.length > 0 && (
+                  <div className="global-chat-sources">
+                    <strong>{t("platformSourcesLabel")}</strong>
+                    <ul>
+                      {message.sources.map((source, index) => (
+                        <li key={`${source.title ?? "source"}-${index}`}>{source.title}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             ))}
             {loading && <div className="global-chat-message assistant">{t("generalChatThinking")}</div>}
@@ -80,7 +109,7 @@ export function GlobalChat({ t }: { t: Translator }) {
               autoComplete="off"
             />
             <button type="submit" aria-label={t("sendGeneralChat")} disabled={!draft.trim() || loading}>
-              <Send size={16} />
+              <Send size={18} strokeWidth={2.2} />
             </button>
           </form>
         </section>
@@ -96,4 +125,10 @@ export function GlobalChat({ t }: { t: Translator }) {
       </button>
     </div>
   );
+
+  if (guest && typeof document !== "undefined") {
+    return createPortal(chat, document.body);
+  }
+
+  return chat;
 }

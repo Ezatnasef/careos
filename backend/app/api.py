@@ -1,18 +1,20 @@
 import base64
 import binascii
 import hashlib
+import inspect
 import json
 import secrets
 import httpx
 from time import monotonic
 from datetime import date, datetime, timedelta, timezone
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from sqlalchemy import String, cast, func, select, text
+from sqlalchemy import String, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, EmailStr, Field
 
@@ -47,8 +49,12 @@ from .auth import (
     write_audit,
 )
 from .rbac import ROLE_PERMISSIONS, can_access_patient_scope, can_access_section, normalize_role
-from .integrations import get_speech_to_text_provider, ocr_provider, rag_provider, summary_provider
-from .models import Appointment, AudioFile, AuditEvent, AuthSession, CarePlan, ClinicalNote, ClinicalNoteVersion, Encounter, Notification, Organization, Patient, PatientDocument, PatientMessage, PatientPortalAccount, PatientPortalDocument, PatientPortalSession, PasswordResetToken, PatientProfile, Permission, ReminderJob, Role, RolePermission, SSOConfiguration, Task, TeamInvite, Transcript, TranscriptVersion, TranscriptionJob, User, UserRole
+from .integrations import get_speech_to_text_provider, get_text_to_speech_provider, rag_provider, summary_provider
+from .models import Appointment, AudioFile, AuditEvent, AuthSession, CarePlan, ClinicalNote, ClinicalNoteVersion, DocumentChunk, Encounter, Notification, Organization, Patient, PatientDocument, PatientMessage, PatientPortalAccount, PatientPortalDocument, PatientPortalSession, PasswordResetToken, PatientProfile, Permission, ReminderJob, Role, RolePermission, SSOConfiguration, Task, TeamInvite, Transcript, TranscriptVersion, TranscriptionJob, User, UserRole
+from .rag.loader import build_ocr_diagnostics, extract_clinical_candidates, extract_document_bytes, get_ocr_status_info, normalize_clinical_text
+from .rag.pipeline import async_answer_question, async_ingest_patient_document, async_search_documents
+from .rag.schemas import DocumentIndexResponse, PatientContext, RagAnswerResponse, RagQueryRequest, RagStatsResponse, SearchRequest, SearchResponse
+from .rag.store import async_count_chunks, async_delete_document_chunks, async_list_sources
 
 router = APIRouter()
 bearer = HTTPBearer(auto_error=False)
@@ -92,7 +98,19 @@ class PatientInput(BaseModel):
     care_status: str = "stable"
 
 
+class PatientRegistrationInput(PatientInput):
+    medical_record_number: str | None = Field(default=None, min_length=2, max_length=64)
+    preferred_name: str | None = Field(default=None, max_length=120)
+    preferred_language: str = Field(default="ar", pattern="^(ar|en)$")
+    phone: str | None = Field(default=None, max_length=40)
+    email: EmailStr | None = None
+    address: str | None = Field(default=None, max_length=500)
+    emergency_contact: str | None = Field(default=None, max_length=240)
+
+
 class PatientProfileInput(BaseModel):
+    preferred_name: str | None = Field(default=None, max_length=120)
+    preferred_language: str = Field(default="ar", pattern="^(ar|en)$")
     phone: str | None = Field(default=None, max_length=40)
     email: EmailStr | None = None
     address: str | None = Field(default=None, max_length=500)
@@ -123,18 +141,21 @@ class NoteUpdateInput(BaseModel):
     ai_draft: str | None = None
 
 
-class RagQuestion(BaseModel):
-    patient_id: UUID
-    question: str = Field(min_length=3, max_length=2000)
+class GuestChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=2000)
 
 
 class GeneralChatInput(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
+    language: str | None = Field(default=None, pattern=r"^(ar-EG|en-US)$")
+    synthesize_speech: bool = False
+    conversation_history: list[GuestChatMessage] = Field(default_factory=list, max_length=12)
 
 
 class GuestVoiceInput(BaseModel):
     audio_base64: str = Field(min_length=4, max_length=14_000_000)
-    content_type: str = Field(default="audio/webm", pattern=r"^audio/webm$")
+    content_type: str = Field(default="audio/webm", pattern=r"^audio/(webm|wav|mpeg|mp4|ogg|x-wav)(;.*)?$")
     language: str = Field(default="ar-EG", pattern=r"^(ar-EG|en-US)$")
 
 
@@ -172,8 +193,23 @@ class WorkspaceCreateInput(BaseModel):
 
 class DocumentInput(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
-    content: str | None = None
+    content: str | None = Field(default=None, max_length=34_000_000)
     content_type: str = Field(default="application/octet-stream", min_length=1, max_length=80)
+    ocr_engine: str | None = Field(default=None, max_length=32)
+    custom_prompt: str | None = Field(default=None, max_length=1000)
+
+
+class OCRExtractInput(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content: str = Field(min_length=1, max_length=34_000_000)
+    content_type: str = Field(default="application/octet-stream", min_length=1, max_length=80)
+    ocr_engine: str | None = Field(default=None, max_length=32)
+    custom_prompt: str | None = Field(default=None, max_length=1000)
+
+
+class DocumentOCRInput(BaseModel):
+    ocr_engine: str | None = Field(default=None, max_length=32)
+    custom_prompt: str | None = Field(default=None, max_length=1000)
 
 
 class MessageInput(BaseModel):
@@ -223,6 +259,8 @@ class PortalDocumentInput(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content: str = Field(min_length=1)
     content_type: str = Field(default="application/octet-stream", min_length=1, max_length=80)
+    ocr_engine: str | None = Field(default=None, max_length=32)
+    custom_prompt: str | None = Field(default=None, max_length=1000)
 
 
 class PasswordResetRequest(BaseModel):
@@ -281,8 +319,57 @@ class TranscriptReviewInput(BaseModel):
     transcript_text: str = Field(min_length=1, max_length=200000)
 
 
-def patient_public(patient: Patient) -> dict[str, object]:
-    return {"id": patient.id, "patient_code": patient.patient_code, "medical_record_number": patient.medical_record_number, "given_name": patient.given_name, "family_name": patient.family_name, "department": patient.department, "project": patient.project, "date_of_birth": patient.date_of_birth, "gender": patient.gender, "condition": patient.condition, "care_status": patient.care_status, "created_at": patient.created_at}
+def patient_public(patient: Patient, *, clinical_access: bool = True) -> dict[str, object]:
+    return {
+        "id": patient.id,
+        "patient_code": public_patient_code(patient.patient_code),
+        "medical_record_number": patient.medical_record_number,
+        "given_name": patient.given_name,
+        "family_name": patient.family_name,
+        "department": patient.department,
+        "project": patient.project,
+        "date_of_birth": patient.date_of_birth,
+        "gender": patient.gender,
+        "condition": patient.condition if clinical_access else "",
+        "care_status": patient.care_status if clinical_access else "",
+        "created_at": patient.created_at,
+    }
+
+
+_PATIENT_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def public_patient_code(patient_code: str) -> str:
+    if not patient_code.startswith("PAT-"):
+        return patient_code
+    digits = patient_code[4:]
+    if not digits.isdigit():
+        return patient_code
+    value = int(digits)
+    encoded = ""
+    while value:
+        value, remainder = divmod(value, len(_PATIENT_CODE_ALPHABET))
+        encoded = _PATIENT_CODE_ALPHABET[remainder] + encoded
+    encoded = encoded.rjust(10, _PATIENT_CODE_ALPHABET[0])
+    return f"CARE-{encoded[:5]}-{encoded[5:]}"
+
+
+def legacy_patient_code(public_code: str) -> str | None:
+    if not public_code.startswith("CARE-"):
+        return None
+    encoded = public_code[5:].replace("-", "")
+    if len(encoded) != 10 or any(char not in _PATIENT_CODE_ALPHABET for char in encoded):
+        return None
+    value = 0
+    for char in encoded:
+        value = value * len(_PATIENT_CODE_ALPHABET) + _PATIENT_CODE_ALPHABET.index(char)
+    if value > 999_999_999_999:
+        return None
+    return f"PAT-{value:012d}"
+
+
+def generate_medical_record_number() -> str:
+    return f"MRN-{secrets.token_hex(5).upper()}"
 
 
 async def owned_patient(session: AsyncSession, patient_id: UUID, organization_id: UUID) -> Patient:
@@ -355,11 +442,13 @@ async def current_portal_account(credentials: HTTPAuthorizationCredentials | Non
 
 
 @router.get("/health", tags=["system"])
+@router.get("/healthz", tags=["system"], include_in_schema=False)
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @router.get("/readiness", tags=["system"])
+@router.get("/readyz", tags=["system"], include_in_schema=False)
 async def readiness(session: AsyncSession = Depends(get_session)) -> dict[str, str]:
     try:
         await session.execute(text("SELECT 1"))
@@ -403,6 +492,17 @@ async def system_status() -> dict[str, object]:
     )
     smtp_configured = bool(settings.smtp_host and settings.smtp_from)
     storage_configured = settings.storage_backend.lower() == "filesystem" or bool(settings.s3_bucket and settings.s3_access_key_id and settings.s3_secret_access_key)
+    ocr_info = get_ocr_status_info()
+    ocr_configured = bool(
+        ocr_info["parsers"]["pdf_pymupdf"]
+        or ocr_info["parsers"]["pdf_pypdf"]
+        or ocr_info["parsers"]["docx"]
+        or ocr_info["engines"]["printed"]["available"]
+        or ocr_info["engines"]["handwriting"]["available"]
+    )
+    import importlib.util as _importlib_util
+
+    rag_sentence_transformers_available = _importlib_util.find_spec("sentence_transformers") is not None
     return {
         "app": settings.app_name,
         "environment": settings.app_env,
@@ -414,10 +514,33 @@ async def system_status() -> dict[str, object]:
             "speech_to_text": {"configured": speech_configured, "provider": speech_provider},
             "smtp": {"configured": smtp_configured},
             "storage": {"configured": storage_configured, "backend": settings.storage_backend},
+            "ocr": {
+                "configured": ocr_configured,
+                "default_engine": ocr_info["default_engine"],
+                "parsers": ocr_info["parsers"],
+                "engines": ocr_info["engines"],
+            },
+            "rag": {
+                "configured": rag_sentence_transformers_available,
+                "embedding_model": settings.rag_embedding_model,
+                "allow_model_download": settings.rag_allow_model_download,
+                "top_k": settings.vector_top_k,
+                "relevance_threshold": settings.rag_relevance_threshold,
+            },
         },
         "allowed_hosts": settings.allowed_hosts,
         "cors_origins": settings.cors_origins,
     }
+
+
+def require_rag_embedding_dependency() -> None:
+    import importlib.util
+
+    if importlib.util.find_spec("sentence_transformers") is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Clinical assistant is unavailable because its embedding service is not installed.",
+        )
 
 
 @router.post("/auth/register", status_code=201, tags=["auth"])
@@ -948,42 +1071,161 @@ async def dashboard(user=Depends(require_permission("dashboard.read")), session:
 
     patients_in_scope = (await session.scalars(patient_statement.order_by(Patient.family_name, Patient.given_name))).all()
     patient_count = len(patients_in_scope)
-    upcoming = list((await session.scalars(select(Appointment).join(Patient, Appointment.patient_id == Patient.id).where(Appointment.organization_id == user.organization_id, Patient.organization_id == user.organization_id, Appointment.starts_at >= datetime.now(timezone.utc)).order_by(Appointment.starts_at).limit(8))).all())
+    upcoming_statement = select(Appointment).join(
+        Patient, Appointment.patient_id == Patient.id
+    ).where(
+        Appointment.organization_id == user.organization_id,
+        Patient.organization_id == user.organization_id,
+        Patient.deleted_at.is_(None),
+        Appointment.starts_at >= datetime.now(timezone.utc),
+    )
+    if user.department or user.project:
+        upcoming_statement = upcoming_statement.where(
+            (Patient.department == "") | (Patient.department == user.department)
+        )
+        if user.project:
+            upcoming_statement = upcoming_statement.where(
+                (Patient.project == "") | (Patient.project == user.project)
+            )
+    upcoming_count = await session.scalar(
+        select(func.count()).select_from(upcoming_statement.subquery())
+    )
+    upcoming = list(
+        (
+            await session.scalars(
+                upcoming_statement.order_by(Appointment.starts_at).limit(8)
+            )
+        ).all()
+    )
     followups = [item for item in patients_in_scope if item.care_status in {"follow_up_due", "needs_attention"}][:5]
-    return {"patient_count": patient_count, "upcoming_appointments": [appointment_public(item) for item in upcoming], "followups": [patient_public(item) for item in followups]}
+    role = normalize_role(user.role)
+    clinical_access = role in {"doctor", "nurse"}
+    identifiable_workflow_access = role in {"doctor", "nurse", "receptionist", "administrative_staff"}
+    return {
+        "patient_count": patient_count,
+        "upcoming_appointment_count": int(upcoming_count or 0),
+        "upcoming_appointments": [appointment_public(item) for item in upcoming] if identifiable_workflow_access else [],
+        "followups": [
+            patient_public(item, clinical_access=clinical_access)
+            for item in followups
+        ] if clinical_access else [],
+    }
 
 
 @router.get("/patients", tags=["clinical"])
 async def list_patients(q: str = "", page: int = Query(default=1, ge=1, le=100000), page_size: int = Query(default=50, ge=1, le=100), user=Depends(require_permission("patients.view")), session: AsyncSession = Depends(get_session)) -> list[dict[str, object]]:
     statement = select(Patient).where(Patient.organization_id == user.organization_id, Patient.deleted_at.is_(None))
-    if user.department or user.project:
-        statement = statement.where((Patient.department == "") | (Patient.department == user.department))
-        if user.project:
-            statement = statement.where((Patient.project == "") | (Patient.project == user.project))
+    if user.department and user.department.strip():
+        dept = user.department.strip().lower()
+        statement = statement.where((Patient.department == "") | (func.lower(Patient.department) == dept))
+    if user.project and user.project.strip():
+        proj = user.project.strip().lower()
+        statement = statement.where((Patient.project == "") | (func.lower(Patient.project) == proj))
     statement = statement.order_by(Patient.family_name, Patient.given_name)
     if q.strip():
         pattern = f"%{q.strip()}%"
-        statement = statement.where((Patient.given_name.ilike(pattern)) | (Patient.family_name.ilike(pattern)) | (Patient.patient_code.ilike(pattern)) | (Patient.medical_record_number.ilike(pattern)) | (cast(Patient.date_of_birth, String).ilike(pattern)))
+        matches = [
+            Patient.given_name.ilike(pattern),
+            Patient.family_name.ilike(pattern),
+            Patient.patient_code.ilike(pattern),
+            Patient.medical_record_number.ilike(pattern),
+            cast(Patient.date_of_birth, String).ilike(pattern),
+        ]
+        previous_code = legacy_patient_code(q.strip().upper())
+        if previous_code:
+            matches.append(Patient.patient_code == previous_code)
+        statement = statement.where(or_(*matches))
     statement = statement.offset((page - 1) * page_size).limit(page_size)
-    return [patient_public(item) for item in (await session.scalars(statement)).all()]
+    clinical_access = normalize_role(user.role) in {"doctor", "nurse"}
+    records = (await session.scalars(statement)).all()
+    return [
+        patient_public(item, clinical_access=clinical_access)
+        for item in records
+    ]
 
 
 @router.post("/patients", status_code=201, tags=["clinical"])
-async def create_patient(request: PatientInput, user=Depends(require_permission("patients.create")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
-    existing = await session.scalar(select(Patient).where(Patient.organization_id == user.organization_id, Patient.medical_record_number == request.medical_record_number))
-    if existing:
-        raise HTTPException(status_code=409, detail="Medical record number already exists")
-    patient = Patient(organization_id=user.organization_id, **request.model_dump())
-    session.add(patient); await session.flush(); await write_audit(session, user, "patient.created", str(patient.id)); await session.commit()
-    return patient_public(patient)
+async def create_patient(request: PatientRegistrationInput, user=Depends(require_permission("patients.create")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    values = request.model_dump(exclude={"preferred_name", "preferred_language", "phone", "email", "address", "emergency_contact"})
+    medical_record_number = values.pop("medical_record_number")
+    if medical_record_number:
+        medical_record_number = medical_record_number.strip()
+        existing = await session.scalar(select(Patient).where(Patient.organization_id == user.organization_id, Patient.medical_record_number == medical_record_number))
+        if existing:
+            raise HTTPException(status_code=409, detail="Medical record number already exists")
+    else:
+        while True:
+            medical_record_number = generate_medical_record_number()
+            existing = await session.scalar(select(Patient.id).where(Patient.organization_id == user.organization_id, Patient.medical_record_number == medical_record_number))
+            if existing is None:
+                break
+    patient = Patient(organization_id=user.organization_id, medical_record_number=medical_record_number, **values)
+    session.add(patient)
+    await session.flush()
+    profile_values = {
+        "preferred_name": request.preferred_name.strip() if request.preferred_name and request.preferred_name.strip() else None,
+        "preferred_language": request.preferred_language,
+        "phone": request.phone,
+        "email": str(request.email).strip().lower() if request.email else None,
+        "address": request.address,
+        "emergency_contact": request.emergency_contact,
+    }
+    if any(value is not None for value in profile_values.values()):
+        session.add(PatientProfile(organization_id=user.organization_id, patient_id=patient.id, **profile_values))
+    await write_audit(session, user, "patient.created", str(patient.id))
+    await session.commit()
+    return patient_public(
+        patient,
+        clinical_access=normalize_role(user.role) in {"doctor", "nurse"},
+    )
 
 
 @router.get("/patients/{patient_id}", tags=["clinical"])
-async def get_patient(patient_id: UUID, user=Depends(require_permission("patients.view")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+async def get_patient(patient_id: UUID, user=Depends(require_permission("clinical_notes.view")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
     patient = await ensure_patient_access(session, patient_id, user, "read")
-    notes = list((await session.scalars(select(ClinicalNote).where(ClinicalNote.patient_id == patient.id, ClinicalNote.organization_id == user.organization_id, ClinicalNote.deleted_at.is_(None)).order_by(ClinicalNote.created_at.desc()))).all())
+    notes = list((await session.scalars(select(ClinicalNote).where(ClinicalNote.patient_id == patient.id, ClinicalNote.organization_id == user.organization_id).order_by(ClinicalNote.created_at.desc()))).all())
     documents = list((await session.scalars(select(PatientDocument).where(PatientDocument.patient_id == patient.id, PatientDocument.organization_id == user.organization_id, PatientDocument.deleted_at.is_(None)).order_by(PatientDocument.created_at.desc()))).all())
-    return {**patient_public(patient), "notes": [note_public(note) for note in notes], "documents": [{"id": doc.id, "encounter_id": doc.encounter_id, "filename": doc.filename, "ocr_status": doc.ocr_status, "extracted_text": doc.extracted_text, "download_url": doc.download_url} for doc in documents]}
+    chunk_rows = (
+        await session.execute(
+            select(DocumentChunk.document_id, func.count(DocumentChunk.id))
+            .where(
+                DocumentChunk.organization_id == user.organization_id,
+                DocumentChunk.patient_id == patient.id,
+                DocumentChunk.document_id.is_not(None),
+            )
+            .group_by(DocumentChunk.document_id)
+        )
+    ).all()
+    chunk_counts_by_doc = {doc_id: int(cnt) for doc_id, cnt in chunk_rows if doc_id is not None}
+    return {
+        **patient_public(patient),
+        "notes": [note_public(note) for note in notes],
+        "documents": [
+            {
+                "id": doc.id,
+                "encounter_id": doc.encounter_id,
+                "filename": doc.filename,
+                "content_type": doc.content_type,
+                "ocr_status": doc.ocr_status,
+                "review_status": doc.review_status,
+                "extracted_text": doc.extracted_text,
+                "structured_candidates": (
+                    extract_clinical_candidates(
+                        doc.extracted_text,
+                        source=doc.filename,
+                        source_document_id=str(doc.id),
+                        review_status=doc.review_status,
+                    )
+                    if doc.extracted_text and doc.extracted_text.strip()
+                    else None
+                ),
+                "chunks_indexed": chunk_counts_by_doc.get(doc.id, 0) if doc.review_status == "approved" else 0,
+                "created_at": doc.created_at,
+                "download_url": doc.download_url,
+            }
+            for doc in documents
+        ],
+    }
 
 
 @router.get("/patients/{patient_id}/profile", tags=["clinical"])
@@ -991,8 +1233,8 @@ async def get_patient_profile(patient_id: UUID, user=Depends(require_permission(
     await ensure_patient_access(session, patient_id, user, "read")
     profile = await session.scalar(select(PatientProfile).where(PatientProfile.patient_id == patient_id, PatientProfile.organization_id == user.organization_id))
     if profile is None:
-        return {"patient_id": patient_id, "phone": None, "email": None, "address": None, "emergency_contact": None}
-    return {"patient_id": profile.patient_id, "phone": profile.phone, "email": profile.email, "address": profile.address, "emergency_contact": profile.emergency_contact}
+        return {"patient_id": patient_id, "preferred_name": None, "preferred_language": "ar", "phone": None, "email": None, "address": None, "emergency_contact": None}
+    return {"patient_id": profile.patient_id, "preferred_name": profile.preferred_name, "preferred_language": profile.preferred_language, "phone": profile.phone, "email": profile.email, "address": profile.address, "emergency_contact": profile.emergency_contact}
 
 
 @router.put("/patients/{patient_id}/profile", tags=["clinical"])
@@ -1007,7 +1249,7 @@ async def update_patient_profile(patient_id: UUID, request: PatientProfileInput,
             setattr(profile, field, value)
     await write_audit(session, user, "patient.profile_updated", str(patient_id))
     await session.commit()
-    return {"patient_id": profile.patient_id, "phone": profile.phone, "email": profile.email, "address": profile.address, "emergency_contact": profile.emergency_contact}
+    return {"patient_id": profile.patient_id, "preferred_name": profile.preferred_name, "preferred_language": profile.preferred_language, "phone": profile.phone, "email": profile.email, "address": profile.address, "emergency_contact": profile.emergency_contact}
 
 
 @router.patch("/patients/{patient_id}", tags=["clinical"])
@@ -1095,6 +1337,23 @@ async def create_encounter(request: EncounterCreateInput, user=Depends(require_p
     return {"id": encounter.id, "organization_id": encounter.organization_id, "patient_id": encounter.patient_id, "clinician_id": encounter.clinician_id, "encounter_type": encounter.encounter_type, "status": encounter.status, "started_at": encounter.started_at, "ended_at": encounter.ended_at}
 
 
+@router.get("/patients/{patient_id}/encounters/latest", tags=["encounters"])
+async def get_latest_patient_encounter(patient_id: UUID, user=Depends(require_permission("encounters.view")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    patient = await ensure_patient_access(session, patient_id, user, "read")
+    encounter = await session.scalar(
+        select(Encounter)
+        .where(
+            Encounter.organization_id == user.organization_id,
+            Encounter.patient_id == patient.id,
+        )
+        .order_by(Encounter.started_at.desc(), Encounter.id.desc())
+        .limit(1)
+    )
+    if encounter is None:
+        raise HTTPException(status_code=404, detail="No encounter found for patient")
+    return {"id": encounter.id, "organization_id": encounter.organization_id, "patient_id": encounter.patient_id, "clinician_id": encounter.clinician_id, "encounter_type": encounter.encounter_type, "status": encounter.status, "started_at": encounter.started_at, "ended_at": encounter.ended_at}
+
+
 @router.get("/encounters/{encounter_id}", tags=["encounters"])
 async def get_encounter(encounter_id: UUID, user=Depends(require_permission("encounters.view")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
     encounter = await session.get(Encounter, encounter_id)
@@ -1133,7 +1392,8 @@ async def get_transcript(transcript_id: UUID, user=Depends(require_permission("t
     if transcript is None or transcript.organization_id != user.organization_id:
         raise HTTPException(status_code=404, detail="Transcript not found")
     await ensure_patient_access(session, transcript.patient_id, user, "read")
-    return {"id": transcript.id, "encounter_id": transcript.encounter_id, "audio_file_id": transcript.audio_file_id, "provider": transcript.provider, "language": transcript.language, "dialect": transcript.dialect, "transcript_text": transcript.transcript_text, "status": transcript.status, "confidence": transcript.confidence, "error_code": transcript.error_code, "created_at": transcript.created_at, "completed_at": transcript.completed_at}
+    job = await session.scalar(select(TranscriptionJob).where(TranscriptionJob.transcript_id == transcript.id, TranscriptionJob.organization_id == user.organization_id))
+    return {"id": transcript.id, "encounter_id": transcript.encounter_id, "audio_file_id": transcript.audio_file_id, "provider": transcript.provider, "language": transcript.language, "dialect": transcript.dialect, "transcript_text": transcript.transcript_text, "status": transcript.status, "job_status": job.status if job else None, "confidence": transcript.confidence, "error_code": transcript.error_code, "created_at": transcript.created_at, "completed_at": transcript.completed_at}
 
 
 @router.post("/recordings/{audio_id}/transcribe", status_code=202, tags=["transcripts"])
@@ -1271,10 +1531,21 @@ async def generate_note_document(note_id: UUID, user=Depends(require_permission(
     return {"id": document.id, "filename": document.filename, "review_status": document.review_status, "download_url": document.download_url}
 
 
-@router.post("/assistant/query", tags=["ai"])
-async def assistant_query(request: RagQuestion, user=Depends(require_permission("patient.read")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
-    await ensure_patient_access(session, request.patient_id, user, "read")
-    result = await rag_provider.answer(request.question); await write_audit(session, user, "assistant.queried", str(request.patient_id)); await session.commit(); return result
+async def _guest_tts_audio(text: str, language: str) -> dict[str, str]:
+    tts_provider = get_text_to_speech_provider()
+    if getattr(tts_provider, "name", "unconfigured") == "unconfigured":
+        raise RuntimeError("Text-to-speech provider is not configured")
+    synthesized = tts_provider.synthesize(
+        text,
+        speaker=get_settings().text_to_speech_default_speaker or "Mohamed",
+        language=language,
+    )
+    audio_bytes = await synthesized if inspect.isawaitable(synthesized) else synthesized
+    audio_content_type = getattr(tts_provider, "audio_content_type", "audio/wav")
+    return {
+        "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+        "audio_content_type": audio_content_type,
+    }
 
 
 @router.post("/assistant/guest-chat", tags=["ai"])
@@ -1288,7 +1559,23 @@ async def guest_assistant_chat(payload: GeneralChatInput, request: Request) -> d
             headers={"Retry-After": str(retry_after)},
         )
     try:
-        return await rag_provider.answer_general(payload.message)
+        if payload.conversation_history:
+            response = await rag_provider.answer_general(
+                payload.message,
+                conversation_history=[
+                    message.model_dump() for message in payload.conversation_history
+                ],
+            )
+        else:
+            response = await rag_provider.answer_general(payload.message)
+        if payload.synthesize_speech:
+            response.update(
+                await _guest_tts_audio(
+                    str(response.get("answer") or ""),
+                    payload.language or "ar-EG",
+                )
+            )
+        return response
     except (RuntimeError, httpx.HTTPError) as error:
         raise HTTPException(status_code=503, detail="Guest assistant is unavailable") from error
 
@@ -1321,6 +1608,10 @@ async def guest_assistant_voice(payload: GuestVoiceInput, request: Request) -> d
         if not transcript:
             raise HTTPException(status_code=422, detail="No speech could be recognized")
         response = await rag_provider.answer_general(transcript)
+        audio_result = await _guest_tts_audio(
+            str(response.get("answer") or ""),
+            payload.language,
+        )
     except HTTPException:
         raise
     except (RuntimeError, httpx.HTTPError) as error:
@@ -1329,13 +1620,15 @@ async def guest_assistant_voice(payload: GuestVoiceInput, request: Request) -> d
             detail="Voice assistant providers are unavailable or not configured",
         ) from error
 
-    return {
+    payload_result: dict[str, object] = {
         "transcript": transcript,
         "answer": response["answer"],
         "sources": response.get("sources", []),
         "provider": response.get("provider", "unknown"),
         "speech_provider": transcription.get("provider", "unknown"),
     }
+    payload_result.update(audio_result)
+    return payload_result
 
 
 @router.post("/assistant/chat", tags=["ai"])
@@ -1344,6 +1637,48 @@ async def general_assistant_chat(request: GeneralChatInput, user=Depends(current
     await write_audit(session, user, "assistant.general_chat", "workspace")
     await session.commit()
     return result
+
+
+@router.get("/ocr/status", tags=["documents"])
+async def ocr_status(user=Depends(require_permission("documents.create"))) -> dict[str, object]:
+    return get_ocr_status_info()
+
+
+@router.post("/ocr/extract", tags=["documents"])
+async def ocr_extract(request: OCRExtractInput, user=Depends(require_permission("documents.create")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    try:
+        content = base64.b64decode(request.content, validate=True)
+    except Exception as error:
+        raise HTTPException(status_code=422, detail="Document content must be valid base64") from error
+    if len(content) > get_settings().max_upload_bytes:
+        raise HTTPException(status_code=422, detail="Upload exceeds the configured size limit")
+    try:
+        extraction = extract_document_bytes(
+            filename=request.filename,
+            content=content,
+            content_type=request.content_type,
+            ocr_engine=request.ocr_engine,
+            custom_prompt=request.custom_prompt,
+            strict=True,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    await write_audit(session, user, "document.ocr_extracted", request.filename)
+    await session.commit()
+    return {
+        "filename": request.filename,
+        "ocr_status": extraction["ocr_status"],
+        "extracted_text": extraction["extracted_text"],
+        "normalized_text": extraction.get("normalized_text"),
+        "structured_candidates": extraction.get("structured_candidates"),
+        "ocr_applied": extraction["ocr_applied"],
+        "ocr_engine": extraction["ocr_engine"],
+        "page_count": len(extraction["pages"]),
+        "pages": extraction["pages"],
+    }
 
 
 @router.post("/patients/{patient_id}/documents", status_code=201, tags=["documents"])
@@ -1357,39 +1692,289 @@ async def create_document(patient_id: UUID, request: DocumentInput, user=Depends
             raise HTTPException(status_code=422, detail="Document content must be valid base64") from error
     storage_key = None
     download_url = None
+    ocr_status_val = "pending"
+    extracted_text_val = None
+    normalized_text_val = None
+    structured_candidates_val = None
     if content:
-        storage_key, download_url = StorageService().save_document(organization_id=str(user.organization_id), patient_id=str(patient_id), filename=request.filename, content=content, content_type=request.content_type)
-    document = PatientDocument(organization_id=user.organization_id, patient_id=patient_id, filename=request.filename, storage_key=storage_key, download_url=download_url, content_type=request.content_type, size_bytes=len(content), ocr_status="processing"); session.add(document); await session.flush()
+        try:
+            storage_key, download_url = StorageService().save_document(
+                organization_id=str(user.organization_id),
+                patient_id=str(patient_id),
+                filename=request.filename,
+                content=content,
+                content_type=request.content_type,
+            )
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        extraction = extract_document_bytes(
+            filename=request.filename,
+            content=content,
+            content_type=request.content_type,
+            ocr_engine=request.ocr_engine,
+            custom_prompt=request.custom_prompt,
+            strict=False,
+            allow_failed_status=False,
+        )
+        ocr_status_val = extraction["ocr_status"]
+        extracted_text_val = extraction["extracted_text"]
+        normalized_text_val = extraction.get("normalized_text")
+        structured_candidates_val = extraction.get("structured_candidates")
+
+    document = PatientDocument(
+        organization_id=user.organization_id,
+        patient_id=patient_id,
+        filename=request.filename,
+        storage_key=storage_key,
+        download_url=download_url,
+        content_type=request.content_type,
+        size_bytes=len(content),
+        ocr_status=ocr_status_val,
+        extracted_text=extracted_text_val,
+    )
+    session.add(document)
+    await session.flush()
     if storage_key:
         document.download_url = f"{get_settings().app_url}{get_settings().api_prefix}/patients/{patient_id}/documents/{document.id}/download"
-    document.extracted_text = ocr_provider.extract(request.filename); document.ocr_status = "completed"; await write_audit(session, user, "document.ocr_completed", str(document.id)); await session.commit()
-    return {"id": document.id, "filename": document.filename, "ocr_status": document.ocr_status, "review_status": document.review_status, "extracted_text": document.extracted_text, "download_url": document.download_url, "provider": "sandbox"}
+    ocr_applied_val = False
+    ocr_engine_val = None
+    if content:
+        ocr_applied_val = bool(extraction.get("ocr_applied"))
+        ocr_engine_val = extraction.get("ocr_engine")
+    if document.extracted_text and document.extracted_text.strip():
+        existing_prov = (structured_candidates_val or {}).get("provenance") or {}
+        structured_candidates_val = extract_clinical_candidates(
+            document.extracted_text,
+            source=document.filename,
+            source_document_id=str(document.id),
+            ocr_applied=ocr_applied_val,
+            ocr_engine=ocr_engine_val,
+            ocr_confidence=existing_prov.get("ocr_confidence"),
+            review_status=document.review_status,
+        )
+    await write_audit(
+        session,
+        user,
+        "document.uploaded",
+        str(document.id),
+    )
+    await session.commit()
+    settings_obj = get_settings()
+    response_payload: dict[str, object] = {
+        "id": document.id,
+        "filename": document.filename,
+        "ocr_status": document.ocr_status,
+        "review_status": document.review_status,
+        "extracted_text": document.extracted_text,
+        "normalized_text": normalized_text_val,
+        "structured_candidates": structured_candidates_val,
+        "ocr_applied": ocr_applied_val,
+        "ocr_engine": ocr_engine_val,
+        "chunks_indexed": 0,
+        "download_url": document.download_url,
+    }
+    if not settings_obj.is_production:
+        response_payload["ocr_diagnostics"] = build_ocr_diagnostics(
+            document.extracted_text,
+            structured_candidates_val,
+            filename=document.filename,
+            ocr_status=document.ocr_status,
+            chunks_indexed=0,
+            allow_synthetic_preview=(settings_obj.app_env == "test"),
+        )
+    return response_payload
+
+
+@router.post("/patients/{patient_id}/documents/{document_id}/ocr", tags=["documents"])
+async def extract_patient_document_text(
+    patient_id: UUID,
+    document_id: UUID,
+    request: DocumentOCRInput | None = None,
+    user=Depends(require_permission("documents.create")),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    await ensure_patient_access(session, patient_id, user, "documents")
+    document = await session.get(PatientDocument, document_id)
+    if (
+        document is None
+        or document.patient_id != patient_id
+        or document.organization_id != user.organization_id
+        or document.deleted_at is not None
+        or not document.storage_key
+    ):
+        raise HTTPException(status_code=404, detail="Document not found")
+    content = StorageService().read_document(document.storage_key)
+    previous_extracted_text = document.extracted_text
+    document.ocr_status = "processing"
+    await session.flush()
+
+    ocr_engine = request.ocr_engine if request else None
+    custom_prompt = request.custom_prompt if request else None
+    extraction = extract_document_bytes(
+        filename=document.filename,
+        content=content,
+        content_type=document.content_type,
+        ocr_engine=ocr_engine,
+        custom_prompt=custom_prompt,
+        strict=False,
+        allow_failed_status=True,
+    )
+    document.ocr_status = extraction["ocr_status"]
+    if extraction["extracted_text"]:
+        document.extracted_text = extraction["extracted_text"]
+        if extraction["extracted_text"] != previous_extracted_text:
+            # New OCR text must be reviewed/approved before entering Clinical RAG
+            document.review_status = "pending"
+            await async_delete_document_chunks(
+                session,
+                organization_id=user.organization_id,
+                document_id=document.id,
+                commit=False,
+            )
+    else:
+        document.extracted_text = previous_extracted_text
+
+    extracted_prov = ((extraction.get("structured_candidates") or {}).get("provenance")) or {}
+    effective_candidates = (
+        extract_clinical_candidates(
+            document.extracted_text,
+            source=document.filename,
+            source_document_id=str(document.id),
+            ocr_applied=bool(extraction.get("ocr_applied")),
+            ocr_engine=extraction.get("ocr_engine"),
+            ocr_confidence=extracted_prov.get("ocr_confidence"),
+            review_status=document.review_status,
+        )
+        if document.extracted_text and document.extracted_text.strip()
+        else None
+    )
+
+    await write_audit(session, user, "document.ocr_processed", str(document.id))
+    await session.commit()
+    settings_obj = get_settings()
+    reocr_payload: dict[str, object] = {
+        "id": document.id,
+        "filename": document.filename,
+        "ocr_status": document.ocr_status,
+        "review_status": document.review_status,
+        "extracted_text": document.extracted_text,
+        "normalized_text": extraction.get("normalized_text")
+        or (
+            normalize_clinical_text(document.extracted_text)["normalized_text"]
+            if document.extracted_text
+            else None
+        ),
+        "structured_candidates": effective_candidates,
+        "ocr_applied": extraction["ocr_applied"],
+        "ocr_engine": extraction["ocr_engine"],
+        "page_count": len(extraction["pages"]),
+        "download_url": document.download_url,
+    }
+    if not settings_obj.is_production:
+        reocr_payload["ocr_diagnostics"] = build_ocr_diagnostics(
+            document.extracted_text,
+            effective_candidates,
+            filename=document.filename,
+            ocr_status=document.ocr_status,
+            chunks_indexed=0,
+            allow_synthetic_preview=(settings_obj.app_env == "test"),
+        )
+    return reocr_payload
 
 
 @router.patch("/patients/{patient_id}/documents/{document_id}/review", tags=["documents"])
 async def review_patient_document(patient_id: UUID, document_id: UUID, status: str, user=Depends(require_permission("documents.create")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
     await ensure_patient_access(session, patient_id, user, "documents")
     document = await session.get(PatientDocument, document_id)
-    if document is None or document.patient_id != patient_id or document.organization_id != user.organization_id:
+    if document is None or document.patient_id != patient_id or document.organization_id != user.organization_id or document.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Document not found")
     if status not in {"pending", "approved", "rejected"}:
         raise HTTPException(status_code=422, detail="Invalid document review status")
+    if document.review_status == "rejected" and status == "approved":
+        raise HTTPException(status_code=409, detail="Rejected documents cannot be approved")
     document.review_status = status
+    chunks_indexed = 0
+    if status == "approved" and document.extracted_text and document.extracted_text.strip():
+        chunks_indexed = await async_ingest_patient_document(
+            session,
+            organization_id=user.organization_id,
+            patient_id=patient_id,
+            document_id=document.id,
+            filename=document.filename,
+            extracted_text=document.extracted_text,
+        )
+    elif status in {"rejected", "pending"}:
+        await async_delete_document_chunks(
+            session,
+            organization_id=user.organization_id,
+            document_id=document.id,
+            commit=False,
+        )
+    reviewed_candidates = (
+        extract_clinical_candidates(
+            document.extracted_text,
+            source=document.filename,
+            source_document_id=str(document.id),
+            review_status=document.review_status,
+        )
+        if document.extracted_text and document.extracted_text.strip()
+        else None
+    )
     await write_audit(session, user, f"document.{status}", str(document.id))
     await session.commit()
-    return {"id": document.id, "review_status": document.review_status}
+    settings_obj = get_settings()
+    review_payload: dict[str, object] = {
+        "id": document.id,
+        "review_status": document.review_status,
+        "chunks_indexed": chunks_indexed,
+        "structured_candidates": reviewed_candidates,
+    }
+    if not settings_obj.is_production:
+        review_payload["ocr_diagnostics"] = build_ocr_diagnostics(
+            document.extracted_text,
+            reviewed_candidates,
+            filename=document.filename,
+            ocr_status=document.ocr_status,
+            chunks_indexed=chunks_indexed,
+            allow_synthetic_preview=(settings_obj.app_env == "test"),
+        )
+    return review_payload
 
 
 @router.get("/patients/{patient_id}/documents/{document_id}/download", tags=["documents"])
 async def download_patient_document(patient_id: UUID, document_id: UUID, user=Depends(require_permission("documents.download")), session: AsyncSession = Depends(get_session)) -> Response:
     await ensure_patient_access(session, patient_id, user, "documents")
     document = await session.get(PatientDocument, document_id)
-    if document is None or document.patient_id != patient_id or document.organization_id != user.organization_id or not document.storage_key:
+    if document is None or document.patient_id != patient_id or document.organization_id != user.organization_id or document.deleted_at is not None or not document.storage_key:
         raise HTTPException(status_code=404, detail="Document not found")
     content = StorageService().read_document(document.storage_key)
     await write_audit(session, user, "document.downloaded", str(document.id))
     await session.commit()
     return Response(content=content, media_type=document.content_type, headers={"Content-Disposition": f'attachment; filename="{document.filename}"'})
+
+
+@router.delete("/patients/{patient_id}/documents/{document_id}", tags=["documents"])
+async def delete_patient_document(patient_id: UUID, document_id: UUID, user=Depends(require_permission("documents.create")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
+    await ensure_patient_access(session, patient_id, user, "documents")
+    document = await session.get(PatientDocument, document_id)
+    if document is None or document.patient_id != patient_id or document.organization_id != user.organization_id or document.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    document.deleted_at = datetime.now(timezone.utc)
+    chunks_removed = await async_delete_document_chunks(
+        session,
+        organization_id=user.organization_id,
+        document_id=document.id,
+        commit=False,
+    )
+    await write_audit(session, user, "document.deleted", str(document.id))
+    await session.commit()
+    return {
+        "id": document.id,
+        "deleted": True,
+        "deleted_at": document.deleted_at,
+        "chunks_removed": chunks_removed,
+    }
 
 
 @router.get("/messages", tags=["messages"])
@@ -1538,7 +2123,7 @@ async def create_care_plan(request: CarePlanInput, user=Depends(require_permissi
 async def get_patient_portal(patient_id: UUID, user=Depends(require_permission("patient.read")), session: AsyncSession = Depends(get_session)) -> dict[str, object]:
     patient = await ensure_patient_access(session, patient_id, user, "read")
     messages = (await session.scalars(select(PatientMessage).where(PatientMessage.organization_id == user.organization_id, PatientMessage.patient_id == patient.id).order_by(PatientMessage.created_at.desc()).limit(50))).all()
-    documents = (await session.scalars(select(PatientDocument).where(PatientDocument.organization_id == user.organization_id, PatientDocument.patient_id == patient.id).order_by(PatientDocument.created_at.desc()).limit(20))).all()
+    documents = (await session.scalars(select(PatientDocument).where(PatientDocument.organization_id == user.organization_id, PatientDocument.patient_id == patient.id, PatientDocument.deleted_at.is_(None)).order_by(PatientDocument.created_at.desc()).limit(20))).all()
     return {
         "patient": patient_public(patient),
         "messages": [{
@@ -1648,6 +2233,14 @@ async def upload_patient_portal_document(request: PortalDocumentInput, account: 
         content=decoded,
         content_type=request.content_type,
     )
+    extraction = extract_document_bytes(
+        filename=request.filename,
+        content=decoded,
+        content_type=request.content_type,
+        ocr_engine=request.ocr_engine,
+        custom_prompt=request.custom_prompt,
+        strict=False,
+    )
     document = PatientPortalDocument(
         organization_id=account.organization_id,
         patient_id=account.patient_id,
@@ -1657,13 +2250,22 @@ async def upload_patient_portal_document(request: PortalDocumentInput, account: 
         download_url=download_url,
         content_type=request.content_type,
         size_bytes=len(decoded),
-        content=decoded.decode("utf-8", errors="replace"),
+        content=extraction["extracted_text"] or decoded.decode("utf-8", errors="replace"),
     )
     session.add(document)
     await session.flush()
     document.download_url = f"{get_settings().app_url}{get_settings().api_prefix}/patient-portal/documents/{document.id}/download"
     await session.commit()
-    return {"id": document.id, "filename": document.filename, "storage_key": document.storage_key, "download_url": document.download_url, "content_type": document.content_type, "size_bytes": document.size_bytes}
+    return {
+        "id": document.id,
+        "filename": document.filename,
+        "storage_key": document.storage_key,
+        "download_url": document.download_url,
+        "content_type": document.content_type,
+        "size_bytes": document.size_bytes,
+        "ocr_status": extraction["ocr_status"],
+        "extracted_text": extraction["extracted_text"],
+    }
 
 
 @router.get("/patient-portal/documents/{document_id}/download", tags=["patient-portal"])
@@ -1725,3 +2327,430 @@ async def reports(user=Depends(require_permission("reports.view")), session: Asy
             "status": "active"
         }
     }]
+
+
+# ---------------------------------------------------------------------------
+# Clinical RAG & Evidence-Grounded Decision Support Endpoints
+# ---------------------------------------------------------------------------
+
+def _parse_optional_uuid(raw_id: str | None, field_name: str = "patient_id") -> UUID | None:
+    if not raw_id or not raw_id.strip():
+        return None
+    try:
+        return UUID(raw_id.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid {field_name} UUID") from exc
+
+
+async def _build_patient_context_from_db(
+    session: AsyncSession,
+    patient_id: UUID,
+    user: User,
+    explicit_context: PatientContext | None = None,
+    question: str | None = None,
+) -> PatientContext:
+    """Verify tenant/clinical RBAC access to ``patient_id`` and build a merged ``PatientContext``."""
+    patient = await ensure_patient_access(session, patient_id, user, "documents")
+
+    today = date.today()
+    dob = patient.date_of_birth
+    computed_age = (
+        today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        if dob
+        else None
+    )
+
+    conditions: list[str] = []
+    if patient.condition and patient.condition.strip():
+        conditions.append(patient.condition.strip())
+
+    notes_rows = (
+        await session.scalars(
+            select(ClinicalNote)
+            .where(
+                ClinicalNote.organization_id == user.organization_id,
+                ClinicalNote.patient_id == patient_id,
+            )
+            .order_by(ClinicalNote.created_at.desc())
+            .limit(10)
+        )
+    ).all()
+
+    docs_rows = (
+        await session.scalars(
+            select(PatientDocument)
+            .where(
+                PatientDocument.organization_id == user.organization_id,
+                PatientDocument.patient_id == patient_id,
+                PatientDocument.deleted_at.is_(None),
+                PatientDocument.review_status == "approved",
+            )
+            .order_by(PatientDocument.created_at.desc())
+            .limit(10)
+        )
+    ).all()
+
+    _query_stopwords = {
+        "what", "are", "the", "this", "patient", "patients", "patient's",
+        "does", "have", "has", "any", "for", "with", "and", "his", "her",
+        "their", "from", "about", "list", "summarize", "summary", "current",
+        "taking", "recorded", "according", "guideline", "guidelines",
+        "ما", "هي", "هل", "لدى", "المريض", "عند", "في", "من", "على", "لخص", "بيانات", "حالة",
+    }
+    q_tokens = {
+        tok.lower().strip(".:;!?()[]{}\"'")
+        for tok in (question or "").replace("?", " ").replace(",", " ").split()
+        if len(tok.strip(".:;!?()[]{}\"'")) >= 3
+        and tok.lower().strip(".:;!?()[]{}\"'") not in _query_stopwords
+    }
+
+    def _relevance_key(idx: int, text_body: str) -> tuple[int, int]:
+        if not q_tokens:
+            return (1, -idx)
+        lower_body = text_body.lower()
+        overlap = sum(1 for tok in q_tokens if tok in lower_body)
+        return (overlap, -idx)
+
+    scored_notes: list[tuple[tuple[int, int], str]] = []
+    for idx, n in enumerate(notes_rows):
+        if n.body and n.body.strip():
+            norm_note = normalize_clinical_text(n.body.strip())["normalized_text"] or n.body.strip()
+            scored_notes.append((_relevance_key(idx, norm_note), norm_note))
+    scored_notes.sort(key=lambda item: item[0], reverse=True)
+
+    scored_docs: list[tuple[tuple[int, int], str, PatientDocument]] = []
+    for idx, d in enumerate(docs_rows):
+        if d.extracted_text and d.extracted_text.strip():
+            norm_doc = normalize_clinical_text(d.extracted_text.strip())["normalized_text"] or d.extracted_text.strip()
+            snippet = norm_doc
+            if len(snippet) > 600:
+                snippet = snippet[:597] + "..."
+            scored_docs.append((_relevance_key(idx, norm_doc), f"[{d.filename}] {snippet}", d))
+    scored_docs.sort(key=lambda item: item[0], reverse=True)
+
+    has_positive_overlap = any(k[0] > 0 for k, _ in scored_notes) or any(
+        k[0] > 0 for k, _, _ in scored_docs
+    )
+
+    if q_tokens and has_positive_overlap:
+        selected_notes = [text_item for key, text_item in scored_notes if key[0] > 0][:3]
+        selected_doc_entries = [(key, text_item, doc_obj) for key, text_item, doc_obj in scored_docs if key[0] > 0][:3]
+    else:
+        selected_notes = [text_item for _, text_item in scored_notes[:3]]
+        selected_doc_entries = scored_docs[:3]
+
+    note_snippets: list[str] = [
+        *selected_notes,
+        *[text_item for _, text_item, _ in selected_doc_entries],
+    ]
+
+    doc_conditions: list[str] = []
+    doc_medications: list[str] = []
+    doc_allergies: list[str] = []
+    doc_labs: dict[str, object] = {}
+    doc_vitals: dict[str, object] = {}
+
+    candidate_docs = [doc_obj for _, _, doc_obj in selected_doc_entries] if selected_doc_entries else list(docs_rows[:3])
+    for doc_obj in candidate_docs:
+        if not (doc_obj.extracted_text and doc_obj.extracted_text.strip()):
+            continue
+        candidates = extract_clinical_candidates(
+            doc_obj.extracted_text,
+            source=doc_obj.filename,
+            source_document_id=str(doc_obj.id),
+            review_status=doc_obj.review_status,
+        )
+        for diag in candidates.get("diagnoses") or []:
+            val = str(diag.get("value") or "").strip()
+            status = str(diag.get("status") or "present")
+            if not val or status == "unreadable":
+                continue
+            doc_conditions.append(val)
+
+        for med in candidates.get("medications") or []:
+            status = str(med.get("status") or "present")
+            if status == "unreadable":
+                continue
+            if status in {"negated", "uncertain"}:
+                raw_med = str(med.get("raw") or "").strip()
+                if raw_med:
+                    doc_medications.append(raw_med)
+                continue
+            parts = [str(med.get("name") or "").strip(), str(med.get("dose") or "").strip()]
+            if med.get("frequency"):
+                parts.append(str(med["frequency"]).strip())
+            if med.get("duration"):
+                dur = str(med["duration"]).strip()
+                parts.append(dur if dur.lower().startswith(("for ", "لمدة")) else f"for {dur}")
+            formatted_med = " ".join(p for p in parts if p).strip()
+            if formatted_med:
+                doc_medications.append(formatted_med)
+
+        for alg in candidates.get("allergies") or []:
+            substance = str(alg.get("substance") or "").strip()
+            status = str(alg.get("status") or "present")
+            if not substance or status == "unreadable":
+                continue
+            doc_allergies.append(substance)
+
+        for lab in candidates.get("labs") or []:
+            status = str(lab.get("status") or "present")
+            if status == "unreadable":
+                continue
+            test_name = str(lab.get("test") or "").strip()
+            raw_val = str(lab.get("value") or "").strip()
+            raw_unit = str(lab.get("unit") or "").strip()
+            val_unit = f"{raw_val}{raw_unit}" if raw_unit == "%" else f"{raw_val} {raw_unit}".strip()
+            if lab.get("date"):
+                val_unit = f"{val_unit} ({lab['date']})"
+            if not test_name or not val_unit:
+                continue
+            if test_name.lower() in {"bp", "blood pressure", "ضغط الدم"}:
+                doc_vitals[test_name] = val_unit
+            else:
+                if test_name in doc_labs and doc_labs[test_name] != val_unit:
+                    doc_labs[f"{test_name} [{doc_obj.filename}]"] = val_unit
+                else:
+                    doc_labs[test_name] = val_unit
+
+    base_conditions = list(dict.fromkeys([*conditions, *doc_conditions]))
+    base_medications = list(dict.fromkeys(doc_medications))
+    base_allergies = list(dict.fromkeys(doc_allergies))
+
+    if explicit_context is None:
+        return PatientContext(
+            age=computed_age,
+            sex=patient.gender or None,
+            conditions=base_conditions,
+            medications=base_medications,
+            allergies=base_allergies,
+            labs=doc_labs,
+            vitals=doc_vitals,
+            clinical_notes="; ".join(note_snippets)[:8000] if note_snippets else None,
+        )
+
+    merged_conditions = list(dict.fromkeys([*base_conditions, *explicit_context.conditions]))
+    merged_medications = list(dict.fromkeys([*base_medications, *explicit_context.medications]))
+    merged_allergies = list(dict.fromkeys([*base_allergies, *explicit_context.allergies]))
+    merged_labs = {**doc_labs, **dict(explicit_context.labs)}
+    merged_vitals = {**doc_vitals, **dict(explicit_context.vitals)}
+    merged_notes_parts: list[str] = []
+    if explicit_context.clinical_notes and explicit_context.clinical_notes.strip():
+        merged_notes_parts.append(explicit_context.clinical_notes.strip())
+    merged_notes_parts.extend(note_snippets)
+    merged_notes = "; ".join(merged_notes_parts)[:8000] if merged_notes_parts else None
+
+    return PatientContext(
+        age=explicit_context.age if explicit_context.age is not None else computed_age,
+        sex=explicit_context.sex or (patient.gender or None),
+        pregnant=explicit_context.pregnant,
+        conditions=merged_conditions,
+        medications=merged_medications,
+        allergies=merged_allergies,
+        labs=merged_labs,
+        vitals=merged_vitals,
+        clinical_notes=merged_notes,
+    )
+
+
+@router.post(
+    "/patients/{patient_id}/documents/{document_id}/index",
+    response_model=DocumentIndexResponse,
+    tags=["Clinical RAG"],
+)
+async def index_patient_document_for_rag(
+    patient_id: UUID,
+    document_id: UUID,
+    user=Depends(require_permission("documents.create")),
+    session: AsyncSession = Depends(get_session),
+) -> DocumentIndexResponse:
+    """Chunk, embed, and index an approved patient document into the tenant-isolated Clinical RAG store."""
+    await ensure_patient_access(session, patient_id, user, "documents")
+    document = await session.get(PatientDocument, document_id)
+    if (
+        document is None
+        or document.patient_id != patient_id
+        or document.organization_id != user.organization_id
+        or document.deleted_at is not None
+    ):
+        raise HTTPException(status_code=404, detail="Document not found")
+    if document.review_status == "rejected":
+        raise HTTPException(status_code=422, detail="Rejected documents cannot be indexed for Clinical RAG")
+    if document.review_status != "approved":
+        raise HTTPException(status_code=422, detail="Only approved documents can be indexed for Clinical RAG")
+
+    file_bytes: bytes | None = None
+    if not (document.extracted_text and document.extracted_text.strip()) and document.storage_key:
+        try:
+            file_bytes = StorageService().read_document(document.storage_key)
+        except FileNotFoundError:
+            file_bytes = None
+
+    chunks_indexed = await async_ingest_patient_document(
+        session,
+        organization_id=user.organization_id,
+        patient_id=patient_id,
+        document_id=document.id,
+        filename=document.filename,
+        extracted_text=document.extracted_text,
+        file_bytes=file_bytes,
+    )
+    await write_audit(session, user, "document.rag_indexed", str(document.id))
+    await session.commit()
+    return DocumentIndexResponse(
+        document_id=str(document.id),
+        patient_id=str(patient_id),
+        filename=document.filename,
+        chunks_indexed=chunks_indexed,
+        status="indexed" if chunks_indexed > 0 else "empty",
+    )
+
+
+@router.post("/rag/search", response_model=SearchResponse, tags=["Clinical RAG"])
+async def rag_search(
+    req: SearchRequest,
+    user=Depends(require_permission("clinical_notes.view")),
+    session: AsyncSession = Depends(get_session),
+) -> SearchResponse:
+    """Semantic search over clinical guidelines and optional authorized patient documents."""
+    pat_uuid = _parse_optional_uuid(req.patient_id, "patient_id")
+    if pat_uuid is not None:
+        await ensure_patient_access(session, pat_uuid, user, "documents")
+    require_rag_embedding_dependency()
+
+    return await async_search_documents(
+        session,
+        query=req.query,
+        top_k=req.top_k,
+        organization_id=user.organization_id if pat_uuid is not None else None,
+        patient_id=pat_uuid,
+        include_guidelines=req.include_guidelines,
+    )
+
+
+@router.post("/rag/query", response_model=RagAnswerResponse, tags=["Clinical RAG"])
+@router.post("/rag/answer", response_model=RagAnswerResponse, tags=["Clinical RAG"])
+async def rag_query(
+    req: RagQueryRequest,
+    user=Depends(require_permission("clinical_notes.view")),
+    session: AsyncSession = Depends(get_session),
+) -> RagAnswerResponse:
+    """Evidence-grounded Clinical RAG question answering with optional patient context."""
+    pat_uuid = _parse_optional_uuid(req.patient_id, "patient_id")
+    effective_context = req.patient_context
+    if pat_uuid is not None:
+        effective_context = await _build_patient_context_from_db(
+            session,
+            pat_uuid,
+            user,
+            explicit_context=req.patient_context,
+            question=req.question,
+        )
+    require_rag_embedding_dependency()
+
+    response = await async_answer_question(
+        session,
+        question=req.question,
+        top_k=req.top_k,
+        patient_context=effective_context,
+        organization_id=user.organization_id if pat_uuid is not None else None,
+        patient_id=pat_uuid,
+    )
+    if response.diagnostics is not None and not get_settings().is_production:
+        guideline_cnt = await async_count_chunks(session, source_type="guideline")
+        patient_cnt = (
+            await async_count_chunks(
+                session,
+                organization_id=user.organization_id,
+                patient_id=pat_uuid,
+                source_type="patient_document",
+            )
+            if pat_uuid is not None
+            else 0
+        )
+        response.diagnostics["indexed_chunks_in_scope"] = {
+            "guideline_chunks": guideline_cnt,
+            "patient_document_chunks": patient_cnt,
+            "total_chunks": guideline_cnt + patient_cnt,
+        }
+    await write_audit(session, user, "rag.query", str(pat_uuid) if pat_uuid else "guidelines")
+    await session.commit()
+    return response
+
+
+@router.post(
+    "/patients/{patient_id}/rag/query",
+    response_model=RagAnswerResponse,
+    tags=["Clinical RAG"],
+)
+async def patient_rag_query(
+    patient_id: UUID,
+    req: RagQueryRequest,
+    user=Depends(require_permission("clinical_notes.view")),
+    session: AsyncSession = Depends(get_session),
+) -> RagAnswerResponse:
+    """Evidence-grounded Clinical RAG query scoped to a specific patient in the caller's organization."""
+    effective_context = await _build_patient_context_from_db(
+        session,
+        patient_id,
+        user,
+        explicit_context=req.patient_context,
+        question=req.question,
+    )
+    require_rag_embedding_dependency()
+    response = await async_answer_question(
+        session,
+        question=req.question,
+        top_k=req.top_k,
+        patient_context=effective_context,
+        organization_id=user.organization_id,
+        patient_id=patient_id,
+    )
+    if response.diagnostics is not None and not get_settings().is_production:
+        guideline_cnt = await async_count_chunks(session, source_type="guideline")
+        patient_cnt = await async_count_chunks(
+            session,
+            organization_id=user.organization_id,
+            patient_id=patient_id,
+            source_type="patient_document",
+        )
+        response.diagnostics["indexed_chunks_in_scope"] = {
+            "guideline_chunks": guideline_cnt,
+            "patient_document_chunks": patient_cnt,
+            "total_chunks": guideline_cnt + patient_cnt,
+        }
+    await write_audit(session, user, "patient.rag_query", str(patient_id))
+    await session.commit()
+    return response
+
+
+@router.get("/rag/sources", response_model=RagStatsResponse, tags=["Clinical RAG"])
+@router.get("/rag/stats", response_model=RagStatsResponse, tags=["Clinical RAG"])
+async def rag_stats(
+    patient_id: str | None = Query(default=None),
+    user=Depends(require_permission("clinical_notes.view")),
+    session: AsyncSession = Depends(get_session),
+) -> RagStatsResponse:
+    """Return Clinical RAG chunk counts and indexed source filenames visible to the caller."""
+    pat_uuid = _parse_optional_uuid(patient_id, "patient_id")
+    if pat_uuid is not None:
+        await ensure_patient_access(session, pat_uuid, user, "documents")
+
+    guideline_chunks = await async_count_chunks(session, source_type="guideline")
+    patient_doc_chunks = await async_count_chunks(
+        session,
+        organization_id=user.organization_id,
+        patient_id=pat_uuid,
+        source_type="patient_document",
+    )
+    sources = await async_list_sources(
+        session,
+        organization_id=user.organization_id if pat_uuid is not None else None,
+        patient_id=pat_uuid,
+    )
+    return RagStatsResponse(
+        total_chunks=guideline_chunks + patient_doc_chunks,
+        guideline_chunks=guideline_chunks,
+        patient_document_chunks=patient_doc_chunks,
+        sources=sources,
+    )

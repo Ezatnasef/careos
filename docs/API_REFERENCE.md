@@ -440,18 +440,6 @@ Protected. Approves/signs the note and creates the approved immutable version.
 ### POST /clinical-notes/{note_id}/document
 Protected. Generates a private PDF only after approval and attaches it to the patient and encounter.
 
-### POST /assistant/query
-Protected.
-
-Request:
-
-```json
-{
-  "patient_id": "uuid",
-  "question": "What are the key follow-up concerns for this patient?"
-}
-```
-
 ### POST /patients/{patient_id}/documents
 Protected.
 
@@ -465,7 +453,7 @@ Request:
 }
 ```
 
-The response includes OCR status and a tenant-scoped authenticated `download_url`.
+The response includes document review status and a tenant-scoped authenticated `download_url`. Clinical OCR and patient-data RAG are not enabled in the MVP.
 
 ### GET /patients/{patient_id}/documents/{document_id}/download
 Protected. Requires the same organization and patient access checks as the upload route.
@@ -707,6 +695,6 @@ docker compose up --build
 1. Add refresh-token rotation and device/session tracking.
 2. Enforce stricter tenant isolation across all uploads and patient records.
 3. Connect real OIDC/SAML providers for hospital identity.
-4. Replace sandbox AI/OCR providers with real service integrations.
+4. Add clinical OCR or patient-data AI only after requirements, access controls, and clinical validation are defined.
 5. Add pagination, audit export, and retention enforcement for clinical records.
 6. Add end-to-end tests for the portal, SSO, and analytics flows.

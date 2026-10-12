@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from .config import get_settings
+from .config import BACKEND_ROOT, get_settings
 
 
 class StorageService:
@@ -18,7 +18,12 @@ class StorageService:
     def _filesystem_path(self, key: str) -> Path:
         if not key or key.startswith("/") or ".." in Path(key).parts:
             raise ValueError("Unsafe storage key detected")
-        base_dir = Path("storage") / "uploads"
+        local_root = (getattr(self.settings, "storage_local_root", "") or "").strip()
+        if local_root:
+            candidate_root = Path(local_root)
+            base_dir = candidate_root if candidate_root.is_absolute() else (BACKEND_ROOT / candidate_root).resolve()
+        else:
+            base_dir = (BACKEND_ROOT / "storage" / "uploads").resolve()
         target = base_dir / key
         target.parent.mkdir(parents=True, exist_ok=True)
         return target

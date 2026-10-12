@@ -5,12 +5,14 @@ import {
   Database,
   FileBarChart,
   FileText,
+  FolderOpen,
   LayoutDashboard,
   MessageCircle,
   ShieldCheck,
   Stethoscope,
   UserRound,
   Users,
+  HeartPulse,
   type LucideIcon,
 } from "lucide-react";
 import type { TranslationKey } from "../../i18n";
@@ -44,27 +46,31 @@ export const navItems: NavItem[] = [
   { id: "analytics", label: "analytics", icon: BarChart3 },
   { id: "departments", label: "departments", icon: Building2 },
   { id: "reports", label: "reports", icon: FileBarChart },
+  { id: "clinicOps", label: "operations", icon: HeartPulse },
+  { id: "admin", label: "organizationAdministration", icon: ShieldCheck },
+  { id: "files", label: "documentation", icon: FolderOpen },
+  { id: "staff", label: "teamMembersLabel", icon: Users },
   { id: "teamAudit", label: "teamAudit", icon: ShieldCheck },
 ];
 
 export const roleNavMap: Record<Role, AppView[]> = {
-  admin: ["dashboard", "patients", "documents", "appointments", "analytics", "departments", "reports", "teamAudit", "settings"],
+  admin: ["dashboard", "assistant", "analytics", "departments", "reports", "admin", "staff", "teamAudit", "settings"],
   doctor: ["dashboard", "patients", "assistant", "notes", "documents", "appointments", "analytics", "messages"],
-  nurse: ["dashboard", "patients", "notes", "documents", "appointments", "messages", "analytics"],
-  receptionist: ["dashboard", "patients", "documents", "appointments", "messages", "analytics"],
+  nurse: ["dashboard", "patients", "assistant", "notes", "documents", "appointments", "messages", "analytics", "clinicOps"],
+  receptionist: ["dashboard", "patients", "documents", "appointments", "messages", "analytics", "clinicOps"],
   patient: ["portal", "appointments", "messages"],
-  hospital_director: ["dashboard", "patients", "appointments", "analytics", "departments", "reports", "teamAudit", "settings"],
+  hospital_director: ["dashboard", "analytics", "departments", "reports", "admin", "staff", "teamAudit", "settings"],
   it_admin: ["dashboard", "integrations", "teamAudit"],
-  administrative_staff: ["dashboard", "patients", "appointments", "documents", "departments", "reports"],
+  administrative_staff: ["dashboard", "patients", "appointments", "documents", "departments", "reports", "clinicOps", "admin", "files", "staff"],
 };
 
 export const rolePermissions: Record<Role, string[]> = {
-  admin: ["dashboard.read", "patient.read", "patient.write", "appointment.read", "appointment.write", "clinical.note", "analytics.read", "team.read", "team.invite", "hospital.settings.view", "hospital.settings.manage"],
+  admin: ["dashboard.read", "analytics.read", "team.read", "team.invite", "hospital.settings.view", "hospital.settings.manage"],
   doctor: ["dashboard.read", "patient.read", "patient.write", "appointment.read", "appointment.write", "clinical.note", "analytics.read"],
   nurse: ["dashboard.read", "patient.read", "patient.write", "appointment.read", "clinical.note"],
   receptionist: ["dashboard.read", "patient.read", "appointment.read", "appointment.write"],
   patient: ["dashboard.read", "patient.read", "appointment.read"],
-  hospital_director: ["dashboard.read", "users.view", "hospital.view", "hospital.settings.view", "hospital.settings.manage", "departments.view", "reports.view", "analytics.view", "audit_logs.view", "team.read", "patients.view", "patients.search", "patient.read"],
+  hospital_director: ["dashboard.read", "users.view", "hospital.view", "hospital.settings.view", "hospital.settings.manage", "departments.view", "reports.view", "analytics.view", "audit_logs.view", "team.read"],
   it_admin: ["dashboard.read", "users.view", "roles.view", "permissions.view", "sso.view", "sso.manage", "audit_logs.view"],
   administrative_staff: ["dashboard.read", "patients.search", "patients.demographics.view", "appointments.view", "appointments.create", "appointments.update", "checkin.view", "departments.view", "reports.operational.view"],
 };
@@ -72,7 +78,7 @@ export const rolePermissions: Record<Role, string[]> = {
 export const viewPermissions: Record<AppView, string[]> = {
   dashboard: ["dashboard.read"],
   patients: ["patient.read", "patients.view", "patients.demographics.view"],
-  assistant: ["clinical.note", "clinical_notes.create"],
+  assistant: ["clinical.note", "clinical_notes.create", "clinical_notes.view", "rag.query", "hospital.settings.view"],
   notes: ["clinical.note", "clinical_notes.view"],
   documents: ["patient.read", "documents.view", "documents.create"],
   appointments: ["appointment.read", "appointments.view"],
@@ -81,6 +87,10 @@ export const viewPermissions: Record<AppView, string[]> = {
   messages: ["patient.read", "messages.self.view"],
   departments: ["team.read", "departments.view"],
   reports: ["analytics.read", "reports.view", "reports.operational.view"],
+  admin: ["team.read", "hospital.settings.view", "hospital.settings.manage"],
+  files: ["patient.read", "documents.view", "documents.create"],
+  staff: ["team.read", "users.view", "team.invite"],
+  clinicOps: ["dashboard.read", "appointment.read", "patients.view", "analytics.read"],
   settings: ["hospital.settings.view", "hospital.settings.manage"],
   integrations: ["dashboard.read", "sso.view", "sso.manage"],
   account: ["dashboard.read"],

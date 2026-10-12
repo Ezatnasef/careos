@@ -12,6 +12,7 @@ async function openWorkspace(page: Page, request: APIRequestContext) {
   const accepted = await request.post('/api/v1/auth/invitations/accept', { data: { token: (await invitation.json()).development_token, full_name: 'Language Clinician', password: 'strong-password' } })
   expect(accepted.ok(), await accepted.text()).toBeTruthy()
   await page.goto('/#app')
+  await page.getByRole('button', { name: 'Switch to English' }).click()
   await page.getByRole('button', { name: 'Sign in to your workspace' }).last().click()
   await page.locator('input[type="email"]').fill(email)
   await page.locator('input[type="password"]').fill('strong-password')
@@ -26,6 +27,7 @@ async function openWorkspace(page: Page, request: APIRequestContext) {
 
 test('Hospital SSO access method is not carried into Create account', async ({ page }) => {
   await page.goto('/#app')
+  await page.getByRole('button', { name: 'Switch to English' }).click()
   await page.getByRole('button', { name: 'Hospital SSO' }).click()
   await expect(page.getByText('This is the Hospital SSO route. It uses your organization identity provider to verify your hospital account securely.')).toBeVisible()
   await page.getByRole('tab', { name: 'Create account' }).click()

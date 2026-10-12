@@ -24,6 +24,7 @@ type HeaderProps = {
   setTheme: (theme: Theme) => void;
   onHelp: () => void;
   onAccount: () => void;
+  onNavigate: (view: AppView) => void;
   t: Translator;
 };
 
@@ -38,6 +39,7 @@ export function Header({
   setTheme,
   onHelp,
   onAccount,
+  onNavigate,
   t,
 }: HeaderProps) {
   const routeView = viewFromLocation();
@@ -66,11 +68,16 @@ export function Header({
       >
         <Menu size={20} />
       </button>
-      <div className="breadcrumb">
+      <button
+        type="button"
+        className="breadcrumb"
+        onClick={() => onNavigate("dashboard")}
+        aria-label={t("workspaceOverview")}
+      >
         <span>{t("workspace")}</span>
         <ChevronRight size={14} />
         <strong>{t(current.label)}</strong>
-      </div>
+      </button>
       <div className="top-actions">
         <button
           type="button"
@@ -100,6 +107,7 @@ export function Header({
         </button>
         <div className="notification-wrap">
           <button
+            type="button"
             className="icon-btn notification"
             aria-label={t("notificationLabel")}
             onClick={() => setShowNotifications(!showNotifications)}
@@ -146,6 +154,7 @@ export function Header({
           )}
         </div>
         <button
+          type="button"
           className="top-avatar"
           onClick={onAccount}
           aria-label="Open account"

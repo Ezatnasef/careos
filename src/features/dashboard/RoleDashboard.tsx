@@ -156,6 +156,7 @@ export function RoleDashboard({
               detail={`${team.length} ${t("organizationUsers")}`}
               action={
                 <button
+                  type="button"
                   className="text-btn"
                   onClick={() => onNavigate("teamAudit")}
                 >
@@ -170,7 +171,8 @@ export function RoleDashboard({
   }
 
   const patients = data?.patient_count ?? 0;
-  const appointments = data?.upcoming_appointments?.length ?? 0;
+  const appointments =
+    data?.upcoming_appointment_count ?? data?.upcoming_appointments?.length ?? 0;
   const followups = data?.followups?.length ?? 0;
   const title = isDirector
     ? t("hospitalOverview")
@@ -255,16 +257,6 @@ export function RoleDashboard({
               value: followups,
               tone: "orange",
             },
-            ...(role === "doctor"
-              ? [
-                  {
-                    icon: <Activity />,
-                    label: t("aiReviewRate"),
-                    value: t("notAvailable"),
-                    tone: "rose",
-                  },
-                ]
-              : []),
           ];
 
   return (
@@ -278,8 +270,9 @@ export function RoleDashboard({
             : t("todayOverview")
         }
         action={
-          !isDirector && (
+          !isDirector && !isAdmin && (
             <button
+              type="button"
               className="primary-btn"
               onClick={() => onNavigate("appointments")}
             >
@@ -304,11 +297,12 @@ export function RoleDashboard({
         ))}
       </section>
       <div className="dashboard-grid">
-        <DashboardPanel
+        {!isDirector && !isAdmin && <DashboardPanel
           title={t("upcomingAppointments")}
           detail={t("scheduleDetail")}
           action={
             <button
+              type="button"
               className="text-btn"
               onClick={() => onNavigate("appointments")}
             >
@@ -333,7 +327,8 @@ export function RoleDashboard({
           {!data?.upcoming_appointments?.length && (
             <div className="empty-state">{t("noAppointments")}</div>
           )}
-        </DashboardPanel>
+        </DashboardPanel>}
+
         {canSeeTeam ? (
           <DashboardPanel
             title={isDirector ? t("staffAndDepartments") : t("teamAndAudit")}
@@ -348,6 +343,7 @@ export function RoleDashboard({
               />
             ))}
             <button
+              type="button"
               className="text-btn"
               onClick={() => onNavigate("teamAudit")}
             >
@@ -371,6 +367,7 @@ export function RoleDashboard({
               }
               action={
                 <button
+                  type="button"
                   className="text-btn"
                   onClick={() =>
                     onNavigate(isClinical ? "notes" : "appointments")
@@ -387,6 +384,7 @@ export function RoleDashboard({
                 detail={t("assistantReady")}
                 action={
                   <button
+                    type="button"
                     className="text-btn"
                     onClick={() => onNavigate("assistant")}
                   >

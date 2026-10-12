@@ -27,21 +27,23 @@ def upgrade() -> None:
     op.create_table("auth_sessions", sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True), sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False), sa.Column("token_jti", sa.String(64), nullable=False), sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False), sa.Column("revoked_at", sa.DateTime(timezone=True)))
     op.create_index("ix_auth_sessions_user_id", "auth_sessions", ["user_id"])
     op.create_index("ix_auth_sessions_token_jti", "auth_sessions", ["token_jti"], unique=True)
-    op.execute("""
-        CREATE OR REPLACE FUNCTION prevent_audit_mutation() RETURNS trigger AS $$
-        BEGIN
-            RAISE EXCEPTION 'audit_events are append-only';
-        END;
-        $$ LANGUAGE plpgsql;
-        CREATE TRIGGER audit_events_append_only
-        BEFORE UPDATE OR DELETE ON audit_events
-        FOR EACH ROW EXECUTE FUNCTION prevent_audit_mutation();
-    """)
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("""
+            CREATE OR REPLACE FUNCTION prevent_audit_mutation() RETURNS trigger AS $$
+            BEGIN
+                RAISE EXCEPTION 'audit_events are append-only';
+            END;
+            $$ LANGUAGE plpgsql;
+            CREATE TRIGGER audit_events_append_only
+            BEFORE UPDATE OR DELETE ON audit_events
+            FOR EACH ROW EXECUTE FUNCTION prevent_audit_mutation();
+        """)
 
 
 def downgrade() -> None:
-    op.execute("DROP TRIGGER IF EXISTS audit_events_append_only ON audit_events")
-    op.execute("DROP FUNCTION IF EXISTS prevent_audit_mutation()")
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("DROP TRIGGER IF EXISTS audit_events_append_only ON audit_events")
+        op.execute("DROP FUNCTION IF EXISTS prevent_audit_mutation()")
     op.drop_index("ix_notifications_created_at", table_name="notifications")
     op.drop_index("ix_notifications_user_id", table_name="notifications")
     op.drop_table("notifications")

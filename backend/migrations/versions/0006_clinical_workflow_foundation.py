@@ -35,7 +35,10 @@ def upgrade() -> None:
         ("ix_encounters_created_at", "encounters", ["created_at"]),
     ]:
         op.create_index(name, table, columns)
-    op.add_column("clinical_notes", sa.Column("encounter_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("encounters.id"), nullable=True))
+    if op.get_bind().dialect.name == "postgresql":
+        op.add_column("clinical_notes", sa.Column("encounter_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("encounters.id"), nullable=True))
+    else:
+        op.add_column("clinical_notes", sa.Column("encounter_id", postgresql.UUID(as_uuid=True), nullable=True))
     op.create_index("ix_clinical_notes_encounter_id", "clinical_notes", ["encounter_id"])
     op.create_table(
         "clinical_note_versions",

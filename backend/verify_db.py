@@ -1,22 +1,28 @@
+import asyncio
 import os
+from pathlib import Path
 import sqlite3
 import sys
+import tempfile
 
-os.chdir(r"F:\New folder (2)\careos-main test\backend")
-print('CWD=', os.getcwd())
+root = Path(__file__).resolve().parent
+os.chdir(root)
+print("CWD=", os.getcwd())
+
+temp_db = Path(tempfile.gettempdir()) / "careos_verify_db.db"
 try:
-    os.remove('careos.db')
+    temp_db.unlink()
 except FileNotFoundError:
     pass
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{temp_db.as_posix()}"
 
 from app.db import init_db
-import asyncio
 asyncio.run(init_db())
-conn = sqlite3.connect('careos.db')
-print('TABLES=', conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall())
+conn = sqlite3.connect(temp_db)
+print("TABLES=", conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall())
 conn.close()
 
 import pytest
-rc = pytest.main(['-q', 'tests/test_auth.py'])
-print('PYTEST_EXIT', rc)
+rc = pytest.main(["-q", "tests/test_auth.py"])
+print("PYTEST_EXIT", rc)
 sys.exit(rc)

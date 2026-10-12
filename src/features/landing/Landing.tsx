@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { askGuestChat, askGuestVoice } from "../../api/chat";
+import { askGuestChat, askGuestVoice, type GeneralChatResponse } from "../../api/chat";
+import { GlobalChat } from "../chat/GlobalChat";
 import {
   ArrowRight,
   BookOpen,
@@ -42,6 +43,7 @@ export function Landing({
   setTheme,
 }: Props) {
   const isArabic = language === "ar";
+  const voiceLanguage: "ar-EG" | "en-US" = isArabic ? "ar-EG" : "en-US";
   const [page, setPage] = useState<
     "home" | "problem" | "features" | "assistant" | "demo" | "contact"
   >("home");
@@ -85,7 +87,7 @@ export function Landing({
     [],
   );
 
-  const sendChat = async (draft: string): Promise<string | null> => {
+  const sendChat = async (draft: string): Promise<GeneralChatResponse | null> => {
     const message = draft.trim();
     if (!message || isSendingChat) return null;
     chatMessageId.current += 1;
@@ -98,13 +100,13 @@ export function Landing({
     setIsSendingChat(true);
 
     try {
-      const response = await askGuestChat(message);
+      const response = await askGuestChat(message, voiceLanguage, false);
       chatMessageId.current += 1;
       setChatMessages((messages) => [
         ...messages,
         { id: chatMessageId.current, role: "assistant", text: response.answer },
       ]);
-      return response.answer;
+      return response;
     } catch (error) {
       setChatError(error instanceof Error ? error.message : t("generalChatError"));
       return null;
@@ -113,14 +115,30 @@ export function Landing({
     }
   };
 
-  const speakVoiceReply = (answer: string | null) => {
-    if (!answer || !window.speechSynthesis) return;
-    const utterance = new SpeechSynthesisUtterance(answer);
-    utterance.lang = isArabic ? "ar-EG" : "en-US";
-    utterance.onstart = () => setIsVoiceOrbActive(true);
-    utterance.onend = () => setIsVoiceOrbActive(false);
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
+  const speakVoiceReply = (answer: string | null, audioBase64?: string, audioContentType?: string) => {
+    if (!audioBase64 || !audioContentType) {
+      setIsVoiceOrbActive(false);
+      return;
+    }
+
+    const binary = atob(audioBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const blob = new Blob([bytes], { type: audioContentType || "audio/wav" });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    audio.play().catch(() => undefined);
+    setIsVoiceOrbActive(true);
+    setTimeout(() => setIsVoiceOrbActive(false), 2500);
+  };
+
+  const speakChatResponse = (response: GeneralChatResponse | null) => {
+    if (response) {
+      speakVoiceReply(response.answer, response.audio_base64, response.audio_content_type);
+    }
   };
 
   const sendVoiceRecording = async (recording: Blob) => {
@@ -148,7 +166,7 @@ export function Landing({
         reader.onerror = () => reject(new Error("Unable to read audio recording"));
         reader.readAsDataURL(recording);
       });
-      const response = await askGuestVoice(audioBase64, isArabic ? "ar-EG" : "en-US");
+      const response = await askGuestVoice(audioBase64, voiceLanguage);
       chatMessageId.current += 1;
       const transcriptId = chatMessageId.current;
       chatMessageId.current += 1;
@@ -157,7 +175,7 @@ export function Landing({
         { id: transcriptId, role: "user", text: response.transcript },
         { id: chatMessageId.current, role: "assistant", text: response.answer },
       ]);
-      speakVoiceReply(response.answer);
+      speakVoiceReply(response.answer, response.audio_base64, response.audio_content_type);
     } catch (error) {
       setVoiceStatus(error instanceof Error ? error.message : t("generalChatError"));
     } finally {
@@ -232,6 +250,17 @@ export function Landing({
     }
     void startVoice();
   };
+
+  const currentVoiceStatusText =
+    voiceStatus ||
+    (isVoiceRecording
+      ? isArabic
+        ? "جارٍ تسجيل الصوت..."
+        : "Recording audio..."
+      : isArabic
+        ? "مستعد للاستماع. اضغط للبدء."
+        : "Ready to listen. Press to start.");
+
   const copy = isArabic
     ? {
         title: "رعاية تفكر معك.",
@@ -243,7 +272,7 @@ export function Landing({
     : {
         title: "Care that thinks with you.",
         detail:
-          "CareOS is a SaaS workspace for clinical teams: instant note summarization, source-linked suggestions, smarter scheduling, and the physician stays in control at the end of every workflow.",
+          "CareOS is a clinician workflow workspace: draft summarization, smarter scheduling, clear review queues, and the physician stays in control at the end of every workflow.",
         primary: "Book a demo",
         secondary: "See how it works",
       };
@@ -256,8 +285,8 @@ export function Landing({
         },
         {
           icon: <Database />,
-          title: "اقتراحات موثقة",
-          detail: "اعرض المصدر والثقة بجانب كل توصية.",
+          title: "دعم صياغة سريرية",
+          detail: "جهّز مسودات منظمة ومراجعات بشرية دون إجراءات آلية.",
         },
         {
           icon: <CalendarDays />,
@@ -281,8 +310,8 @@ export function Landing({
         },
         {
           icon: <MessageCircle />,
-          title: "مساعد Chat وVoice للزوار",
-          detail: "اسأل المساعد بالعربية أو الإنجليزية كتابةً أو بالصوت قبل إنشاء حساب.",
+          title: "سير مراجعة طبيب",
+          detail: "احتفظ بالأسئلة والمسودات وموافقة الطبيب داخل سير العمل السريري بدلًا من إجراءات تلقائية.",
         },
       ]
     : [
@@ -294,9 +323,9 @@ export function Landing({
         },
         {
           icon: <Database />,
-          title: "Traceable suggestions",
+          title: "Clinical drafting support",
           detail:
-            "Show the source and confidence next to every recommendation.",
+            "Prepare structured drafts and review queues without autonomous actions.",
         },
         {
           icon: <CalendarDays />,
@@ -320,8 +349,8 @@ export function Landing({
         },
         {
           icon: <MessageCircle />,
-          title: "Guest Chat & Voice assistant",
-          detail: "Talk to the assistant in Arabic or English by text or voice before signing up.",
+          title: "Clinician review workflow",
+          detail: "Keep questions, drafts, and sign-off steps inside the clinical workflow instead of autonomous actions.",
         },
       ];
   const nav = (next: typeof page) => setPage(next);
@@ -356,7 +385,7 @@ export function Landing({
             {isArabic ? "المساعد" : "Chat / Voice"}
           </button>
           <button className="nav-link-button" onClick={() => nav("demo")}>
-            {isArabic ? "اللقطة" : "Demo"}
+            {isArabic ? "عرض" : "Demo"}
           </button>
           <button className="nav-link-button" onClick={() => nav("contact")}>
             {isArabic ? "تواصل" : "Contact"}
@@ -410,7 +439,7 @@ export function Landing({
           { key: "problem", label: isArabic ? "المشكلة" : "Problem" },
           { key: "features", label: isArabic ? "المميزات" : "Features" },
           { key: "assistant", label: isArabic ? "المساعد" : "Chat / Voice" },
-          { key: "demo", label: isArabic ? "اللقطة" : "Demo" },
+          { key: "demo", label: isArabic ? "عرض" : "Demo" },
           { key: "contact", label: isArabic ? "تواصل" : "Contact" },
         ].map((item) => (
           <button
@@ -452,7 +481,7 @@ export function Landing({
                   {isArabic ? "مراجعة طبية 100%" : "100% physician review"}
                 </span>
                 <span className="hero-badge">
-                  {isArabic ? "اقتراحات مرتبطة بالمصدر" : "Source-linked suggestions"}
+                  {isArabic ? "مسودات مراجعة طبية" : "Clinician-reviewed drafts"}
                 </span>
               </div>
             </div>
@@ -608,11 +637,11 @@ export function Landing({
                     <button
                       type="button"
                       className={assistantMode === "chat" ? "active" : ""}
+                      aria-pressed={assistantMode === "chat"}
                       onClick={() => {
                         if (voiceRecorder.current?.state === "recording") {
                           voiceRecorder.current.stop();
                         }
-                        window.speechSynthesis?.cancel();
                         setIsVoiceOrbActive(false);
                         setAssistantMode("chat");
                       }}
@@ -622,9 +651,10 @@ export function Landing({
                     <button
                       type="button"
                       className={assistantMode === "voice" ? "active" : ""}
+                      aria-pressed={assistantMode === "voice"}
                       onClick={() => {
                         setAssistantMode("voice");
-                        startVoice();
+                        void startVoice();
                       }}
                     >
                       {isArabic ? "صوت" : "Voice"}
@@ -637,9 +667,7 @@ export function Landing({
                         <div className="assistant-demo-messages" aria-live="polite">
                           {chatMessages.length === 0 && (
                             <div className="assistant-demo-message assistant-demo-message-left assistant-demo-welcome">
-                              {isArabic
-                                ? "مرحبًا، كيف يمكنني مساعدتك اليوم؟"
-                                : "Hi, how can I help you today?"}
+                              {"أهلاً، إزاي أقدر أساعدك اليوم؟"}
                             </div>
                           )}
                           {chatMessages.map((message, index) => (
@@ -663,15 +691,15 @@ export function Landing({
                           className="assistant-demo-input"
                           onSubmit={(event) => {
                             event.preventDefault();
-                            void sendChat(chatInput);
+                            void sendChat(chatInput).then(speakChatResponse);
                             setChatInput("");
                           }}
                         >
                           <input
-                            aria-label={isArabic ? "اكتب رسالة" : "Type a message"}
+                            aria-label="اكتب رسالة"
                             value={chatInput}
                             onChange={(event) => setChatInput(event.target.value)}
-                            placeholder={isArabic ? "اكتب رسالة..." : "Type a message..."}
+                            placeholder="اكتب رسالة..."
                           />
                           <button
                             className="assistant-demo-send"
@@ -688,6 +716,7 @@ export function Landing({
                         <button
                           className={`assistant-voice-orb ${isVoiceOrbActive ? "active" : ""}`}
                           type="button"
+                          data-testid="assistant-voice-orb"
                           onClick={toggleVoice}
                           aria-label={
                             isArabic
@@ -699,8 +728,8 @@ export function Landing({
                                 : "Start voice assistant"
                           }
                         />
-                        <span className="assistant-sr-only" role="status" aria-live="polite">
-                          {voiceStatus}
+                        <span className="assistant-voice-status" role="status" aria-live="polite" data-testid="assistant-voice-status">
+                          {currentVoiceStatusText}
                         </span>
                       </div>
                     )}
@@ -712,23 +741,9 @@ export function Landing({
                           const message = voiceInput.trim();
                           if (!message || isSendingChat) return;
                           setVoiceInput("");
-                          void sendChat(message).then(speakVoiceReply);
+                          void sendChat(message).then(speakChatResponse);
                         }}
                       >
-                        <button
-                          type="button"
-                          aria-label={isArabic ? "محادثة جديدة" : "New conversation"}
-                          title={isArabic ? "محادثة جديدة" : "New conversation"}
-                          disabled={isSendingChat}
-                          onClick={() => {
-                            setChatMessages([]);
-                            setChatError("");
-                            setChatInput("");
-                            setVoiceInput("");
-                          }}
-                        >
-                          <Plus size={25} />
-                        </button>
                         <input
                           aria-label={isArabic ? "اكتب رسالة" : "Type a message"}
                           placeholder={isArabic ? "اكتب" : "Type"}
@@ -738,8 +753,10 @@ export function Landing({
                         <button
                           className="assistant-voice-mic"
                           type="button"
+                          data-testid="assistant-voice-mic"
                           aria-label={isArabic ? "تبديل الميكروفون" : "Toggle microphone"}
                           title={isArabic ? "تبديل الميكروفون" : "Toggle microphone"}
+                          aria-pressed={isVoiceRecording}
                           onClick={toggleVoice}
                           disabled={isSendingChat && !isVoiceRecording}
                         >
@@ -754,7 +771,6 @@ export function Landing({
                             if (voiceRecorder.current?.state === "recording") {
                               voiceRecorder.current.stop();
                             }
-                            window.speechSynthesis?.cancel();
                             setIsVoiceOrbActive(false);
                             setAssistantMode("chat");
                           }}
@@ -1008,6 +1024,7 @@ export function Landing({
           </div>
         </main>
       )}
+      <GlobalChat t={t} guest language={language} />
     </div>
   );
 }

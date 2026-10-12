@@ -495,20 +495,13 @@ Examples used by protected dependencies:
 
 ## 7. AI, Documents, Messages, Tasks, and Care Plans
 
-### POST /assistant/query
-
-- Permission: clinical/approved patient read policy.
-- Body: patient ID and question.
-- Current provider boundary may return a sandbox response in development.
-- Production requires grounded provider, source allowlists, prompt-injection defense, and clinician review.
-
 ### POST /patients/{patient_id}/documents
 
 - Permission: `documents.create`.
 - Body: filename, content type, optional base64 content, review metadata.
 - Validates upload type and size.
 - Stores private document metadata and object reference.
-- OCR is currently a provider boundary; production OCR requires a real safe parser/scanner.
+- Stores documents only; clinical OCR and patient-data RAG are not enabled in the MVP.
 
 ### PATCH /patients/{patient_id}/documents/{document_id}/review
 

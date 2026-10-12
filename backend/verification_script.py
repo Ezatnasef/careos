@@ -1,34 +1,30 @@
 import os
-import sqlite3
+from pathlib import Path
+import subprocess
 import sys
+import tempfile
 
-root = r"F:\New folder (2)\careos-main test\backend"
+root = Path(__file__).resolve().parent
 os.chdir(root)
-report_path = os.path.join(root, 'verification_report.txt')
 
+temp_db = Path(tempfile.gettempdir()) / "careos_verify_script.db"
 try:
-    os.remove('careos.db')
+    temp_db.unlink()
 except FileNotFoundError:
     pass
 
-try:
-    import asyncio
-    from app.db import init_db, engine
-    asyncio.run(init_db())
-    conn = sqlite3.connect('careos.db')
-    tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
-    conn.close()
-    with open(report_path, 'w', encoding='utf-8') as f:
-        f.write('DB_TABLES=' + repr(tables) + '\n')
-    import pytest
-    rc = pytest.main(['-q', 'tests/test_auth.py'])
-    with open(report_path, 'a', encoding='utf-8') as f:
-        f.write('PYTEST_EXIT=' + str(rc) + '\n')
-    sys.exit(rc)
-finally:
-    try:
-        import asyncio
-        from app.db import engine
-        asyncio.run(engine.dispose())
-    except Exception:
-        pass
+env = os.environ.copy()
+env["DATABASE_URL"] = f"sqlite+aiosqlite:///{temp_db.as_posix()}"
+
+cmd = [sys.executable, "-m", "pytest", "-q", "tests/test_auth.py", "--disable-warnings"]
+res = subprocess.run(cmd, cwd=str(root), env=env, capture_output=True, text=True)
+
+with open(root / "verification_output.txt", "w", encoding="utf-8") as f:
+    f.write(f"RETURN_CODE: {res.returncode}\n")
+    f.write("STDOUT:\n")
+    f.write(res.stdout)
+    f.write("\nSTDERR:\n")
+    f.write(res.stderr)
+
+print(f"DONE: {res.returncode}")
+sys.exit(res.returncode)

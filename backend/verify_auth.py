@@ -1,14 +1,18 @@
 import os
+from pathlib import Path
 import sys
+import tempfile
 
-root = r"F:\New folder (2)\careos-main test\backend"
+root = Path(__file__).resolve().parent
 os.chdir(root)
-result_path = os.path.join(root, "verification_result.txt")
+result_path = root / "verification_result.txt"
 
+temp_db = Path(tempfile.gettempdir()) / "careos_verify_auth.db"
 try:
-    os.remove("careos.db")
+    temp_db.unlink()
 except FileNotFoundError:
     pass
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{temp_db.as_posix()}"
 
 print("START_VERIFY", flush=True)
 

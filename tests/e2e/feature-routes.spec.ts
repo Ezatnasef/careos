@@ -16,7 +16,8 @@ async function openWorkspace(page: Page, request: APIRequestContext, role = 'adm
     accessToken = (await accepted.json()).access_token as string
   }
   await page.goto('/#app')
-  await page.getByRole('button', { name: 'Sign in to your workspace' }).last().click()
+  await page.getByRole('button', { name: 'Switch to English' }).click()
+  await page.getByRole('button', { name: /Sign in to your workspace|تسجيل الدخول إلى مساحة العمل/ }).last().click()
   await page.locator('input[type="email"]').fill(email)
   await page.locator('input[type="password"]').fill('strong-password')
   await page.getByRole('button', { name: /Sign in|تسجيل الدخول/ }).last().click()
@@ -27,6 +28,21 @@ async function openWorkspace(page: Page, request: APIRequestContext, role = 'adm
     await expect(page.locator('.onboarding-screen')).toHaveCount(0)
   }
 }
+
+test('landing defaults to Arabic for the public voice assistant', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'رعاية تفكر معك.' })).toBeVisible()
+})
+
+test('public assistant voice mode exposes a real mic action in the browser', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'المساعد' }).click()
+  await page.getByRole('button', { name: /صوت|Voice/ }).click()
+
+  await expect(page.getByRole('button', { name: /تشغيل المساعد الصوتي|Start voice assistant|تبديل الميكروفون|Toggle microphone/ }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: /تبديل الميكروفون|Toggle microphone/ })).toBeVisible()
+  await expect(page.locator('.assistant-voice-orb')).toBeVisible()
+})
 
 test('feature routes render after workspace navigation', async ({ page, request }) => {
   await openWorkspace(page, request)
@@ -128,7 +144,8 @@ test('general chat is available to non-clinical staff without patient context', 
   await expect(page.locator('.global-chat-panel select')).toHaveCount(0)
   await page.getByRole('textbox', { name: 'Message the assistant' }).fill('Hello')
   await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.locator('.global-chat-message.assistant').last()).toContainText('Demo assistant received: Hello.')
+  await expect(page.locator('.global-chat-message.assistant').last()).not.toBeEmpty()
+  await expect(page.locator('.global-chat-sources').last()).toBeVisible()
 })
 
 test('patient code is visible and can find the patient record', async ({ page, request }) => {
@@ -145,7 +162,10 @@ test('patient code is visible and can find the patient record', async ({ page, r
   const patientCode = page.locator('.patient-code').first()
   await expect(patientCode).toBeVisible()
   const code = (await patientCode.textContent())?.trim() ?? ''
-  expect(code).toMatch(/^PAT-\d{12}$/)
+  expect(code).toMatch(/^CARE-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/)
+  await page.locator('.patient-qr-button').first().click()
+  await expect(page.locator('#patient-qr-code svg')).toBeVisible()
+  await page.locator('.patient-qr-modal .patient-modal-actions .outline-btn').click()
   await page.getByPlaceholder(/Search by name or patient ID|البحث بالاسم أو رقم المريض/).fill(code)
   await expect(page.locator('.patient-table-row')).toHaveCount(1)
 })
@@ -186,7 +206,7 @@ test('demo patient opens the patient portal with its own record', async ({ page,
   await page.evaluate((portalToken) => localStorage.setItem('careos-portal-token', portalToken), token)
   await page.reload()
   await expect(page.getByText('Mariam Hassan')).toBeVisible()
-  await expect(page.locator('.portal-patient-id code')).toHaveText(/^PAT-\d{12}$/)
+  await expect(page.locator('.portal-patient-id code')).toHaveText(/^CARE-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/)
   const portalTabs = page.locator('.portal-tabs button')
   await expect(portalTabs).toHaveCount(4)
   await portalTabs.nth(1).click()
@@ -196,10 +216,10 @@ test('demo patient opens the patient portal with its own record', async ({ page,
   await portalTabs.nth(3).click()
   await expect(page.locator('.portal-section')).toBeVisible()
   const sidebar = page.getByRole('complementary')
-  await sidebar.getByRole('button', { name: 'Appointments' }).click()
+  await sidebar.getByRole('button', { name: /Appointments|المواعيد/ }).click()
   await expect(page).toHaveURL(/#app\/appointments$/)
-  await expect(page.locator('.portal-section .panel-heading h2')).toHaveText('Appointments')
-  await sidebar.getByRole('button', { name: 'Messages' }).click()
+  await expect(page.locator('.portal-section .panel-heading h2')).toHaveText(/Appointments|المواعيد/)
+  await sidebar.getByRole('button', { name: /Messages|الرسائل/ }).click()
   await expect(page).toHaveURL(/#app\/messages$/)
   await expect(page.locator('.portal-section form')).toBeVisible()
 })
@@ -214,8 +234,9 @@ test('staff users are redirected from the patient-only portal', async ({ page, r
   await expect(page.getByText('Authentication required')).toHaveCount(0)
 })
 
-test('demo clinician can open the patient-aware assistant', async ({ page }) => {
+test('clinical assistant clearly reports patient-data search is not enabled in the MVP', async ({ page }) => {
   await page.goto('/#app')
+  await page.getByRole('button', { name: 'Switch to English' }).click()
   await page.getByRole('button', { name: 'Sign in to your workspace' }).last().click()
   await page.getByRole('button', { name: 'Login as Doctor', exact: true }).click()
   await expect(page.locator('.app-shell')).toBeVisible()
@@ -223,10 +244,7 @@ test('demo clinician can open the patient-aware assistant', async ({ page }) => 
     window.history.pushState({}, '', '#app/assistant')
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
-  await expect(page.locator('select')).toHaveValue(/.+/)
-  await page.locator('textarea').fill('Summarize the current patient context')
-  await page.getByRole('button', { name: /Ask assistant|اسأل المساعد/ }).click()
-  await expect(page.locator('.assistant-answer')).toContainText(/Sandbox response|unavailable|not configured|غير متاح|غير مهيأ/i)
+  await expect(page.locator('.assistant-answer')).toContainText(/not enabled in this MVP|غير متاح في نسخة MVP/i)
 })
 
 test('operations dashboard excludes clinical and admin-only controls', async ({ page, request }) => {

@@ -69,34 +69,52 @@ export function ClinicalNotes({ t }: { t: Translator }) {
         setError(null);
         try {
           const uploaded = await uploadEncounterRecording(encounter.id, blob);
-          setStatus(t("transcribing"));
+          setStatus(t("transcriptionWaiting"));
           await transcribeRecording(uploaded.id);
           let nextTranscript = await getTranscript(uploaded.transcript_id);
-          for (
-            let attempt = 0;
+          let attempt = 0;
+          while (
             attempt < 12 &&
-            !["COMPLETED", "FAILED"].includes(nextTranscript.status);
-            attempt += 1
+            !["COMPLETED", "FAILED"].includes(nextTranscript.status)
           ) {
+            setStatus(
+              nextTranscript.job_status === "QUEUED"
+                ? t("transcriptionWaiting")
+                : nextTranscript.job_status === "RETRY"
+                  ? t("transcriptionRetrying")
+                  : t("transcribing"),
+            );
             await new Promise((resolve) => window.setTimeout(resolve, 1000));
             nextTranscript = await getTranscript(uploaded.transcript_id);
+            attempt += 1;
           }
           setTranscript(nextTranscript);
-          if (nextTranscript.status !== "COMPLETED")
-            throw new Error(
-              nextTranscript.error_code === "SPEECH_TO_TEXT_NOT_CONFIGURED"
-                ? "Speech-to-text service is not configured."
-                : "Transcription could not be completed.",
+          if (nextTranscript.status !== "COMPLETED") {
+            if (nextTranscript.status === "FAILED") {
+              const failureMessage =
+                nextTranscript.error_code === "SPEECH_TO_TEXT_NOT_CONFIGURED"
+                  ? t("speechToTextNotConfigured")
+                  : nextTranscript.error_code === "SPEECH_TO_TEXT_PROVIDER_ERROR"
+                    ? t("transcriptionProviderFailed")
+                    : t("transcriptionFailed");
+              setStatus(failureMessage);
+              setError(failureMessage);
+              return;
+            }
+            setStatus(
+              nextTranscript.job_status === "QUEUED"
+                ? t("transcriptionWorkerUnavailable")
+                : nextTranscript.job_status === "RETRY"
+                  ? t("transcriptionRetrying")
+                  : t("transcriptionStillProcessing"),
             );
+            return;
+          }
           setBody(nextTranscript.transcript_text || "");
           setStatus(t("transcriptReady"));
         } catch (reason: unknown) {
           setStatus(t("transcriptionFailed"));
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "Speech-to-text service is unavailable.",
-          );
+          setError(reason instanceof Error ? reason.message : t("transcriptionFailed"));
         }
       };
       recorder.current = next;

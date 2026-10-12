@@ -32,22 +32,28 @@ export function IntegrationHub() {
     status?.providers?.[key]?.configured ? "Configured" : fallback;
   const integrations: Integration[] = [
     {
-      name: "Clinical summary",
+      name: "Clinical drafting",
       adapter: "ClinicalSummaryProvider",
-      state: providerState("ai", "Not configured"),
-      next: "Configure an approved server-side LLM and evaluation dataset.",
+      state: providerState("ai", "Review mode only"),
+      next: "Use a server-side draft model with clinician sign-off before anything is added to the chart.",
     },
     {
-      name: "Clinical RAG",
-      adapter: "RagProvider",
-      state: "Not configured",
-      next: "Connect pgvector/Qdrant and an approved protocol library with page citations.",
+      name: "CareOS platform assistant",
+      adapter: "platform_knowledge + RagProvider.answer_general",
+      state: "Knowledge ready",
+      next: "Uses curated platform information only; it does not access patient records.",
     },
     {
-      name: "Document OCR",
-      adapter: "OcrProvider",
-      state: "Not configured",
-      next: "Connect an approved OCR vendor plus private object storage.",
+      name: "Encounter speech-to-text",
+      adapter: "SpeechToTextProvider",
+      state: providerState("speech_to_text", "Not configured"),
+      next: "Transcribes recorded encounter audio when a speech provider is configured; transcript review remains available.",
+    },
+    {
+      name: "AI agent actions",
+      adapter: "AgentActionProvider",
+      state: "Not enabled",
+      next: "No autonomous agent operations are active. Actions remain clinician-directed and auditable.",
     },
     {
       name: "Patient reminders",

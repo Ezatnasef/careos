@@ -1,7 +1,7 @@
 export type AppView =
   | "dashboard" | "patients" | "assistant" | "notes" | "documents"
   | "appointments" | "portal" | "analytics" | "messages" | "departments"
-  | "reports" | "settings" | "account" | "integrations" | "teamAudit";
+  | "reports" | "admin" | "files" | "staff" | "clinicOps" | "settings" | "account" | "integrations" | "teamAudit";
 
 export const appPath = (view: AppView): string => `#app/${view}`;
 
@@ -11,7 +11,7 @@ export function navigateToView(view: AppView): void {
 }
 
 export function viewFromLocation(): AppView {
-  const value = window.location.hash.replace(/^#app\/?/, "");
-  const allowed: AppView[] = ["dashboard", "patients", "assistant", "notes", "documents", "appointments", "portal", "analytics", "messages", "departments", "reports", "settings", "account", "integrations", "teamAudit"];
+  const value = window.location.hash.replace(/^#app\/?/, "").split("?")[0];
+  const allowed: AppView[] = ["dashboard", "patients", "assistant", "notes", "documents", "appointments", "portal", "analytics", "messages", "departments", "reports", "admin", "files", "staff", "clinicOps", "settings", "account", "integrations", "teamAudit"];
   return allowed.includes(value as AppView) ? value as AppView : "dashboard";
 }

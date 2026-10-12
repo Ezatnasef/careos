@@ -13,7 +13,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
@@ -120,7 +120,7 @@ async def current_user(credentials: HTTPAuthorizationCredentials | None = Depend
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     user_permissions = await permissions_for_user(session, user)
     expected_permissions = ROLE_PERMISSIONS.get(normalize_role(user.role), set())
-    if expected_permissions - user_permissions:
+    if expected_permissions != user_permissions:
         await provision_role_assignments(session, user)
         await session.commit()
         user_permissions = await permissions_for_user(session, user)
@@ -167,6 +167,16 @@ async def provision_role_assignments(session: AsyncSession, user: User) -> None:
             )
         ).all()
     )
+    revoked_permission_ids = assigned_permission_ids - {
+        permission.id for permission in existing_permissions.values()
+    }
+    if revoked_permission_ids:
+        await session.execute(
+            delete(RolePermission).where(
+                RolePermission.role_id == role.id,
+                RolePermission.permission_id.in_(revoked_permission_ids),
+            )
+        )
     session.add_all(
         RolePermission(role_id=role.id, permission_id=permission.id)
         for permission in existing_permissions.values()

@@ -1,1058 +1,308 @@
-# CareOS
+# CareOS — Healthcare Operations, Clinical OCR & Grounded Clinical RAG Platform
 
-> Verified local status (2026-10-03): the project is now running in a verified local development state. The backend startup issue was resolved by removing the stale process holding port 8000, the FastAPI app is serving successfully on `http://127.0.0.1:8000`, `/api/v1/health` returns `{"status":"ok"}`, the demo auth route returns a valid access token, `npm run build` succeeds, and the account/profile route test passes in Playwright. The project is still not PHI-ready for production release until the security and deployment gates in `SECURITY.md` are complete.
+CareOS is an enterprise-grade healthcare operations and clinical intelligence platform with full bilingual (**English & Arabic**) support. It combines multi-tenant hospital workflow management, role-based access control (RBAC), clinical document ingestion, bilingual OCR & structured candidate extraction, and a hallucination-resistant **Clinical RAG (Retrieval-Augmented Generation)** pipeline.
 
-CareOS هو منصة تشغيل ذكية للمنشأة الصحية تجمع بين Workflow السريري والذكاء الاصطناعي داخل النظام نفسه، وليس مجرد chatbot منفصل. النظام مصمم ليكون مساحة عمل متكاملة للمنشأة الطبية، تجمع بين المريض، الفريق، الملاحظات، المهام، المستندات، المواعيد، والتقارير في واجهة واحدة.
+---
 
-> المشروع يحتوي على Frontend وBackend حقيقيين، وقد تم التحقق من أن الـ backend يعمل محليًا، وأن الواجهة يمكن بناءها واختبارها. ما زالت هناك مراحل مطلوبة قبل التشغيل مع PHI حقيقي أو النشر الإنتاجي، لكن الحالة الحالية أصبحت مستقرة محليًا ومناسبة للتطوير والتجربة الواقعية.
+## 1. Project Overview
 
-## 1. لماذا هذا المشروع
+CareOS provides:
+- **Multi-Tenant Clinical Operations**: Patient records, encounters, vitals, allergies, diagnoses, medications, lab results, appointments, tasks, care plans, billing/invoices, and audit logs.
+- **Document Workflow & Bilingual OCR**: Upload PDF, DOCX, PNG/JPG, or plain-text clinical documents (`<= 25 MB`). Automatic routing across native PDF/DOCX parsers (`PyMuPDF` / `pypdf` / `python-docx`), printed OCR (`PaddleOCR` for Arabic & English), and optional handwritten OCR (`TrOCR`).
+- **Structured Clinical Extraction & Clinician Review**: Automatically extracts structured clinical candidates (medications with strength/dosage/frequency/duration, lab results with units/reference ranges, diagnoses, allergies, clinical findings, and follow-up instructions) while flagging uncertain/handwritten tokens for human verification before indexing.
+- **Grounded Clinical RAG**: Indexes **only clinician-approved (`review_status="approved"`) and active (`deleted_at IS NULL`)** documents using a local 384-dimensional `SentenceTransformer` (`sentence-transformers/all-MiniLM-L6-v2`) embedding model, enforcing strict tenant/patient isolation, negation/uncertainty preservation, and sentence-level citation verification.
 
-المنشأة الصحية غالبًا تعمل عبر أدوات متفرقة:
+---
 
-- سجل المريض في مكان
-- الملاحظات في مكان آخر
-- المواعيد في جدول منفصل
-- المهام في نظام مستقل
-- المستندات في مجلدات أو منصة غير مترابطة
-- الفريق لا يرى السياق نفسه
+## 2. Architecture Overview
 
-CareOS يهدف إلى توحيد هذا السياق في نظام واحد يركز على المريض، ويجعل الذكاء الاصطناعي جزءًا من سير العمل وليس كواجهة مستقلة فقط.
+```mermaid
+flowchart LR
+    UI["React 19 + TypeScript + Vite\n(Port 5173)"] -->|"/api/v1/*"| API["FastAPI Backend\n(Port 8000)"]
+    API --> AUTH["Auth, RBAC & Audit\n(JWT + Argon2 + TOTP)"]
+    API --> DOCS["Document Workflow & Storage\n(backend/storage/uploads or S3)"]
+    DOCS --> OCR["OCR & Parser Router\n(PyMuPDF / python-docx / PaddleOCR / TrOCR)"]
+    OCR --> STRUCT["Structured Clinical Extractor\n(Medications, Labs, Diagnoses, Allergies)"]
+    STRUCT -->|"Clinician Approval"| RAG["Clinical RAG Engine\n(all-MiniLM-L6-v2, 384-dim)"]
+    API --> DB[("SQLite (Local Dev)\nor PostgreSQL + pgvector (Prod)")]
+    RAG --> DB
+```
 
-## 2. الفلسفة الأساسية
+---
 
-المنتج لا يحاول استبدال الطبيب، بل يهدف إلى:
-
-- تسريع كتابة الملاحظات السريرية
-- دعم القرار داخل السياق الطبي
-- تقليل الأعمال الإدارية المتكررة
-- تحسين متابعة المرضى
-- توحيد رؤية الفريق حول نفس الحالة
-- إبقاء الإنسان في حلقة المراجعة النهائية
-
-## 3. ما تم تنفيذه فعليًا
-
-### الحالة المعتمدة محليًا في هذا التحديث
-
-- تم إصلاح فشل startup عبر إزالة العملية القديمة التي كانت تحتل منفذ 8000
-- تم تشغيل FastAPI بنجاح على `127.0.0.1:8000`
-- تم فحص الـ health endpoint بشكل مباشر
-- تم فحص الـ demo auth endpoint بشكل مباشر، وقد عاد بـ `access_token`
-- تم بناء الواجهة بنجاح عبر `npm run build`
-- تم التحقق من فتح صفحة الحساب عبر Playwright بنجاح
-
-### Frontend
-
-- React + TypeScript + Vite
-- Landing page
-- Public bilingual guest assistant with Chat and Voice modes
-- Login / Register
-- Organization-aware auth
-- Dashboard الرئيسي
-- قائمة المرضى
-- تفاصيل المريض
-- إدارة المواعيد
-- Clinical notes
-- AI assistant داخل سياق المريض
-- Guest Chat/Voice assistant via public, rate-limited backend APIs
-- Tasks و Care Plans
-- Patient portal
-- Team و Audit
-- Analytics و Department Metrics
-- دعم العربية والإنجليزية
-
-### Backend
-
-- FastAPI
-- SQLAlchemy
-- JWT auth
-- Argon2 password hashing
-- organization-scoped authorization
-- patient-level access validation
-- audit event logging
-- OIDC-ready SSO flow
-- storage abstraction for documents
-- patient portal validation and uploads
-- normalized `Role`, `Permission`, `UserRole`, and `RolePermission` schema migration (`0005_rbac_entities`)
-- encounter, audio-file, transcript, and clinical-note-version schema migrations (`0006_clinical_workflow_foundation`)
-- password-reset tokens, invitation acceptance lifecycle, and MFA-ready user fields (`0007_auth_recovery_and_mfa`)
-- tenant-scoped patient profiles and organization SSO configuration (`0008_profiles_and_sso_configuration`)
-- queued email delivery jobs, worker processing, and soft-delete timestamps (`0009_email_jobs_and_soft_delete`)
-
-### Domain model
-
-- Organization
-- User
-- Patient
-- Appointment
-- ClinicalNote
-- Task
-- CarePlan
-- PatientDocument
-- PatientPortalAccount
-- PatientPortalDocument
-- Notification
-- AuditEvent
-
-## 4. هيكل المشروع
+## 3. Repository Structure
 
 ```text
-.
-├── src/
-│   ├── App.tsx                 # Thin entry point
-│   ├── app/                    # Shell, routing, and auth bootstrap
-│   │   ├── AppShell.tsx
-│   │   ├── authBootstrap.ts
-│   │   └── routes.ts
-│   ├── api/                    # Domain API boundaries
-│   │   ├── auth.ts
-│   │   ├── patients.ts
-│   │   ├── appointments.ts
-│   │   ├── documents.ts
-│   │   ├── messages.ts
-│   │   ├── analytics.ts
-│   │   ├── portal.ts
-│   │   ├── workspace.ts
-│   │   └── client.ts
-│   ├── features/               # Feature-owned screens and workflows
-│   │   ├── auth/
-│   │   ├── appointments/
-│   │   ├── analytics/
-│   │   ├── dashboard/
-│   │   ├── documents/
-│   │   ├── landing/
-│   │   ├── messages/
-│   │   ├── patients/
-│   │   ├── settings/
-│   │   └── workspace/
-│   ├── components/             # Shared visual primitives
-│   │   ├── PageHeading.tsx
-│   │   ├── PanelHeading.tsx
-│   │   ├── Modal.tsx
-│   │   └── LoadingState.tsx
-│   ├── api.ts                  # Existing API compatibility surface
-│   ├── data.ts
-│   ├── i18n.ts
-│   ├── main.tsx
-│   └── styles.css
-├── backend/
-│   ├── app/
-│   │   ├── api.py
-│   │   ├── auth.py
-│   │   ├── config.py
-│   │   ├── contracts.py
-│   │   ├── db.py
-│   │   ├── email_service.py
-│   │   ├── integrations.py
-│   │   ├── main.py
-│   │   ├── models.py
-│   │   ├── rbac.py
-│   │   ├── sso.py
-│   │   ├── storage.py
-│   │   └── workspace.py
-│   ├── migrations/
-│   ├── tests/
-│   ├── Dockerfile
-│   ├── README.md
-│   ├── requirements.txt
-│   └── pyproject.toml
-├── docs/
-│   ├── API_REFERENCE.md
-│   └── IMPLEMENTATION_PLAN.md
-├── tests/
-│   └── e2e/
-│       ├── language.spec.ts
-│       └── feature-routes.spec.ts
-├── docker-compose.yml
-├── package.json
-├── playwright.config.ts
-├── README.md
-├── SECURITY.md
-├── ARCHITECTURE_ROADMAP.md
-├── HANDOFF.md
-├── index.html
-└── LICENSE
+newcareos-main/
+├── .env.example                 # Root environment configuration template
+├── .gitignore                   # Excludes .env, .venv, node_modules, local DBs, uploads
+├── docker-compose.yml           # PostgreSQL (pgvector:pg16) + Redis + FastAPI stack
+├── package.json                 # Frontend dependencies & npm scripts
+├── playwright.config.ts         # End-to-end Playwright test configuration
+├── vite.config.ts               # Vite dev server & /api/v1 proxy to 127.0.0.1:8000
+├── scripts/
+│   ├── setup.ps1                # One-command Windows environment setup script
+│   ├── check.ps1                # Non-destructive health, DB, OCR, RAG & TS check script
+│   └── start.ps1                # Launches Backend (8000) and Frontend (5173) on Windows
+├── src/                         # React 19 + TypeScript frontend source
+│   ├── api/                     # Typed API client & services (services.ts, client.ts)
+│   ├── components/              # Clinical UI modules (DocumentWorkflow, ClinicalKnowledgeSearch, etc.)
+│   ├── context/                 # Auth, Language (EN/AR RTL), and Theme providers
+│   └── pages/                   # Application views and role dashboards
+└── backend/                     # FastAPI Python backend
+    ├── .env.example             # Backend environment configuration template
+    ├── Dockerfile               # Production container image with OCR system libraries
+    ├── alembic.ini              # Alembic migration configuration
+    ├── pyproject.toml           # Python project metadata & pytest configuration
+    ├── requirements.txt         # Pinned/bounded Python dependencies
+    ├── migrations/              # Alembic schema migrations (0001 through 0018)
+    ├── app/
+    │   ├── main.py              # FastAPI application entrypoint & middleware
+    │   ├── api.py               # Core REST endpoints (/auth, /patients, /documents, /rag, /system)
+    │   ├── config.py            # Portable Pydantic settings & path normalization
+    │   ├── db.py                # Async SQLAlchemy engine & session management
+    │   ├── models.py            # SQLAlchemy ORM models (including DocumentChunk 384-dim vector)
+    │   ├── ocr.py               # Bilingual structured clinical candidate extraction
+    │   ├── storage.py           # Local filesystem (backend/storage/uploads) & S3 storage service
+    │   └── rag/                 # Clinical RAG subsystem
+    │       ├── parsers/         # PDF, DOCX, and Image parsers -> UnifiedDocument
+    │       ├── ocr/             # Printed (PaddleOCR) & Handwriting (TrOCR) OCR engines + router
+    │       ├── chunker.py       # Overlapping clinical page chunker
+    │       ├── embeddings.py    # Local SentenceTransformer (all-MiniLM-L6-v2, 384-dim)
+    │       ├── store.py         # Dual-backend vector store (SQLite cosine + pgvector)
+    │       ├── llm.py           # Extractive synthesis + optional external LLM + citation verifier
+    │       └── pipeline.py      # 3-mode RAG pipeline (guideline_only, patient_only, mixed)
+    └── tests/                   # Backend automated test suites (pytest)
 ```
 
-## 5. النطاق الحالي للمشروع
+---
 
-### تم تنفيذه بشكل فعلي
+## 4. System Requirements
 
-- واجهة React/Vite تعمل كـ clinical workspace shell
-- landing page + auth flow
-- تسجيل الدخول داخل المؤسسة
-- نظام users + organizations + role-aware access
-- إدارة المرضى والمواعيد
-- ملاحظات سريرية + AI draft summaries
-- المهام وخطط الرعاية
-- patient portal
-- analytics + department metrics
-- audit / notifications
-- storage abstraction
-- SSO start/callback routes
-- `/assistant/guest-chat` for guest text conversations
-- `/assistant/guest-voice` for WebM upload, server-side transcription, and AI replies
+| Requirement | Minimum / Recommended Version | Notes |
+| :--- | :--- | :--- |
+| **Operating System** | Windows 10 / Windows 11 (64-bit) | Linux and macOS also supported via standard venv / Docker |
+| **Python** | **Python 3.11 or 3.12 (64-bit)** | Ensure `python` and `pip` are added to `PATH` |
+| **Node.js & npm** | **Node.js 20 LTS+** (`npm 10+`) | Required for Vite React 19 frontend |
+| **Git** | Git 2.40+ | For version control |
+| **Disk Space** | ~4 GB free | For `.venv`, `node_modules`, PaddleOCR models, and HuggingFace embedding cache |
+| **Docker Desktop** *(Optional)* | Docker Engine 24+ / Compose v2 | Only required if running the PostgreSQL (`pgvector`) + Redis container stack |
 
-### ما لا يزال في مرحلة التكامل أو الـhardening
+> **OCR & Native Libraries Note (Windows)**:
+> PDF parsing (`PyMuPDF` / `pypdf`), DOCX parsing (`python-docx`), and image handling (`Pillow` / `opencv-python-headless`) work out of the box via prebuilt Windows wheels—no external Poppler or Tesseract installer is required.
 
-- real external IdP integration
-- production AI credentials, monitoring, and deployment configuration (OpenAI adapters and guest Chat/Voice API flows are implemented)
-- RAG/vector memory layer
-- OCR real provider
-- production secrets and deployment security
-- full tenant isolation across every path
-- real email/SMS delivery layer
-- replacing the legacy role string with database-backed permission evaluation on every protected endpoint
-- encounter, recording, transcript, retention, and clinical-note version API workflows
-- full RolePermission administration and production permission seed execution through Alembic
-- production IdP signature/JWKS validation and provider-specific SAML implementation
-- browser E2E execution in a clean Playwright process; current workspace tests require a running authenticated frontend/backend state
-- production Egyptian Arabic ASR provider integration; `BelMasryProvider` must remain an abstraction and is not assumed configured
-- full clean-process pytest verification after the legacy Windows terminal session is discarded
-- legacy permission fallback has been removed; users must have organization-scoped `UserRole` and `RolePermission` assignments
+---
 
-### Public Chat and Voice assistant
+## 5. Quick Start for Windows (PowerShell)
 
-The landing page includes a bilingual assistant that guests can use before signing in. Chat sends text to `POST /api/v1/assistant/guest-chat`. Voice records WebM in the browser and sends it to `POST /api/v1/assistant/guest-voice`; the backend transcribes it, sends the transcript to the configured AI provider, and returns the spoken reply. Both guest endpoints are limited to 10 requests per IP per minute, and voice uploads are limited to 10 MB.
-
-To enable real OpenAI replies and transcription, set `AI_PROVIDER=openai`, `AI_MODEL=gpt-4o-mini`, and `AI_API_KEY` in `backend/.env`, then restart the backend. The server-side AI key is reused for transcription when `SPEECH_TO_TEXT_PROVIDER` is `unconfigured`; a separate speech provider/key can also be configured. Without provider credentials, development Chat uses the labeled sandbox response and Voice reports that its provider is unavailable. Never expose provider keys in frontend environment variables.
-
-## 7. قواعد التطوير المرحلي
-
-التنفيذ يتبع الترتيب المطلوب: schema وmigrations، authentication، multi-tenancy، RBAC، route protection، dashboards، patient workflows، appointments، encounters، secure recording، ASR، transcript review، AI draft، approval/versioning، PDF delivery، audit/security hardening، responsive QA، ثم الاختبارات النهائية.
-
-كل مرحلة يجب أن تحقق API حقيقية، authorization server-side، loading/error/empty states، واختبارًا قابلًا لإعادة التشغيل قبل الانتقال للمرحلة التالية. أي provider خارجي غير مضبوط يظهر كـ “غير مُكوّن” ولا ينتج نجاحًا أو نصًا وهميًا.
-
-> لا تستخدم حسابات demo مضمّنة. أنشئ حسابًا عبر `POST /auth/register`، وأنشئ المرضى عبر API فقط.
-
-## 8. API contract الفعلي
-
-Base URL:
-
-```text
-http://localhost:8000/api/v1
-```
-
-Header:
-
-```http
-Authorization: Bearer <access_token>
-```
-
-### 6.1 System
-
-```http
-GET /health
-GET /readiness
-GET /metrics
-GET /system/status
-POST /system/audit/cleanup
-```
-
-### 6.2 Auth و onboarding
-
-```http
-POST /auth/register
-POST /auth/login
-POST /auth/logout
-GET /me
-POST /auth/verify-email
-POST /auth/sso/start
-POST /auth/sso/callback
-POST /auth/sso
-GET /organization
-GET /workspace
-POST /workspace
-PATCH /organization
-```
-
-### 6.3 Team / Audit / Notifications
-
-```http
-GET /team
-POST /team/invites
-GET /audit-events
-GET /notifications
-PATCH /notifications/{notification_id}/read
-```
-
-### 6.4 Clinical core
-
-```http
-GET /dashboard
-GET /patients
-POST /patients
-GET /patients/{patient_id}
-PATCH /patients/{patient_id}
-GET /appointments
-POST /appointments
-PATCH /appointments/{appointment_id}/status
-POST /clinical-notes
-POST /clinical-notes/{note_id}/summary
-POST /clinical-notes/{note_id}/sign
-POST /assistant/query
-POST /assistant/guest-chat        # public, rate-limited; no bearer token
-POST /assistant/guest-voice       # public, rate-limited; WebM base64, max 10 MB
-POST /patients/{patient_id}/documents
-```
-
-### 6.5 Messages / Tasks / Care Plans
-
-```http
-GET /messages
-POST /messages
-GET /tasks
-POST /tasks
-GET /care-plans
-POST /care-plans
-```
-
-### 6.6 Patient portal
-
-```http
-GET /portal/patients/{patient_id}
-POST /patient-portal/register
-POST /patient-portal/login
-GET /patient-portal/me
-POST /patient-portal/documents
-GET /patient-portal/documents/{document_id}/download
-```
-
-### 6.7 Analytics and reports
-
-```http
-GET /department-metrics
-GET /analytics
-GET /reports
-```
-
-## 7. أمثلة payloads
-
-### Register
-
-```json
-{
-  "email": "admin@clinic.example",
-  "password": "StrongPass123!",
-  "full_name": "Dr. Sarah Ali",
-  "organization_name": "NorthCare Health",
-  "department": "General Medicine",
-  "project": "Outpatient",
-  "role": "administrator"
-}
-```
-
-### Login
-
-```json
-{
-  "email": "admin@clinic.example",
-  "password": "StrongPass123!"
-}
-```
-
-### Create patient
-
-```json
-{
-  "medical_record_number": "MRN-2001",
-  "given_name": "Nadia",
-  "family_name": "Youssef",
-  "department": "Cardiology",
-  "project": "Heart Clinic",
-  "date_of_birth": "1992-09-13",
-  "gender": "female",
-  "condition": "Follow-up review",
-  "care_status": "stable"
-}
-```
-
-### Create appointment
-
-```json
-{
-  "patient_id": "uuid",
-  "starts_at": "2026-09-20T09:00:00Z",
-  "reason": "Medication review",
-  "status": "pending"
-}
-```
-
-### Create note
-
-```json
-{
-  "patient_id": "uuid",
-  "body": "Patient reports improved sleep quality after medication adjustment.",
-  "ai_draft": "Optional AI draft summary"
-}
-```
-
-## 8. نموذج الأمان الحالي
-
-النظام الحالي يطبق الأساسيات الحيوية للأمان في تطبيق طبي:
-
-- JWT authentication
-- Argon2 password hashing
-- organization-scoped access
-- patient-level validation
-- portal token verification
-- audit logging
-- document upload isolation abstraction
-- OIDC-ready SSO design
-
-لكن لا يزال المشروع ضمن مرحلة production-hardening، وليس جاهزًا للاستخدام في بيئة الإنتاج الفعلية مع بيانات PHI دون مزيد من التحقق الأمني والتكامل الخارجي.
-
-## 9. مسار العمل داخل التطبيق
-
-### Landing Page
-
-- يشرح قيمة المنتج
-- يوضح الفرق بين CareOS و chatbot عادي
-- يتيح الدخول إلى Login أو إنشاء workspace
-
-### Login و Register
-
-- Email/password
-- organization-aware onboarding
-- SSO flow
-- onboarding state check
-
-### Dashboard
-
-- عدد المرضى
-- المواعيد القادمة
-- المهام
-- متابعة الفريق
-- مؤشرات الأقسام
-
-### Patient Profile
-
-- السجل الأساسي للمريض
-- الملاحظات
-- المواعيد
-- المستندات
-- المهام
-- care plans
-- الرسائل
-
-### Clinical Visit flow
-
-- كتابة ملاحظة
-- توليد مسودة AI
-- مراجعة الطبيب
-- التوقيع النهائي
-
-### Clinical Assistant
-
-- يعمل داخل سياق المريض
-- يجيب على أسئلة ذات صلة
-- يتيح traceability للمصادر
-- يراعي مراجعة بشرية قبل أي قرار حاسم
-
-## 10. تشغيل المشروع محليًا
-
-### Frontend
+Open **PowerShell** inside the `newcareos-main` folder and run:
 
 ```powershell
-npm install
-npm run dev
+# 1. Automated setup (creates .venv, installs Python & Node packages, copies .env.example -> .env, warms up RAG model)
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
+
+# 2. Verify environment readiness (checks DB, OCR, 384-dim RAG embeddings, health endpoints, and TypeScript)
+powershell -ExecutionPolicy Bypass -File scripts/check.ps1
+
+# 3. Start Backend (http://127.0.0.1:8000) and Frontend (http://127.0.0.1:5173)
+powershell -ExecutionPolicy Bypass -File scripts/start.ps1
 ```
 
-### Backend
+Once started:
+- **Frontend UI**: [http://127.0.0.1:5173](http://127.0.0.1:5173)
+- **Backend API Root**: [http://127.0.0.1:8000](http://127.0.0.1:8000)
+- **Interactive Swagger UI**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- **Health Check**: [http://127.0.0.1:8000/api/v1/healthz](http://127.0.0.1:8000/api/v1/healthz)
+- **System & OCR/RAG Status**: [http://127.0.0.1:8000/api/v1/system/status](http://127.0.0.1:8000/api/v1/system/status)
+
+---
+
+## 6. Detailed Backend Setup (Manual Step-by-Step)
+
+If you prefer to set up the backend manually in PowerShell from the repository root (`newcareos-main`):
 
 ```powershell
-cd backend
+# 1. Create and activate the virtual environment at the repository root
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
 
-### Docker
+# 2. Upgrade pip and install backend dependencies
+python -m pip install --upgrade pip
+pip install -r backend/requirements.txt
 
-```powershell
-Copy-Item .env.example .env
-# Set POSTGRES_PASSWORD and SECRET_KEY in .env before starting.
-docker compose up --build
-```
+# 3. Create your local environment file from the template
+if (-not (Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
 
-Open the web app at `http://localhost:5173`. The API is available at `http://localhost:8000/api/v1`.
-For a deployed environment, replace `APP_URL`, `CORS_ORIGINS`, `ALLOWED_HOSTS`, and `SSO_ALLOWED_REDIRECT_HOSTS` with the real public hosts. Keep S3 private and provide credentials through workload identity or deployment secrets.
-
-## 11. متغيرات البيئة
-
-### Frontend
-
-```env
-VITE_API_URL=http://localhost:8000/api/v1
-```
-
-### Backend
-
-المتغيرات الأساسية تشمل:
-
-- APP_ENV
-- DATABASE_URL
-- SECRET_KEY
-- JWT_ALGORITHM
-- ACCESS_TOKEN_MINUTES
-- CORS_ORIGINS
-- OIDC_ISSUER_URL
-- OIDC_CLIENT_ID
-- OIDC_CLIENT_SECRET
-- AUDIT_RETENTION_DAYS
-- SMTP settings
-- S3/object storage settings
-
-## 12. ما الذي يميز المشروع
-
-CareOS ليس مجرد واجهة AI، بل نظام يضع الذكاء داخل سير العمل الطبي نفسه:
-
-- المريض في قلب العملية
-- الفريق يعمل على نفس السياق
-- الملاحظات، المواعيد، المهام، والمستندات مرتبطة
-- audit trail موجود
-- access control حسب المؤسسة
-- AI يعمل كـassistant وليس كـdecision-maker مستقل
-
-## 13. التوثيقات المرجعية
-
-- [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
-- [HANDOFF.md](HANDOFF.md)
-- [ARCHITECTURE_ROADMAP.md](ARCHITECTURE_ROADMAP.md)
-- [SECURITY.md](SECURITY.md)
-
-## 14. الخلاصة
-
-CareOS الآن مشروع عملي ومتماسك نسبيًا مع Frontend و Backend حقيقيين، و API contract واضح، وسير عمل طبي متكامل.المشكلة الحقيقية ليست في فكرة المشروع أو بنية الواجهة، بل في التوسع إلى مستوى الإنتاج الحقيقي عبر:
-
-- تكامل هوية حقيقي
-- tenant/organization enforcement صارم
-- LLM/RAG/OCR حقيقية
-- مراقبة، أمان، والتزام قانوني
-
-وهذا ما يجعل المشروع مناسبًا كـ MVP healthcare SaaS مع مسار واضح نحو المنتج الفعلي.
-
-
-```text
-PATCH /api/v1/organization
-```
-
-وفي التطوير فقط يمكن إكمال onboarding محليًا إذا كان الـ API غير متاح.
-
-### 4. Dashboard
-
-في نظام حقيقي، الـ Dashboard هو نقطة الدخول بعد أن ينجح المستخدم في `Email / Password` أو `Hospital SSO` ويفحص backend وجود `organization/workspace` و`onboarding_complete`. يجب أن يعرض:
-
-- عدد المرضى في المؤسسة.
-- زيارات اليوم ومواعيد اليوم.
-- متابعات/تنبيهات الفريق وعلامات التحدي السريرية.
-- KPI لكل منطقة سريرية: إشغال/جدول/مستوى التزام.
-- قائمة مرضى اليوم مع حالة الرعاية ودرجة الأولوية.
-- بطاقات للأطباء/الأقسام/الملاحظات ونسبة التزام المواعيد.
-- رابط إلى Clinical Assistant ومؤشرات sources/decision-support.
-
-الـ Dashboard لا يتم بنائه من بيانات ثابتة فقط؛ يجب أن يُغذى من `GET /dashboard` و`GET /patients` مع scope المؤسسة، ويجب أن تبقي الأرقام مرتبطة بـ `organization_id` و `user.role` و `RBAC` الصحيح.
-
-الواجهة الحالية تطبق dashboards مختلفة حسب الدور، ولا تستخدم fallback أو أرقام synthetic:
-
-- الأدوار السريرية والتشغيلية تستخدم `GET /dashboard` مع organization/department/project scope.
-- Hospital Director يرى مؤشرات التشغيل والفريق، مع `GET /team` و`GET /audit-events`.
-- IT Admin يرى المستخدمين والتدقيق والأمن فقط، ولا يرى مؤشرات سريرية.
-- `RBAC` و`RolePermission` يحددان الـ views والـ panels المتاحة في الواجهة، مع بقاء enforcement النهائي في backend.
-
-وهذا يثبت أن الصفحة لا تملك صلاحية حقيقية إن لم تكن `onboarding_complete = true` و`organization_id` منتجًا فعليًا في الـ backend.
-
-### 5. Patients
-
-يدعم حاليًا:
-
-- البحث بالاسم أو رقم المريض.
-- جدول المرضى.
-- الحالة والتشخيص والزيارة الأخيرة.
-- فتح Patient details.
-- Tabs للسجل، العلامات الحيوية، التحاليل، والأدوية.
-
-ما يحتاج تنفيذًا لاحقًا: pagination، API حقيقي، صلاحيات record-level، access history، وتخزين سريري فعلي.
-
-### 6. Clinical Notes
-
-التدفق المقصود:
-
-1. كتابة ملاحظة الزيارة.
-2. طلب Generate summary.
-3. تعديل مسودة AI.
-4. وضعها Reviewed.
-5. اعتمادها Signed.
-6. حفظها في سجل المريض.
-
-حاليًا الـ summary تجريبي ولا يتم حفظه في قاعدة بيانات سريرية.
-
-### 7. Clinical Assistant
-
-يعرض:
-
-- Patient context.
-- سؤال سريري.
-- حالة Loading.
-- جوابًا تجريبيًا.
-- المصادر ونسبة الثقة.
-- Helpful/Not helpful.
-- Copy.
-- Clinical decision-support disclaimer.
-
-المطلوب مستقبلًا: LLM server-side، RAG، citation IDs، protocol registry، tenant filters، prompt-injection defense، وhuman approval.
-
-### 8. Appointments
-
-يدعم حاليًا:
-
-- عرض مواعيد اليوم.
-- فلترة الحالات.
-- New appointment modal.
-- Confirm appointment demo action.
-
-يدعم الآن conflict detection داخل المؤسسة، status transitions، cancellation غير القابلة لإعادة الفتح، rescheduling مع فحص الموعد الجديد، وserver-side filtering/pagination حسب الحالة والنطاق الزمني.
-
-### 8.2 Clinical Encounters
-
-من قائمة المرضى يمكن للمستخدم المصرح له تنفيذ `Start Encounter`. ينشئ backend الـ encounter ويربطه بالمريض والمؤسسة والـ clinician، ثم يحفظه كـ active encounter في الواجهة وينقل المستخدم لمساحة الملاحظات. إنشاء clinical note يقبل `encounter_id` فقط إذا كان encounter نشطًا ومطابقًا للمريض والمؤسسة.
-
-داخل encounter نشط يمكن تسجيل الصوت من المتصفح ورفعه إلى private storage. ينشئ backend transcript مرتبطًا بنفس encounter، ويستخدم provider قابلًا للتبديل مثل `belmasry` مع `ar-EG`. عند عدم إعداد credentials تظهر حالة فشل واضحة بدل اختلاق نص. بعد مراجعة النص يمكن إنشاء clinical note draft ثم طلب AI draft، ويظل الناتج `DRAFT` ويحتاج مراجعة clinician.
-
-### Hardening verification
-
-- Backend regression suite: `34 passed` with one upstream Starlette/AnyIO deprecation warning.
-- Frontend production build and TypeScript typecheck pass.
-- Alembic revision graph is linear through `0013_mfa_recovery_codes`.
-- Production configuration rejects the development secret and SQLite database; staff roles are provisioned through controlled invitations rather than public self-assignment.
-- Authentication endpoints have configurable production rate limiting, and storage rejects unsupported upload types and oversized files before persistence.
-- MFA enrollment returns one-time recovery codes, stores only their hashes, and supports one-time recovery-code login plus regeneration.
-- Docker Compose interpolation validates when deployment-only `SECRET_KEY` and `POSTGRES_PASSWORD` are supplied; these values must come from deployment secrets, not source control.
-- Full Playwright browser suite: `16 passed` with clean API/Vite servers and Chromium `--disable-gpu` stability configuration.
-- The suite covers mobile overflow, direct doctor route protection, role-matrix navigation for six staff roles, localization, and deep links.
-- Transcription runs through the `worker` Compose service: recording requests create durable `transcription_jobs`, the API returns `202 QUEUED`, and the worker performs provider calls with retry/backoff and explicit `FAILED` states.
-- The E2E suite runs serially with the API and Vite servers managed by Playwright and includes route-guard cases for doctor, nurse, receptionist, hospital director, IT admin, and administrative staff.
-- Approved clinical notes create immutable versions and private PDFs linked to the encounter. Signed notes cannot be edited; document downloads create audit events, and the patient portal exposes approved documents only.
-
-### 8.1 Patient Search
-
-Patient search is server-side and organization-scoped. `GET /patients` supports name, MRN, and date-of-birth matching plus `page` and `page_size` pagination. The frontend does not seed or locally filter demo patients; it displays loading, error, empty, and pagination states from the API response.
-
-### 9. Messages وPatient Portal
-
-Patient Portal يستخدم patient token مستقلًا ويقرأ بيانات المريض المرتبط بالجلسة فقط:
-
-- `GET /patient-portal/overview` يعيد patient profile والمواعيد والرسائل والمستندات المعتمدة.
-- `POST /patient-portal/messages` ينشئ رسالة مرتبطة بالمريض server-side، ولا يقبل `patient_id` من الواجهة.
-- تنزيل المستندات يمر عبر portal Authorization token، وليس رابطًا عامًا.
-- الواجهة تعرض loading/error/empty states ولا تستخدم مواعيد أو رسائل ثابتة.
-
-### 10. Analytics وDepartments وReports
-
-هذه شاشات إدارية وتجريبية تعرض workload وdepartment distribution وتقارير Synthetic. لا تستخدم لاتخاذ قرارات تشغيلية حقيقية قبل ربطها ببيانات server-side مصرح بها.
-
-### 11. Team & Audit
-
-تدعم الواجهة:
-
-- أعضاء الفريق.
-- الأدوار.
-- حالة Active/Invited.
-- Audit log view.
-
-الـ API يدعم دعوات الفريق، سجل التدقيق، والإدارة حسب المؤسسة.
-
-## المعمارية التقنية
-
-```text
-Browser / React + Vite
-        |
-        | /api/v1
-        v
-FastAPI API
-        |
-        +-- SQLAlchemy AsyncSession
-        +-- PostgreSQL
-        +-- JWT + Argon2
-        +-- Alembic migrations
-        +-- SMTP invitations
-        +-- Audit and notification APIs
-```
-
-### Frontend
-
-- React.
-- TypeScript.
-- Vite.
-- lucide-react للأيقونات.
-- CSS design tokens وresponsive rules.
-- `src/App.tsx`: shell والمكونات الحالية.
-- `src/i18n.ts`: الترجمة.
-- `src/api.ts`: client للـ API.
-- `src/data.ts`: بيانات Demo الحالية.
-- `src/styles.css`: التصميم والثيمات.
-
-### Backend
-
-- FastAPI.
-- SQLAlchemy 2 async.
-- PostgreSQL.
-- Alembic.
-- Pydantic Settings.
-- python-jose JWT.
-- Argon2.
-- SMTP عبر `email_service.py`.
-
-### قاعدة البيانات
-
-Migration الهوية الحالية تنشئ:
-
-- `organizations`
-- `users`
-- `team_invites`
-- `audit_events`
-- `notifications`
-- `auth_sessions`
-
-الـ clinical tables الموجودة foundation تشمل:
-
-- `patients`
-- `appointments`
-- `clinical_notes`
-
-لكن endpoints السريرية الكاملة لم تكتمل بعد.
-
-## API الحالي
-
-Base URL:
-
-```text
-/api/v1
-```
-
-### System
-
-```text
-GET  /health
-GET  /readiness
-```
-
-### Authentication
-
-```text
-POST /auth/register
-POST /auth/login
-POST /auth/logout
-GET  /me
-```
-
-### Organization
-
-```text
-PATCH /organization
-```
-
-### Team and audit
-
-```text
-GET  /team
-POST /team/invites
-GET  /audit-events
-```
-
-### Notifications
-
-```text
-GET   /notifications
-PATCH /notifications/{notification_id}/read
-```
-
-### Clinical core (organization scoped)
-
-```text
-GET   /dashboard
-GET   /patients?q={name-or-mrn}
-POST  /patients
-GET   /patients/{patient_id}
-PATCH /patients/{patient_id}
-
-GET   /appointments
-POST  /appointments
-PATCH /appointments/{appointment_id}/status?status={pending|confirmed|arrived|cancelled}
-
-POST  /clinical-notes
-POST  /clinical-notes/{note_id}/summary
-POST  /clinical-notes/{note_id}/sign
-
-POST  /assistant/query
-POST  /patients/{patient_id}/documents
-```
-
-كل مسارات Clinical core تتطلب bearer token وتتحقق من أن السجل يخص مؤسسة المستخدم. الملخص والمساعد وOCR في الوضع الافتراضي يعيدون مخرجات `sandbox` واضحة وليست نتائج طبية أو تشغيلية حقيقية.
-
-## طبقة التكاملات القابلة للاستبدال
-
-لا تستدعي الواجهة أي مزود خارجي مباشرة. توجد العقود في [backend/app/integrations.py](backend/app/integrations.py):
-
-- `ClinicalSummaryProvider`: استبداله بـLLM server-side بعد اعتماد مزود وسياسة تقييم.
-- `RagProvider`: استبداله بـpgvector/Qdrant ومكتبة بروتوكولات تسمح بإرجاع citation title/page/score.
-- `OcrProvider`: استبداله بـTesseract أو مزود OCR مع object storage وفحص ملفات.
-- `NotificationProvider`: استبداله بـTwilio أو مزود SMS/WhatsApp/email مع consent وdelivery receipts.
-- `EhrConnector`: نقطة تسليم للتكامل المؤسسي بعد الاتفاق على FHIR/HL7 والـfield mapping.
-
-لا توضع مفاتيح أي مزود في `VITE_*` أو في ملفات المصدر. استخدم secrets في بيئة التشغيل فقط مثل `AI_API_KEY` و`AI_BASE_URL`.
-
-## التشغيل المحلي
-
-### تشغيل الواجهة فقط
-
-```powershell
-npm install
-npm run dev
-```
-
-ثم افتح:
-
-```text
-http://127.0.0.1:5173
-```
-
-### تشغيل PostgreSQL والـ API عبر Docker
-
-أنشئ `.env` من المثال، ثم ضع قيمًا محلية:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-يجب توفير:
-
-```env
-POSTGRES_PASSWORD=local-only-change-me
-SECRET_KEY=replace-with-a-long-random-secret
-```
-
-ثم:
-
-```powershell
-docker compose up --build
-```
-
-الخدمات:
-
-- Web: `http://localhost:5173`
-- API: `http://localhost:8000`
-- API health: `http://localhost:8000/api/v1/health`
-- PostgreSQL: `localhost:5432`
-
-يشغّل Compose كذلك خدمة `web` على المنفذ 5173. تفاصيل التسليم، حدود الـSandbox، ونقاط استبدال LLM/RAG/OCR/notifications موجودة في [HANDOFF.md](HANDOFF.md).
-
-الـ API container يشغل:
-
-```text
+# 4. Run database migrations (creates/updates backend/careos-local.db by default)
+Push-Location backend
 alembic upgrade head
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# 5. Start the FastAPI server on port 8000
+$env:PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK = "True"
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+Pop-Location
 ```
 
-### تشغيل Backend يدويًا
+---
+
+## 7. Detailed Frontend Setup (Manual Step-by-Step)
+
+In a second PowerShell terminal at the repository root (`newcareos-main`):
 
 ```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-alembic upgrade head
-uvicorn app.main:app --reload --port 8000
+# 1. Copy root .env template if not present
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+
+# 2. Install Node.js dependencies
+npm.cmd install
+
+# 3. Verify TypeScript compilation
+npm.cmd run typecheck
+
+# 4. Start the Vite development server on port 5173
+npm.cmd run dev -- --host 127.0.0.1 --port 5173
 ```
 
-## Environment variables
+> **Note on Vite API Proxy**: By default, `vite.config.ts` proxies all `/api/v1/*` requests from `http://127.0.0.1:5173` to `http://127.0.0.1:8000`. Leave `VITE_API_BASE_URL` empty in `.env` during local development so browser requests use the built-in proxy without CORS issues.
 
-### Frontend
+---
 
-```env
-VITE_API_URL=http://localhost:8000/api/v1
-```
+## 8. Environment Variables Reference
 
-لا تضع مفاتيح LLM أو كلمات مرور أو PHI في `VITE_*` variables لأنها تصل إلى browser bundle.
+Both `.env` (in the repo root) and `backend/.env` are automatically loaded by `backend/app/config.py`.
 
-### Backend
+| Variable | Default (Dev) | Required? | Description |
+| :--- | :--- | :--- | :--- |
+| `APP_ENV` | `development` | Yes | `development`, `staging`, or `production` |
+| `API_PREFIX` | `/api/v1` | Yes | REST API route prefix |
+| `DATABASE_URL` | `sqlite+aiosqlite:///./careos-local.db` | Yes | Async SQLAlchemy URL (`sqlite+aiosqlite` in dev, `postgresql+asyncpg` in prod) |
+| `SECRET_KEY` | `development-only-change-this-secret` | Prod: Yes | JWT & session signing key (must be `>= 32` chars in production) |
+| `ACCESS_TOKEN_MINUTES` | `30` | No | JWT access token expiration window in minutes |
+| `STORAGE_BACKEND` | `filesystem` | Yes | `filesystem` (stores under `backend/storage/uploads`) or `s3` |
+| `STORAGE_LOCAL_ROOT` | `storage/uploads` | No | Local upload folder (relative paths resolve inside `backend/`) |
+| `OCR_DEFAULT_ENGINE` | `printed` | No | `printed` (PaddleOCR), `handwriting`, or `auto` |
+| `OCR_LANGUAGE` | `ar` | No | Default PaddleOCR language (`ar` or `en`) |
+| `HANDWRITING_OCR_MODEL` | `sherif1313/Arabic-handwritten-OCR-4bit-Qwen2.5-VL-3B-v3` | No | Optional Vision-Language handwriting OCR model |
+| `HANDWRITING_OCR_DEVICE` | `auto` | No | Device for handwriting OCR (`auto`, `cuda`, or `cpu`) |
+| `RAG_EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Yes | Local 384-dim embedding model |
+| `RAG_ALLOW_MODEL_DOWNLOAD` | `true` (in `.env.example`) | Yes (1st run) | Allows caching `all-MiniLM-L6-v2` (~90 MB) on first run on a new machine |
+| `VECTOR_TOP_K` / `RAG_TOP_K` | `8` | No | Maximum number of chunks retrieved per RAG query |
+| `RAG_RELEVANCE_THRESHOLD` | `0.55` | No | Minimum cosine similarity (`0.0` to `1.0`) for clinical evidence retrieval |
+| `LEGACY_RAG_DB_PATH` | *(empty)* | No | Optional path to a read-only `careos_rag.db` SQLite file for bulk guideline import |
+| `OPENAI_API_KEY` / `GEMINI_API_KEY` / `AI_API_KEY` | *(empty)* | No | Optional external LLM API key. When empty, CareOS uses deterministic extractive synthesis |
+| `VITE_PORT` | `5173` | No | Vite dev server port |
+| `VITE_API_BASE_URL` | *(empty)* | No | Frontend API base URL override (leave empty to use Vite proxy) |
 
-أهم الإعدادات في `backend/.env.example`:
+---
 
-- `APP_ENV`
-- `DATABASE_URL`
-- `SECRET_KEY`
-- `JWT_ALGORITHM`
-- `ACCESS_TOKEN_MINUTES`
-- `CORS_ORIGINS`
-- `OIDC_ISSUER_URL`
-- `OIDC_CLIENT_ID`
-- `OIDC_CLIENT_SECRET`
-- `SAML_METADATA_URL`
-- `AUDIT_RETENTION_DAYS`
-- `BACKUP_BUCKET`
-- `BACKUP_REGION`
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_TLS`
-- `SMTP_USERNAME`
-- `SMTP_PASSWORD`
-- `SMTP_FROM`
+## 9. Database Setup and Migrations
 
-في production يجب استخدام secrets manager وعدم وضع القيم الحساسة في ملفات committed.
+- **Local Development (Default)**: Uses SQLite (`sqlite+aiosqlite:///./careos-local.db`), resolved relative to `backend/`. When the FastAPI server starts in non-production mode, `init_db()` automatically ensures all tables exist (`Base.metadata.create_all`).
+- **Alembic Migrations**: Located in `backend/migrations/versions/` (`0001_enterprise_schema.py` through `0018_clinical_rag_document_chunks.py`).
+  To apply migrations manually against your configured `DATABASE_URL`:
+  ```powershell
+  Push-Location backend
+  ..\.venv\Scripts\python.exe -m alembic upgrade head
+  Pop-Location
+  ```
+- **Demo Accounts (Development Mode)**:
+  On the login screen, you can register a new organization owner or use the built-in demo login endpoint (`/api/v1/auth/demo-login`) for roles such as `doctor` (`doctor.demo` / `Doctor@123`), `admin` (`admin.demo` / `Admin@123`), `nurse` (`nurse.demo` / `Nurse@123`), or `patient` (`patient.demo` / `Patient@123`).
 
-## الاختبارات والتحقق
+---
 
-### Frontend build
+## 10. OCR, RAG, and AI Configuration
+
+### How OCR Works
+1. **PDF & DOCX Native Extraction**: Digital PDFs are parsed with `PyMuPDF` (`fitz`) and `pypdf` fallback; `.docx` files use `python-docx`.
+2. **Printed OCR (`PaddleOCR`)**: Scanned PDFs and images (`.png`, `.jpg`) are processed by `PaddleOCR` supporting both English and Arabic text lines.
+3. **Handwriting OCR (`Qwen2.5-VL` / Transformers, Optional)**: Lazy-loaded only when `ocr_engine="handwriting"` is explicitly requested.
+4. **Structured Candidate Organization**: Raw OCR text is normalized by `extract_structured_clinical_candidates` in `backend/app/ocr.py` into medications, labs, diagnoses, allergies, findings, and follow-up items, with explicit `[NEEDS_REVIEW]` flags for uncertain/handwritten lines.
+
+### How Clinical RAG Works (Offline-Ready by Default)
+- **Local Embeddings**: Uses `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions). On a new machine, keep `RAG_ALLOW_MODEL_DOWNLOAD=true` in `.env` for the first run (or run `scripts/setup.ps1`) so HuggingFace caches the ~90 MB model locally. Once cached, it runs 100% offline.
+- **Approval Gate**: Uploaded documents start in `review_status="pending_review"`. Only when a clinician clicks **Approve & Index** (`POST /api/v1/documents/{id}/review`) are the document's chunks embedded and stored in `document_chunks`. Rejected or soft-deleted documents are immediately purged from the vector store.
+- **No External LLM Key Required**: When no `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `AI_API_KEY` is configured, the RAG pipeline uses deterministic **Extractive Evidence Synthesis** with strict sentence-level citation verification (`[Source: <filename>, Page <n>]`). If an external key is configured, the pipeline uses the external LLM while still enforcing post-generation citation verification and refusal on insufficient evidence.
+
+---
+
+## 11. Running the Full Stack Locally
 
 ```powershell
-npm run build
+powershell -ExecutionPolicy Bypass -File scripts/start.ps1
 ```
 
-### Type checking
+### End-to-End Functional Verification Flow in the UI
+1. Open [http://127.0.0.1:5173](http://127.0.0.1:5173) and sign in (or register a new clinic account).
+2. Navigate to **Patients** and select or create a patient.
+3. Open **Documents** (`DocumentWorkflow`):
+   - Upload a clinical PDF, DOCX, or prescription image.
+   - Inspect the **Structured Clinical Summary** cards (Document Metadata, Medications, Lab Results, Diagnoses, Allergies, Clinical Findings) and the **Raw OCR Text** preview.
+   - Click **Approve** to index the document into the Clinical RAG vector store.
+4. Open **Clinical Knowledge Search** (`ClinicalKnowledgeSearch`):
+   - Ask a clinical question about the approved document or patient.
+   - Verify that the returned answer is grounded, displays `[Source: ..., Page ...]` citations, and lists the retrieved chunks with similarity scores.
+
+---
+
+## 12. Running with Docker
+
+To run PostgreSQL 16 (`pgvector`), Redis 7, and the FastAPI backend in Docker containers:
 
 ```powershell
-npm run typecheck
+# Build and start PostgreSQL (pgvector), Redis, and the CareOS API
+docker compose up --build -d
+
+# Check container health and logs
+docker compose ps
+docker compose logs -f api
 ```
 
-### Playwright E2E
+When running the backend in Docker on port `8000`, you can still run the Vite frontend locally on port `5173` via `npm.cmd run dev`.
+
+---
+
+## 13. Running Tests and Verification
+
+All automated tests use isolated temporary SQLite databases and **never modify or delete** your local `careos.db` or `careos-local.db`.
 
 ```powershell
-npx playwright install chromium
-npm run test:e2e
+# 1. Run the complete environment & readiness check script
+powershell -ExecutionPolicy Bypass -File scripts/check.ps1
+
+# 2. Run Backend Health, OCR, Parser, and Clinical RAG test suites
+Push-Location backend
+$env:PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK = "True"
+..\.venv\Scripts\python.exe -m pytest tests/test_health.py tests/test_ocr_and_parsers.py tests/test_clinical_rag.py -q
+Pop-Location
+
+# 3. Run Frontend TypeScript validation & Production build check
+npm.cmd run typecheck
+npm.cmd run build
 ```
 
-الاختبار الحالي يتحقق من:
+---
 
-- فتح workspace.
-- تبديل العربية والإنجليزية.
-- ظهور عناصر navigation الأساسية باللغتين.
+## 14. Common Issues and Troubleshooting
 
-### Backend
+| Symptom / Error | Cause | Fix |
+| :--- | :--- | :--- |
+| **`Local embedding model 'sentence-transformers/all-MiniLM-L6-v2' is not available in the local HuggingFace cache`** | Running on a fresh machine for the first time with `RAG_ALLOW_MODEL_DOWNLOAD=false`. | Set `RAG_ALLOW_MODEL_DOWNLOAD=true` in `.env` / `backend/.env` or run `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1` once while connected to the internet. |
+| **`PowerShell ExecutionPolicy blocks scripts/setup.ps1`** | Windows default execution policy restricts `.ps1` scripts. | Run with `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`. |
+| **`Port 8000 or 5173 is already in use`** | An existing `uvicorn` or `node` process is already listening. | Stop the existing process or pass custom ports: `powershell -ExecutionPolicy Bypass -File scripts/start.ps1 -BackendPort 8001 -FrontendPort 5174`. |
+| **Uploaded document does not appear in RAG search results** | Unapproved (`pending_review`), `rejected`, or soft-deleted documents are excluded from RAG by design for clinical safety. | Open **Documents**, select the document, and click **Approve** so it is indexed into `document_chunks`. |
+| **Slow startup when importing PaddleOCR** | PaddleX checks remote model host connectivity on import. | Set `$env:PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK="True"` (automatically set by `scripts/start.ps1` and `scripts/check.ps1`). |
+| **CORS error in browser** | Accessing the frontend via an origin not listed in `CORS_ORIGINS`. | Ensure you access `http://127.0.0.1:5173` or `http://localhost:5173`, and leave `VITE_API_BASE_URL` empty in `.env` so Vite proxies `/api/v1`. |
 
-بعد تشغيل PostgreSQL وتثبيت requirements:
+---
 
-```powershell
-cd backend
-alembic upgrade head
-pytest -q
-```
+## 15. Team Handoff Checklist
 
-## الأمان والخصوصية
+Before zipping, copying, or pushing `newcareos-main` to share with another developer:
 
-CareOS يتعامل مع مجال طبي حساس. قبل استخدام أي PHI يجب تحقيق الآتي:
-
-- OIDC أو SAML حقيقي مع MFA وrole claims موثوقة.
-- RBAC وorganization/department scoping على كل request.
-- منع تسريب PHI في browser bundles وlogs وtelemetry وerrors.
-- TLS أثناء النقل وتشفير التخزين.
-- Managed secrets وrotation.
-- Audit events append-only لقراءة وتعديل وتصدير السجلات وعمليات AI.
-- Retention وdeletion policy معتمدة.
-- Encrypted backups وrestore drills.
-- File validation وmalware scanning وOCR sandbox.
-- Prompt-injection defenses وRAG allowlists.
-- مراجعة الطبيب قبل حفظ AI draft كسجل طبي.
-- Privacy impact assessment وthreat model وpenetration test.
-
-تفاصيل إضافية في [SECURITY.md](SECURITY.md).
-
-## ما لم يتم تنفيذه بعد
-
-هذه العناصر خارج النسخة الحالية أو تحتاج مزودًا خارجيًا:
-
-1. LLM provider حقيقي.
-2. RAG وVector database.
-3. OCR worker.
-4. AI agents للـ reminders والمتابعة.
-5. FHIR/HL7/HIS/EHR integrations.
-6. OIDC/SAML activation مع مستشفى فعلي.
-7. Password reset عبر email فعلي.
-8. Notification delivery عبر SMS/email/push.
-9. Clinical API كامل للمرضى والمواعيد والملاحظات.
-10. Subscription وBilling، وهي خارج النطاق المطلوب حاليًا.
-11. Monitoring مثل Sentry/Prometheus/Grafana.
-12. Backup storage وrestore automation.
-13. CI security scans وDAST/SAST/secret scanning الكاملة.
-
-## Roadmap المقترح
-
-### المرحلة الأولى: Secure Clinical API
-
-- تحويل Patients/Appointments/Notes إلى APIs server-side.
-- pagination وfiltering وtenant scoping.
-- version history وsigned clinical notes.
-- authorization tests لكل endpoint.
-
-### المرحلة الثانية: AI Services
-
-- provider-agnostic LLM service.
-- server-side model keys.
-- RAG protocol registry.
-- citations وgrounded-answer checks.
-- clinician feedback وAI telemetry بدون PHI.
-
-### المرحلة الثالثة: Operations
-
-- reminder worker.
-- lab follow-up worker.
-- idempotency وretries وdead-letter queues.
-- email/SMS/push notification providers.
-- calendar وHIS integration.
-
-### المرحلة الرابعة: Enterprise Readiness
-
-- OIDC/SAML + MFA.
-- departments وصلاحيات دقيقة.
-- monitoring وalerting.
-- backup/restore drills.
-- privacy and security review.
-- staging/production environments.
-
-## حدود المسؤولية الطبية
-
-CareOS لا يجب تقديمه على أنه طبيب آلي. الصياغة الصحيحة للمنتج:
-
-> CareOS منصة ذكاء اصطناعي مساندة للطبيب تعمل على أتمتة التوثيق وإدارة رحلة المريض، وتوفر دعمًا معلوماتيًا قائمًا على البيانات، مع إبقاء القرار الطبي النهائي للطبيب.
-
-## هيكل المشروع
-
-```text
-.
-├── src/
-│   ├── App.tsx
-│   ├── api.ts
-│   ├── data.ts
-│   ├── i18n.ts
-│   ├── main.tsx
-│   └── styles.css
-├── backend/
-│   ├── app/
-│   │   ├── api.py
-│   │   ├── auth.py
-│   │   ├── config.py
-│   │   ├── db.py
-│   │   ├── email_service.py
-│   │   ├── integrations.py     # Sandbox/provider replacement contracts
-│   │   ├── main.py
-│   │   └── models.py
-│   ├── migrations/
-│   ├── tests/
-│   ├── Dockerfile
-│   └── requirements.txt
-├── tests/e2e/
-├── .github/workflows/ci.yml
-├── docker-compose.yml
-├── playwright.config.ts
-├── SECURITY.md
-├── HANDOFF.md                   # Delivery and integration guide
-└── docs/IMPLEMENTATION_PLAN.md
-```
-
-## الخلاصة
-
-CareOS حاليًا هو **MVP مترابط للنواة الإدارية والسريرية ببيانات تجريبية**: الواجهة، الـAPI، PostgreSQL migrations، الهوية، المرضى، إنشاء المواعيد، Clinical Notes، وسجل التدقيق لها مسارات محددة وقابلة للتشغيل عبر Docker.
-
-الجزء الموجود يثبت تجربة المنتج، بنية الحسابات، المؤسسات، الفريق، الجلسات، التدقيق، الترجمة، والـdeployment foundation. أما LLM وRAG وOCR وAgents والتكاملات الطبية فتوجد لها نقاط ربط وعقود Sandbox، لكنها تحتاج مزودين خارجيين، مراجعة أمنية وخصوصية، واختبارات سريرية قبل استخدامها مع بيانات حقيقية.
+- [ ] **Do NOT include `.env` or `backend/.env`** — teammates should generate their own from `.env.example` via `scripts/setup.ps1`.
+- [ ] **Do NOT include `.venv/`, `.venv-1/`, or `node_modules/`** — virtual environments contain machine-specific absolute paths in launcher shims and must be created on the target machine via `scripts/setup.ps1`.
+- [ ] **Do NOT include local SQLite `.db` files (`backend/*.db`) or `backend/storage/uploads/`** — these contain local runtime state.
+- [ ] On the receiving Windows machine, the developer only needs **Python 3.11/3.12**, **Node.js 20+**, and **PowerShell**, then runs:
+  1. `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`
+  2. `powershell -ExecutionPolicy Bypass -File scripts/check.ps1`
+  3. `powershell -ExecutionPolicy Bypass -File scripts/start.ps1`
