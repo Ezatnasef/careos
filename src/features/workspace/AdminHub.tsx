@@ -13,21 +13,29 @@ import type { TranslationKey } from "../../i18n";
 type Translator = (key: TranslationKey) => string;
 
 export function AdminHub({ t }: { t: Translator }) {
-  const metrics = [
+  const metrics: Array<{
+    label: TranslationKey;
+    value: string;
+    detail: TranslationKey;
+  }> = [
     { label: "adminActiveStaff", value: "86", detail: "adminAcrossTeams" },
     { label: "adminOpenApprovals", value: "11", detail: "adminPendingReview" },
     { label: "adminComplianceChecks", value: "98%", detail: "adminThisMonth" },
     { label: "adminOperationalUptime", value: "99.7%", detail: "adminSystemAvailability" },
   ];
 
-  const workstreams = [
+  const workstreams: Array<{
+    title: TranslationKey;
+    owner: TranslationKey;
+    status: TranslationKey;
+  }> = [
     { title: "adminClinicalAccess", owner: "adminFrontDeskNurses", status: "adminHealthy" },
     { title: "adminInsuranceBilling", owner: "adminAdminTeam", status: "adminReview" },
     { title: "adminStaffOnboarding", owner: "adminHrCoordinator", status: "adminHealthy" },
     { title: "adminPolicySignoffs", owner: "adminDirectorOffice", status: "adminAction" },
   ];
 
-  const governance = [
+  const governance: TranslationKey[] = [
     "adminMarchReviews",
     "adminAuditSynced",
     "adminOnboardingApproval",

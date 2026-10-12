@@ -6,7 +6,13 @@ import type { TranslationKey } from "../../i18n";
 type Translator = (key: TranslationKey) => string;
 
 export function StaffManagement({ t }: { t: Translator }) {
-  const staff = [
+  const staff: Array<{
+    name: string;
+    role: TranslationKey;
+    schedule: TranslationKey;
+    load: string;
+    status: TranslationKey;
+  }> = [
     { name: "Dr. Rana Samir", role: "staffLeadPhysician", schedule: "staffConsulting", load: "82%", status: "staffAvailable" },
     { name: "Nurse Huda Ali", role: "staffTriageLead", schedule: "staffCurrentShift", load: "91%", status: "staffBusy" },
     { name: "Mariam Saleh", role: "staffReceptionCoordinator", schedule: "staffFrontDesk", load: "76%", status: "staffAvailable" },

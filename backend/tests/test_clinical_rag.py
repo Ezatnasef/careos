@@ -1053,6 +1053,11 @@ def test_synthetic_prescription_ocr_and_rag_retrieval_verification(
     """End-to-end regression test for Task A (OCR structured extraction on synthetic prescription image),
     Task B (RAG indexing & retrieval proof with citations and abstention), and Task C (OCR/RAG diagnostics).
     """
+    from app.rag.ocr import get_ocr_router
+
+    if not get_ocr_router().is_ocr_available("printed"):
+        pytest.skip("This integration test requires the optional PaddleOCR engine.")
+
     import io
     import docx
     from PIL import Image, ImageDraw, ImageFont
@@ -1235,6 +1240,5 @@ def test_synthetic_prescription_ocr_and_rag_retrieval_verification(
         "no_relevant_evidence",
         "no_chunks_above_relevance_threshold",
     }
-
 
 

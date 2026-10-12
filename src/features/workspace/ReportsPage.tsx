@@ -42,7 +42,12 @@ export function ReportsPage({ t }: { t: Translator }) {
     },
   ];
 
-  const reportSnapshots = [
+  const reportSnapshots: Array<{
+    label: TranslationKey;
+    value: TranslationKey;
+    tone: "blue" | "green" | "orange" | "rose";
+    status: TranslationKey;
+  }> = [
     { label: "reportVisitsOnTime", value: "reportVisitsValue", tone: "blue", status: "reportOnTarget" },
     { label: "reportOpenReviews", value: "reportOpenReviewsValue", tone: "green", status: "reportHealthy" },
     { label: "reportDischargeDelays", value: "reportDischargeDelaysValue", tone: "orange", status: "reportWatch" },

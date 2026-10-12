@@ -89,7 +89,11 @@ export function TeamAudit({ t, language }: TeamAuditProps) {
     });
   }, [language, t]);
 
-  const teamMetrics = [
+  const teamMetrics: Array<{
+    label: TranslationKey;
+    value: string;
+    tone: "confirmed" | "pending" | "danger";
+  }> = [
     { label: "auditCliniciansOnDuty", value: "18", tone: "confirmed" },
     { label: "auditPendingApprovals", value: "11", tone: "pending" },
     { label: "auditOpenShifts", value: "3", tone: "danger" },
