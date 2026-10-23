@@ -18,19 +18,179 @@ CareOS provides:
 
 ---
 
-## 2. Architecture Overview
+## 2. Complete System Architecture & Pipeline
+
+CareOS is architected as an enterprise-grade, multi-tier distributed healthcare platform. It provides clean separation of concerns between client presentation, core clinical operations, real-time voice streaming microservices, bilingual OCR/RAG intelligence pipelines, and external clinical integration gateways.
+
+### 2.1. High-Level Multi-Tier Architecture
 
 ```mermaid
-flowchart LR
-    UI["React 19 + TypeScript + Vite\n(Port 5173)"] -->|"/api/v1/*"| API["FastAPI Backend\n(Port 8000)"]
-    API --> AUTH["Auth, RBAC & Audit\n(JWT + Argon2 + TOTP)"]
-    API --> DOCS["Document Workflow & Storage\n(backend/storage/uploads or S3)"]
-    DOCS --> OCR["OCR & Parser Router\n(PyMuPDF / python-docx / PaddleOCR / TrOCR)"]
-    OCR --> STRUCT["Structured Clinical Extractor\n(Medications, Labs, Diagnoses, Allergies)"]
-    STRUCT -->|"Clinician Approval"| RAG["Clinical RAG Engine\n(all-MiniLM-L6-v2, 384-dim)"]
-    API --> DB[("SQLite (Local Dev)\nor PostgreSQL + pgvector (Prod)")]
-    RAG --> DB
+flowchart TD
+    subgraph ClientTier ["1. Client & Presentation Tier (Port 5173)"]
+        UI_Web["React 19 + TypeScript + Vite SPA"]
+        UI_RTL["Bilingual RTL/LTR Engine (Arabic / English)"]
+        UI_Roles["Role Dashboards (Physician, Nurse, Admin, Billing)"]
+        UI_Portal["Patient Portal & Live Clinical Voice Companion"]
+        UI_Web --> UI_RTL
+        UI_Web --> UI_Roles
+        UI_Web --> UI_Portal
+    end
+
+    subgraph GatewayTier ["2. Gateway & Proxy Routing"]
+        Proxy["Vite Dev Server / Nginx Reverse Proxy"]
+        CORS["CORS & Origin Validation"]
+        RateLimit["Token Bucket Rate Limiter"]
+        Proxy --> CORS --> RateLimit
+    end
+
+    subgraph CoreBackend ["3. CareOS Core Backend (FastAPI - Port 8000)"]
+        AuthModule["Auth & Identity Subsystem\n• JWT Token Lifecycle\n• Argon2id Hashing\n• TOTP 2-Factor Auth\n• RBAC Permission Matrix"]
+        ClinicalOps["Clinical Operations Subsystem\n• Patients, Appointments & Vitals\n• Encounters & SOAP Notes\n• Invoices & Financial Auditing"]
+        DocEngine["Document & Bilingual OCR Pipeline\n• Format Router (PDF/DOCX/Images)\n• PaddleOCR (Arabic + English)\n• TrOCR Handwriting Fallback\n• Clinical Entity Extraction"]
+        RAGEngine["Grounded Clinical RAG Engine\n• 384-dim SentenceTransformer\n• Hybrid SQLite / pgvector Search\n• Citation & Negation Verifier\n• 3 Retrieval Modes"]
+        AuditSubsystem["Immutable HIPAA Audit Logger\n• Actor, Action, Resource, IP"]
+    end
+
+    subgraph VoiceService ["4. Voice Agent Microservice (Port 8003)"]
+        VoiceWS["WebSocket Bidirectional Voice Handler\n(/v1/voice/turns/stream)"]
+        VoiceAgentEngine["Autonomous Booking & Follow-up Agent"]
+        DialectNormalizer["to_egyptian_colloquial_speech\n(Natural Egyptian Cairo Phrasing)"]
+        TTSDispatcher["Voice Engine Dispatcher\n(Mohammed: spk_06 | Mariam: spk_15)"]
+        VoiceWS --> VoiceAgentEngine
+        VoiceAgentEngine --> DialectNormalizer
+        DialectNormalizer --> TTSDispatcher
+    end
+
+    subgraph ExternalIntegrations ["5. Integration & Model Gateways"]
+        HF_VoiceTut["mohammedaly22/VoiceTut-TTS\n(Authentic Egyptian Neural Studio)"]
+        Groq_STT["Groq Cloud Whisper Large-v3\n(Sub-second Speech-to-Text)"]
+        Gemini_AI["Google Gemini / OpenAI LLM APIs\n(Reasoning & Clinical Extraction)"]
+        Telegram_Bot["Telegram Patient Bot API\n(Follow-up Reminders & Deep Links)"]
+        Meta_WA["Meta Cloud API\n(WhatsApp Notifications)"]
+        Medplum_FHIR["Medplum SMART-on-FHIR R4\n(Clinical Interoperability)"]
+    end
+
+    subgraph DataStorageTier ["6. Persistence & Storage Tier"]
+        DB_Relational[("Primary Database\nSQLite (Dev) / PostgreSQL 16 (Prod)")]
+        DB_Vector[("Vector Index\nCosine Array (Dev) / pgvector (Prod)")]
+        File_Storage[("Document Storage\nLocal Filesystem / AWS S3")]
+        Redis_Cache[("Redis Cache / In-Memory Store\nSession State & Queue")]
+    end
+
+    %% Client to Gateway
+    UI_Web -->|"/api/v1/*"| Proxy
+    UI_Portal -->|"/api/v1/voice/*"| Proxy
+
+    %% Gateway to Services
+    Proxy -->|Core API Requests| CoreBackend
+    Proxy -->|Voice & Speech Requests| VoiceService
+
+    %% Core Backend to Data
+    CoreBackend --> DB_Relational
+    CoreBackend --> DB_Vector
+    CoreBackend --> File_Storage
+    CoreBackend --> Redis_Cache
+
+    %% Integrations Connections
+    DocEngine --> Gemini_AI
+    VoiceService --> Groq_STT
+    VoiceService --> HF_VoiceTut
+    CoreBackend --> Telegram_Bot
+    CoreBackend --> Meta_WA
+    CoreBackend --> Medplum_FHIR
+    VoiceAgentEngine -->|Internal Booking Contract| ClinicalOps
 ```
+
+---
+
+### 2.2. Clinical Document Ingestion, Bilingual OCR & Grounded RAG Pipeline
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Clinician as Clinician / Staff
+    participant UI as React UI (DocumentWorkflow)
+    participant API as FastAPI Ingestion Router
+    participant OCR as OCR & Parser Router
+    participant Extractor as Structured Entity Extractor
+    participant DB as Database (ClinicalNote / Chunk)
+    participant RAG as Clinical RAG Engine (384-dim)
+
+    Clinician->>UI: Upload Document (PDF, DOCX, PNG, JPG <= 25MB)
+    UI->>API: POST /api/v1/documents/upload
+    API->>API: Validate MIME, Magic Bytes & Quarantine Scan
+    API->>OCR: Route to Parser
+    alt Native PDF or DOCX
+        OCR->>OCR: Extract Embedded Text (PyMuPDF / python-docx)
+    else Scanned Document or Image
+        OCR->>OCR: Run Bilingual PaddleOCR (Arabic & English text lines)
+        opt Low confidence / Handwritten tokens
+            OCR->>OCR: TrOCR Handwriting Extraction & Uncertainty Flagging
+        end
+    end
+    OCR->>Extractor: Pass Clean Extracted Text
+    Extractor->>Extractor: Extract Medications, Labs, Diagnoses, Allergies
+    Extractor-->>API: Structured Candidates + Confidence Scores
+    API->>DB: Store Document (review_status = "pending_review")
+    API-->>UI: Display Extracted Preview & Uncertainty Badges
+    
+    Note over Clinician,UI: Human-in-the-Loop Clinical Verification
+    Clinician->>UI: Review & Click "Approve Document"
+    UI->>API: POST /api/v1/documents/{id}/review (action = "approve")
+    API->>DB: Update review_status = "approved"
+    API->>RAG: Trigger RAG Chunking & Vectorization
+    RAG->>RAG: Generate Overlapping Chunks (500 tokens + 50 overlap)
+    RAG->>RAG: Compute 384-dim Embeddings (all-MiniLM-L6-v2)
+    RAG->>DB: Persist DocumentChunks with Vector Embeddings
+    API-->>UI: Document Approved & Live for Clinical Search
+```
+
+---
+
+### 2.3. Egyptian Colloquial Voice Companion & Booking Architecture
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Patient as Patient
+    participant Companion as PatientVoiceAssistant (React)
+    participant VServer as Voice Agent Service (8003)
+    participant Groq as Groq Whisper STT
+    participant Orchestrator as Autonomous Booking Agent
+    participant CoreAPI as CareOS Core API (8000)
+    participant TTS as Voice Engine (Mohammed / Mariam)
+
+    Patient->>Companion: Speaks in Egyptian Dialect ("عايز أحجز ميعاد مع دكتور باطنة الأسبوع الجاي")
+    Companion->>VServer: Stream Audio / Send Waveform
+    VServer->>Groq: Transcribe Speech (Whisper Large-v3 Turbo)
+    Groq-->>VServer: "عايز أحجز ميعاد مع دكتور باطنة الأسبوع الجاي"
+    VServer->>Orchestrator: Process Turn with Clinical Booking Prompts
+    Orchestrator->>CoreAPI: Query Physician Schedules & Available Slots
+    CoreAPI-->>Orchestrator: Available Slots: Tuesday 4:00 PM, Thursday 6:00 PM
+    Orchestrator->>Orchestrator: Resolve Booking State & Format Clinical Response
+    Orchestrator->>VServer: Generate Egyptian Colloquial Text Response
+    Note over VServer: to_egyptian_colloquial_speech:<br/>"عندنا ميعاد متاح يوم التلات الساعة 4 العصر ويوم الخميس 6 المغرب... تحب أحجز لحضرتك أنهي ميعاد؟"
+    VServer->>TTS: Synthesize Speech (Voice: Mohammed or Mariam, Rate: +14%)
+    TTS-->>VServer: Return Audio Stream / MP3 Data
+    VServer-->>Companion: Base64 Audio Stream + Text Payload
+    Companion->>Patient: Play Warm, Natural Egyptian Audio with Live Transcript
+```
+
+---
+
+### 2.4. Core Architectural Subsystems & Responsibilities
+
+| Subsystem | Components & Frameworks | Primary Responsibilities |
+| :--- | :--- | :--- |
+| **Frontend Web App** | React 19, TypeScript, Vite, Tailwind/Vanilla CSS tokens | Multi-tenant role dashboards, RTL bilingual localization, patient portal, responsive clinical tables, live audio recorder & playback. |
+| **Identity & Security** | JWT, Argon2id, PyOTP (TOTP 2FA), RBAC engine | User provisioning, credential verification, per-endpoint permission matrix, instant session revocation (`deleted_at`), HIPAA audit events. |
+| **Clinical Core API** | FastAPI, SQLAlchemy Async, Alembic | CRUD and business logic for patients, encounters, SOAP clinical notes, ICD-10 diagnoses, medications, labs, appointments, and billing. |
+| **Bilingual OCR Subsystem** | PyMuPDF, python-docx, PaddleOCR, TrOCR | Multi-format document parser, printed Arabic/English OCR, handwriting recognition, candidate entity extraction with confidence scoring. |
+| **Grounded Clinical RAG** | SentenceTransformers (`all-MiniLM-L6-v2`), pgvector/SQLite cosine | Semantic clinical retrieval strictly scoped to approved patient records, 3 search modes (`guideline_only`, `patient_only`, `mixed`), negation preservation, and sentence-level citation verification. |
+| **Voice Agent Microservice** | WebSockets, Groq Whisper STT, LangChain, Pydantic | Autonomous appointment booking, intelligent conversational triage, multi-turn state preservation, streaming audio responses. |
+| **Egyptian Voice Engine** | `mohammedaly22/VoiceTut-TTS` + Neural Egyptian Engine | Authentic Egyptian colloquial dialect transformation, distinct male (**محمد**) and female (**مريم**) voices, natural tempo calibration (+14%). |
+| **Omnichannel Follow-up** | Telegram Bot API, Meta WhatsApp Cloud API | Automated post-visit follow-up delivery, interactive patient reminders, deep-link bot onboarding, encounter reply mapping. |
+| **Interoperability Adapter** | Medplum FHIR R4 Client, JSON-LD | Standard SMART-on-FHIR resource mapping (Patient, Observation, Condition, Encounter, DocumentReference). |
 
 ---
 
