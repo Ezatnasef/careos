@@ -10,6 +10,7 @@ import { GlobalChat } from "../chat/GlobalChat";
 import { FormattedMessage } from "../chat/FormattedMessage";
 import { demoAccounts, type DemoAccount } from "../auth/LoginRoute";
 import { capturePublicLead } from "../../api/directory";
+import { GoogleAuthModal, GoogleIcon, type GoogleUserPayload } from "../../components/GoogleAuthButton";
 import {
   Activity,
   AlertCircle,
@@ -98,6 +99,33 @@ export function Landing({
   const [demoRequested, setDemoRequested] = useState(false);
   const [selectedDemoRole, setSelectedDemoRole] = useState<string>("doctor");
   const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [googleSuccessToast, setGoogleSuccessToast] = useState("");
+
+  const handleGoogleVisitorSuccess = async (user: GoogleUserPayload) => {
+    try {
+      await capturePublicLead({
+        full_name: user.fullName,
+        email: user.email,
+        source: "Google Landing Lead",
+        company: isArabic ? "زائر صفحة الهبوط" : "Landing Page Visitor",
+        notes: isArabic ? "تسجيل دخول وتجربة عبر Google OAuth" : "Visitor verified via Google Sign-In",
+      });
+    } catch {}
+    setGoogleSuccessToast(
+      isArabic
+        ? `أهلاً بك يا ${user.fullName}! تم تسجيلك بنجاح ونقلك للتجربة الحية...`
+        : `Welcome ${user.fullName}! Verified successfully, entering live demo...`
+    );
+    setTimeout(() => {
+      setGoogleSuccessToast("");
+      if (onDemoLogin) {
+        onDemoLogin(demoAccounts[0]);
+      } else {
+        onEnter("signin");
+      }
+    }, 1600);
+  };
   const speechRecognitionRef = useRef<{ stop: () => void; abort?: () => void } | null>(null);
   const [isMobilePreview, setIsMobilePreview] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -699,6 +727,28 @@ export function Landing({
           </button>
           <div className="landing-auth-links">
             <button
+              type="button"
+              className="landing-auth-link"
+              onClick={() => setShowGoogleModal(true)}
+              title={isArabic ? "دخول الزوار بحساب Google" : "Visitor Google Sign-In"}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                background: "rgba(255,255,255,0.85)",
+                border: "1px solid #cbd5e1",
+                padding: "6px 12px",
+                borderRadius: "8px",
+                fontSize: "12px",
+                fontWeight: 700,
+                color: "#0f172a",
+                cursor: "pointer",
+              }}
+            >
+              <GoogleIcon size={14} />
+              <span>{isArabic ? "دخول Google" : "Google Sign-In"}</span>
+            </button>
+            <button
               className="landing-auth-link landing-auth-link-login"
               onClick={() => onEnter("signin")}
             >
@@ -760,6 +810,28 @@ export function Landing({
                 >
                   {copy.primary}{" "}
                   {isArabic ? <ArrowLeft size={17} /> : <ArrowRight size={17} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowGoogleModal(true)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "11px 18px",
+                    borderRadius: "12px",
+                    background: "#ffffff",
+                    color: "#0f172a",
+                    border: "1px solid #cbd5e1",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <GoogleIcon size={16} />
+                  <span>{isArabic ? "جرّب النظام بحساب Google (للزوار)" : "Try Demo with Google"}</span>
                 </button>
                 <button
                   className="landing-secondary"
@@ -1966,6 +2038,37 @@ export function Landing({
           </div>
         </main>
       )}
+      {googleSuccessToast && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: "24px",
+            insetInlineStart: "24px",
+            zIndex: 999999,
+            background: "#0f172a",
+            color: "#ffffff",
+            padding: "12px 20px",
+            borderRadius: "12px",
+            boxShadow: "0 10px 25px rgba(0,0,0,0.25)",
+            fontSize: "14px",
+            fontWeight: 600,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "10px",
+          }}
+        >
+          <CheckCircle2 size={18} color="#10b981" />
+          <span>{googleSuccessToast}</span>
+        </div>
+      )}
+
+      <GoogleAuthModal
+        isOpen={showGoogleModal}
+        onClose={() => setShowGoogleModal(false)}
+        onSuccess={handleGoogleVisitorSuccess}
+        target="visitor"
+        language={language}
+      />
       <GlobalChat t={t} guest language={language} role="patient" view="dashboard" />
     </div>
   );

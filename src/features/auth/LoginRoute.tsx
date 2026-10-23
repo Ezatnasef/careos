@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { Language, TranslationKey } from "../../i18n";
 import type { Role } from "../workspace/navigation";
+import { GoogleAuthModal, GoogleIcon, type GoogleUserPayload } from "../../components/GoogleAuthButton";
 
 type Translator = (key: TranslationKey) => string;
 
@@ -165,7 +166,20 @@ export function LoginRoute({
   const [patientPassword, setPatientPassword] = useState("");
   const [patientConfirmPassword, setPatientConfirmPassword] = useState("");
   const [showPatientPassword, setShowPatientPassword] = useState(false);
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
   const demoRoleLabel = (demoRole: Role) => t(demoRoleTranslation[demoRole]);
+
+  const handleGoogleSuccess = (user: GoogleUserPayload) => {
+    onLogin({
+      mode: "signin",
+      email: user.email,
+      password: "demo-patient-password",
+      fullName: user.fullName,
+      organizationName: "Patient Care",
+      authMethod: "email",
+      role: "patient",
+    });
+  };
 
   const handleRecoverySubmit = () => {
     setRecoverySent(true);
@@ -514,6 +528,39 @@ export function LoginRoute({
                       <div className="badge-content">
                         <strong>{language === "ar" ? "فتح ملف طبي إلكتروني معتمد (EHR)" : "Electronic Health Record Setup"}</strong>
                         <p>{language === "ar" ? "يتم إصدار رقم سجل طبي موحد (MRN) وحساب رسمي في بوابة المرضى لحجز المواعيد واستلام الفحوصات الطبية إلكترونياً." : "A unique MRN and patient portal account will be issued for instant appointment booking and clinical records."}</p>
+                      </div>
+                    </div>
+
+                    {/* Google Instant Patient Registration */}
+                    <div style={{ margin: "16px 0 20px" }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowGoogleModal(true)}
+                        style={{
+                          width: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "10px",
+                          padding: "12px 18px",
+                          borderRadius: "12px",
+                          border: "1px solid #cbd5e1",
+                          background: "#ffffff",
+                          color: "#0f172a",
+                          fontWeight: 700,
+                          fontSize: "14px",
+                          cursor: "pointer",
+                          boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        <GoogleIcon size={18} />
+                        <span>{language === "ar" ? "التسجيل السريع كـ مريض عبر حساب Google" : "Instant Patient Sign-Up with Google"}</span>
+                      </button>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "14px 0 4px", color: "var(--muted, #64748b)", fontSize: "12px" }}>
+                        <div style={{ flex: 1, height: "1px", background: "var(--line, #e2e8f0)" }} />
+                        <span>{language === "ar" ? "أو تعبئة الملف الطبي يدوياً" : "Or fill health intake manually"}</span>
+                        <div style={{ flex: 1, height: "1px", background: "var(--line, #e2e8f0)" }} />
                       </div>
                     </div>
 
@@ -915,8 +962,33 @@ export function LoginRoute({
                 </p>
 
                 <div className="sso-divider" style={{ margin: "16px 0 10px" }}>
-                  <span>{language === "ar" ? "أو التسجيل كـ مريض جديد" : "Or New Patient Registration"}</span>
+                  <span>{language === "ar" ? "أو الدخول السريع للمرضى" : "Or Patient Sign-In"}</span>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowGoogleModal(true)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "10px",
+                    padding: "11px 16px",
+                    borderRadius: "10px",
+                    border: "1px solid #cbd5e1",
+                    background: "#ffffff",
+                    color: "#0f172a",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
+                    cursor: "pointer",
+                    marginBottom: "12px",
+                  }}
+                >
+                  <GoogleIcon size={18} />
+                  <span>{language === "ar" ? "الدخول كـ مريض عبر Google" : "Sign in as Patient with Google"}</span>
+                </button>
 
                 <button
                   type="button"
@@ -977,6 +1049,14 @@ export function LoginRoute({
           </div>
         )}
       </div>
+
+      <GoogleAuthModal
+        isOpen={showGoogleModal}
+        onClose={() => setShowGoogleModal(false)}
+        onSuccess={handleGoogleSuccess}
+        target="patient"
+        language={language}
+      />
     </div>
   );
 }
