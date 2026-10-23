@@ -733,7 +733,7 @@ export function Landing({
               title={isArabic ? "دخول الزوار بحساب Google" : "Visitor Google Sign-In"}
             >
               <GoogleIcon size={14} />
-              <span>{isArabic ? "دخول Google" : "Google Sign-In"}</span>
+              <span className="landing-pill-google-text">{isArabic ? "دخول Google" : "Google Sign-In"}</span>
             </button>
             <span className="landing-pill-divider" aria-hidden="true" />
             <button
@@ -803,21 +803,7 @@ export function Landing({
                 <button
                   type="button"
                   onClick={() => setShowGoogleModal(true)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    padding: "11px 18px",
-                    borderRadius: "12px",
-                    background: "#ffffff",
-                    color: "#0f172a",
-                    border: "1px solid #cbd5e1",
-                    fontWeight: 700,
-                    fontSize: "13px",
-                    cursor: "pointer",
-                    boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
-                    transition: "all 0.15s ease",
-                  }}
+                  className="landing-hero-google-btn"
                 >
                   <GoogleIcon size={16} />
                   <span>{isArabic ? "جرّب النظام بحساب Google (للزوار)" : "Try Demo with Google"}</span>
@@ -2057,6 +2043,7 @@ export function Landing({
         onSuccess={handleGoogleVisitorSuccess}
         target="visitor"
         language={language}
+        theme={theme}
       />
       <GlobalChat t={t} guest language={language} role="patient" view="dashboard" />
     </div>

@@ -44,6 +44,7 @@ type GoogleAuthModalProps = {
   onSuccess: (user: GoogleUserPayload) => void;
   target: "patient" | "visitor";
   language: "ar" | "en";
+  theme?: "light" | "dark";
 };
 
 export function GoogleAuthModal({
@@ -52,8 +53,14 @@ export function GoogleAuthModal({
   onSuccess,
   target,
   language,
+  theme,
 }: GoogleAuthModalProps) {
   const isAr = language === "ar";
+  const isDark =
+    theme === "dark" ||
+    (typeof document !== "undefined" &&
+      (document.documentElement.classList.contains("dark-mode") ||
+        document.querySelector(".landing-page")?.classList.contains("dark-mode-landing")));
   const [customName, setCustomName] = useState("");
   const [customEmail, setCustomEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -82,7 +89,7 @@ export function GoogleAuthModal({
         position: "fixed",
         inset: 0,
         zIndex: 99999,
-        background: "rgba(15, 23, 42, 0.65)",
+        background: isDark ? "rgba(0, 0, 0, 0.78)" : "rgba(15, 23, 42, 0.65)",
         backdropFilter: "blur(8px)",
         WebkitBackdropFilter: "blur(8px)",
         display: "grid",
@@ -93,12 +100,14 @@ export function GoogleAuthModal({
     >
       <div
         style={{
-          background: "var(--paper, #ffffff)",
-          border: "1px solid var(--line, #e2e8f0)",
+          background: isDark ? "#1e293b" : "#ffffff",
+          border: isDark ? "1px solid #334155" : "1px solid #e2e8f0",
           borderRadius: "24px",
           width: "100%",
           maxWidth: "430px",
-          boxShadow: "0 25px 60px -12px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.2)",
+          boxShadow: isDark
+            ? "0 25px 60px -12px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08)"
+            : "0 25px 60px -12px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.2)",
           padding: "26px 28px",
           direction: isAr ? "rtl" : "ltr",
           position: "relative",
@@ -113,11 +122,11 @@ export function GoogleAuthModal({
             position: "absolute",
             top: "16px",
             insetInlineEnd: "16px",
-            background: "rgba(148, 163, 184, 0.12)",
+            background: isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(148, 163, 184, 0.12)",
             border: "none",
             borderRadius: "50%",
             cursor: "pointer",
-            color: "var(--muted, #64748b)",
+            color: isDark ? "#94a3b8" : "#64748b",
             width: "30px",
             height: "30px",
             display: "grid",
@@ -125,12 +134,12 @@ export function GoogleAuthModal({
             transition: "all 0.15s ease",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(148, 163, 184, 0.25)";
-            e.currentTarget.style.color = "var(--ink, #0f172a)";
+            e.currentTarget.style.background = isDark ? "rgba(255, 255, 255, 0.16)" : "rgba(148, 163, 184, 0.25)";
+            e.currentTarget.style.color = isDark ? "#ffffff" : "#0f172a";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.background = "rgba(148, 163, 184, 0.12)";
-            e.currentTarget.style.color = "var(--muted, #64748b)";
+            e.currentTarget.style.background = isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(148, 163, 184, 0.12)";
+            e.currentTarget.style.color = isDark ? "#94a3b8" : "#64748b";
           }}
           aria-label={isAr ? "إغلاق" : "Close"}
         >
@@ -144,9 +153,11 @@ export function GoogleAuthModal({
               width: "54px",
               height: "54px",
               borderRadius: "50%",
-              background: "linear-gradient(135deg, #ffffff, #f8fafc)",
-              boxShadow: "0 8px 24px rgba(66, 133, 244, 0.16), 0 2px 8px rgba(0,0,0,0.04)",
-              border: "1px solid rgba(226, 232, 240, 0.9)",
+              background: isDark ? "#0f172a" : "linear-gradient(135deg, #ffffff, #f8fafc)",
+              boxShadow: isDark
+                ? "0 8px 24px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0,0,0,0.2)"
+                : "0 8px 24px rgba(66, 133, 244, 0.16), 0 2px 8px rgba(0,0,0,0.04)",
+              border: isDark ? "1px solid #334155" : "1px solid rgba(226, 232, 240, 0.9)",
               margin: "0 auto 14px",
               display: "grid",
               placeItems: "center",
@@ -155,7 +166,7 @@ export function GoogleAuthModal({
             <GoogleIcon size={26} />
           </div>
 
-          <h3 style={{ margin: "0 0 6px", fontSize: "19px", fontWeight: 800, color: "var(--ink, #0f172a)", letterSpacing: "-0.3px" }}>
+          <h3 style={{ margin: "0 0 6px", fontSize: "19px", fontWeight: 800, color: isDark ? "#f8fafc" : "#0f172a", letterSpacing: "-0.3px" }}>
             {isAr
               ? target === "patient"
                 ? "الدخول السريع كـ مريض عبر Google"
@@ -164,7 +175,7 @@ export function GoogleAuthModal({
               ? "Sign in with Google as Patient"
               : "Register as Visitor via Google"}
           </h3>
-          <p style={{ margin: 0, fontSize: "13px", color: "var(--muted, #64748b)", lineHeight: 1.5 }}>
+          <p style={{ margin: 0, fontSize: "13px", color: isDark ? "#94a3b8" : "#64748b", lineHeight: 1.5 }}>
             {isAr
               ? "أدخل بريد Google والاسم للمتابعة وتجربة المنصة فوراً بدون كلمة سر"
               : "Enter your Google account and name to proceed instantly without a password"}
@@ -174,7 +185,7 @@ export function GoogleAuthModal({
         {/* Custom Gmail Form */}
         <form onSubmit={handleCustomSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <div>
-            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: "var(--ink, #1e293b)", marginBottom: "6px" }}>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: isDark ? "#e2e8f0" : "#1e293b", marginBottom: "6px" }}>
               {isAr ? "الاسم الكامل" : "Full Name"}
             </label>
             <input
@@ -186,27 +197,27 @@ export function GoogleAuthModal({
                 width: "100%",
                 padding: "10px 14px",
                 borderRadius: "12px",
-                border: "1px solid var(--line, #cbd5e1)",
-                background: "var(--paper, #ffffff)",
+                border: isDark ? "1px solid #334155" : "1px solid #cbd5e1",
+                background: isDark ? "#0f172a" : "#ffffff",
                 fontSize: "13.5px",
-                color: "var(--ink, #0f172a)",
+                color: isDark ? "#f8fafc" : "#0f172a",
                 outline: "none",
                 boxSizing: "border-box",
                 transition: "border-color 0.2s, box-shadow 0.2s",
               }}
               onFocus={(e) => {
                 e.currentTarget.style.borderColor = "var(--teal, #0e8774)";
-                e.currentTarget.style.boxShadow = "0 0 0 3px rgba(14, 135, 116, 0.12)";
+                e.currentTarget.style.boxShadow = "0 0 0 3px rgba(14, 135, 116, 0.25)";
               }}
               onBlur={(e) => {
-                e.currentTarget.style.borderColor = "var(--line, #cbd5e1)";
+                e.currentTarget.style.borderColor = isDark ? "#334155" : "#cbd5e1";
                 e.currentTarget.style.boxShadow = "none";
               }}
             />
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: "var(--ink, #1e293b)", marginBottom: "6px" }}>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: isDark ? "#e2e8f0" : "#1e293b", marginBottom: "6px" }}>
               {isAr ? "بريد Google (Gmail)" : "Google Account (Gmail)"} <span style={{ color: "#ef4444" }}>*</span>
             </label>
             <div style={{ position: "relative" }}>
@@ -221,10 +232,10 @@ export function GoogleAuthModal({
                   padding: "10px 14px",
                   paddingInlineEnd: "36px",
                   borderRadius: "12px",
-                  border: "1px solid var(--line, #cbd5e1)",
-                  background: "var(--paper, #ffffff)",
+                  border: isDark ? "1px solid #334155" : "1px solid #cbd5e1",
+                  background: isDark ? "#0f172a" : "#ffffff",
                   fontSize: "13.5px",
-                  color: "var(--ink, #0f172a)",
+                  color: isDark ? "#f8fafc" : "#0f172a",
                   outline: "none",
                   boxSizing: "border-box",
                   direction: "ltr",
@@ -233,10 +244,10 @@ export function GoogleAuthModal({
                 }}
                 onFocus={(e) => {
                   e.currentTarget.style.borderColor = "var(--teal, #0e8774)";
-                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(14, 135, 116, 0.12)";
+                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(14, 135, 116, 0.25)";
                 }}
                 onBlur={(e) => {
-                  e.currentTarget.style.borderColor = "var(--line, #cbd5e1)";
+                  e.currentTarget.style.borderColor = isDark ? "#334155" : "#cbd5e1";
                   e.currentTarget.style.boxShadow = "none";
                 }}
               />
@@ -311,7 +322,7 @@ export function GoogleAuthModal({
               gap: "6px",
               marginTop: "4px",
               fontSize: "11.5px",
-              color: "var(--muted, #64748b)",
+              color: isDark ? "#94a3b8" : "#64748b",
             }}
           >
             <ShieldCheck size={14} color="#0e8774" />

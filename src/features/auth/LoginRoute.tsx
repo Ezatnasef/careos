@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowUpRight,
   Building2,
+  CheckCircle2,
   ChevronLeft,
   Eye,
   EyeOff,
@@ -121,6 +122,7 @@ type Props = {
   initialMode?: "signin" | "signup";
   initialAccessMethod?: "email" | "sso";
   onBackHome: () => void;
+  theme?: "light" | "dark";
 };
 
 export function LoginRoute({
@@ -132,6 +134,7 @@ export function LoginRoute({
   initialMode = "signin",
   initialAccessMethod = "email",
   onBackHome,
+  theme = "light",
 }: Props) {
   const [mode, setMode] = useState(initialMode);
   const [accessMethod, setAccessMethod] = useState(initialAccessMethod);
@@ -167,18 +170,33 @@ export function LoginRoute({
   const [patientConfirmPassword, setPatientConfirmPassword] = useState("");
   const [showPatientPassword, setShowPatientPassword] = useState(false);
   const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [googleVerifiedPatient, setGoogleVerifiedPatient] = useState<{ email: string; fullName: string } | null>(null);
   const demoRoleLabel = (demoRole: Role) => t(demoRoleTranslation[demoRole]);
 
   const handleGoogleSuccess = (user: GoogleUserPayload) => {
-    onLogin({
-      mode: "signin",
-      email: user.email,
-      password: "demo-patient-password",
-      fullName: user.fullName,
-      organizationName: "Patient Care",
-      authMethod: "email",
-      role: "patient",
-    });
+    setShowGoogleModal(false);
+    setGoogleVerifiedPatient({ email: user.email, fullName: user.fullName });
+    if (user.fullName && !patientFullName) {
+      setPatientFullName(user.fullName);
+    }
+    if (user.email) {
+      setPatientEmail(user.email);
+    }
+    if (!patientPassword) {
+      const autoPass = "Google@Care" + Math.floor(1000 + Math.random() * 9000) + "!";
+      setPatientPassword(autoPass);
+      setPatientConfirmPassword(autoPass);
+    }
+    setMode("signup");
+    setSignupTarget("patient");
+    setTimeout(() => {
+      const el = document.getElementById("patient-identity-section");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        const idInput = document.getElementById("patient-national-id-input");
+        if (idInput) (idInput as HTMLInputElement).focus();
+      }
+    }, 150);
   };
 
   const handleRecoverySubmit = () => {
@@ -533,39 +551,48 @@ export function LoginRoute({
 
                     {/* Google Instant Patient Registration */}
                     <div style={{ margin: "16px 0 20px" }}>
-                      <button
-                        type="button"
-                        onClick={() => setShowGoogleModal(true)}
-                        style={{
-                          width: "100%",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "10px",
-                          padding: "12px 18px",
-                          borderRadius: "12px",
-                          border: "1px solid #cbd5e1",
-                          background: "#ffffff",
-                          color: "#0f172a",
-                          fontWeight: 700,
-                          fontSize: "14px",
-                          cursor: "pointer",
-                          boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
-                          transition: "all 0.15s ease",
-                        }}
-                      >
-                        <GoogleIcon size={18} />
-                        <span>{language === "ar" ? "التسجيل السريع كـ مريض عبر حساب Google" : "Instant Patient Sign-Up with Google"}</span>
-                      </button>
+                      {googleVerifiedPatient ? (
+                        <div className="google-verified-banner">
+                          <div style={{
+                            width: "38px",
+                            height: "38px",
+                            borderRadius: "50%",
+                            background: "rgba(16, 185, 129, 0.15)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0
+                          }}>
+                            <CheckCircle2 size={22} color="#10b981" />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 800, fontSize: "14px", color: "var(--teal-dark, #0d9488)" }}>
+                              {language === "ar" ? "✓ تم توثيق حساب Google بنجاح" : "✓ Google Account Verified"}
+                            </div>
+                            <div style={{ fontSize: "12px", color: "var(--muted, #64748b)", marginTop: "2px" }}>
+                              <strong>{googleVerifiedPatient.email}</strong> — {language === "ar" ? "أكمل الرقم القومي والبيانات الطبية أدناه لإصدار بطاقتك الصحية وملفك الطبي." : "Complete your National ID & vitals below to issue your health ID."}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="login-patient-google-btn"
+                          onClick={() => setShowGoogleModal(true)}
+                        >
+                          <GoogleIcon size={18} />
+                          <span>{language === "ar" ? "التسجيل السريع كـ مريض عبر حساب Google" : "Instant Patient Sign-Up with Google"}</span>
+                        </button>
+                      )}
                       <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "14px 0 4px", color: "var(--muted, #64748b)", fontSize: "12px" }}>
                         <div style={{ flex: 1, height: "1px", background: "var(--line, #e2e8f0)" }} />
-                        <span>{language === "ar" ? "أو تعبئة الملف الطبي يدوياً" : "Or fill health intake manually"}</span>
+                        <span>{language === "ar" ? (googleVerifiedPatient ? "البيانات الشخصية والملف الطبي المطلوب" : "أو تعبئة الملف الطبي يدوياً") : (googleVerifiedPatient ? "Required Patient Identity & Clinical Intake" : "Or fill health intake manually")}</span>
                         <div style={{ flex: 1, height: "1px", background: "var(--line, #e2e8f0)" }} />
                       </div>
                     </div>
 
                     {/* Section 1: البيانات الشخصية والهوية */}
-                    <div className="form-section-card">
+                    <div className="form-section-card" id="patient-identity-section">
                       <div className="section-title">
                         <UserPlus size={15} />
                         <span>{language === "ar" ? "البيانات الشخصية وبطاقة الهوية" : "Personal & Identity Information"}</span>
@@ -594,6 +621,7 @@ export function LoginRoute({
                           </label>
                           <input
                             type="text"
+                            id="patient-national-id-input"
                             className="form-control"
                             dir="ltr"
                             value={patientNationalId}
@@ -602,6 +630,11 @@ export function LoginRoute({
                             maxLength={14}
                             required
                           />
+                          {patientNationalId && patientNationalId.length !== 14 && (
+                            <span style={{ fontSize: "11px", color: "#f59e0b", marginTop: "3px", display: "block" }}>
+                              {language === "ar" ? `الرقم القومي يجب أن يتكون من 14 رقم بالضبط (المكتمل: ${patientNationalId.length}/14)` : `Must be exactly 14 digits (current: ${patientNationalId.length}/14)`}
+                            </span>
+                          )}
                         </div>
 
                         <div className="field-group">
@@ -830,6 +863,7 @@ export function LoginRoute({
                         !patientFullName.trim() ||
                         !patientPhone.trim() ||
                         !patientEmail.trim() ||
+                        patientNationalId.trim().length !== 14 ||
                         patientPassword.length < 8 ||
                         patientPassword !== patientConfirmPassword
                       }
@@ -1056,6 +1090,7 @@ export function LoginRoute({
         onSuccess={handleGoogleSuccess}
         target="patient"
         language={language}
+        theme={theme}
       />
     </div>
   );
