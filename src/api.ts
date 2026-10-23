@@ -717,11 +717,67 @@ export function deleteClinicianSchedule(
 }
 
 export async function getDashboard(): Promise<DashboardContract> {
-  return request<DashboardContract>("/dashboard");
+  try {
+    return await request<DashboardContract>("/dashboard");
+  } catch (error) {
+    if (localStorage.getItem(DEMO_MODE_KEY) === "true" || isDemoRequestFailure(error)) {
+      return {
+        patient_count: 4,
+        upcoming_appointment_count: 2,
+        upcoming_appointments: [
+          {
+            id: "demo-apt-1",
+            patient_id: "demo-pt-1",
+            patient_name: "Mariam Hassan",
+            patient_code: "PT-2048",
+            starts_at: new Date(Date.now() + 3600000).toISOString(),
+            reason: "Follow-up consultation",
+            status: "confirmed",
+            reminder_status: "scheduled",
+          },
+          {
+            id: "demo-apt-2",
+            patient_id: "demo-pt-2",
+            patient_name: "Omar Khaled",
+            patient_code: "PT-2047",
+            starts_at: new Date(Date.now() + 7200000).toISOString(),
+            reason: "Diabetes review",
+            status: "arrived",
+            reminder_status: "scheduled",
+          },
+        ],
+        followups: [
+          {
+            id: "demo-pt-1",
+            patient_code: "PT-2048",
+            medical_record_number: "MRN-2048",
+            given_name: "Mariam",
+            family_name: "Hassan",
+            date_of_birth: "1982-05-14",
+            gender: "female",
+            condition: "Hypertension",
+            care_status: "follow_up_due",
+          },
+        ],
+        kpi: {
+          satisfaction_rate: "98.5%",
+          occupancy_rate: "84%",
+        },
+      };
+    }
+    throw error;
+  }
 }
 
 export async function getNotifications(): Promise<Array<{ id: string; kind: string; title: string; body: string; read: boolean; created_at: string }>> {
-  return request<Array<{ id: string; kind: string; title: string; body: string; read: boolean; created_at: string }>>("/notifications");
+  try {
+    return await request<Array<{ id: string; kind: string; title: string; body: string; read: boolean; created_at: string }>>("/notifications");
+  } catch (error) {
+    if (localStorage.getItem(DEMO_MODE_KEY) === "true" || isDemoRequestFailure(error)) {
+      return [];
+    }
+    throw error;
+  }
 }
 export const markNotificationRead = (id: string) => request<{ read: boolean }>(`/notifications/${id}/read`, { method: "PATCH" });
 
@@ -784,10 +840,85 @@ export async function getDepartmentMetrics(): Promise<DepartmentMetricsResponse>
   return request<DepartmentMetricsResponse>("/department-metrics");
 }
 
-export const getPatients = (q = "", page = 1, pageSize = 50) => {
+export const getPatients = async (q = "", page = 1, pageSize = 50): Promise<ApiPatient[]> => {
   const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (q.trim()) params.set("q", q.trim());
-  return request<ApiPatient[]>(`/patients?${params.toString()}`);
+  try {
+    return await request<ApiPatient[]>(`/patients?${params.toString()}`);
+  } catch (error) {
+    if (localStorage.getItem(DEMO_MODE_KEY) === "true" || isDemoRequestFailure(error)) {
+      const mockList: ApiPatient[] = [
+        {
+          id: "demo-pt-1",
+          patient_code: "PT-2048",
+          medical_record_number: "MRN-2048",
+          given_name: "Mariam",
+          family_name: "Hassan",
+          date_of_birth: "1982-05-14",
+          gender: "female",
+          condition: "Hypertension",
+          care_status: "follow_up_due",
+          department: "General Medicine",
+          phone: "+20 100 123 4567",
+          email: "mariam.hassan@example.com",
+        },
+        {
+          id: "demo-pt-2",
+          patient_code: "PT-2047",
+          medical_record_number: "MRN-2047",
+          given_name: "Omar",
+          family_name: "Khaled",
+          date_of_birth: "1995-11-20",
+          gender: "male",
+          condition: "Type 2 Diabetes",
+          care_status: "stable",
+          department: "Endocrinology",
+          phone: "+20 101 234 5678",
+          email: "omar.khaled@example.com",
+        },
+        {
+          id: "demo-pt-3",
+          patient_code: "PT-2043",
+          medical_record_number: "MRN-2043",
+          given_name: "Nour",
+          family_name: "El Din",
+          date_of_birth: "1968-02-03",
+          gender: "male",
+          condition: "Cardiac review",
+          care_status: "needs_attention",
+          department: "Cardiology",
+          phone: "+20 102 345 6789",
+          email: "nour.eldin@example.com",
+        },
+        {
+          id: "demo-pt-4",
+          patient_code: "PT-2040",
+          medical_record_number: "MRN-2040",
+          given_name: "Salma",
+          family_name: "Adel",
+          date_of_birth: "1989-08-19",
+          gender: "female",
+          condition: "Migraine",
+          care_status: "stable",
+          department: "Neurology",
+          phone: "+20 103 456 7890",
+          email: "salma.adel@example.com",
+        },
+      ];
+      if (q.trim()) {
+        const query = q.toLowerCase();
+        return mockList.filter(
+          (p) =>
+            p.given_name.toLowerCase().includes(query) ||
+            p.family_name.toLowerCase().includes(query) ||
+            p.medical_record_number.toLowerCase().includes(query) ||
+            p.patient_code.toLowerCase().includes(query)
+        );
+      }
+      return mockList;
+    }
+    throw error;
+  }
 };
 export const getPatientById = (id: string) => request<PatientDetailResponse>(`/patients/${id}`);
 export const createEncounter = (patientId: string, encounterType = "consultation") => request<ApiEncounter>("/encounters", { method: "POST", body: JSON.stringify({ patient_id: patientId, encounter_type: encounterType }) });
@@ -801,12 +932,40 @@ export const getTranscript = (id: string) => request<ApiTranscript>(`/transcript
 export const transcribeRecording = (id: string) => request<{ id: string; status: string; job_status?: string | null; job_wait_seconds?: number | null; worker_status?: "active" | "unresponsive" | "unknown"; transcript_text: string | null; confidence: number | null; provider: string }>(`/recordings/${id}/transcribe`, { method: "POST" });
 export const reviewTranscript = (id: string, transcriptText: string) => request<{ id: string; version: number; transcript_text: string; status: string }>(`/transcripts/${id}/review`, { method: "PATCH", body: JSON.stringify({ transcript_text: transcriptText }) });
 export const createPatient = (patient: PatientRegistrationInput) => request<ApiPatient>("/patients", { method: "POST", body: JSON.stringify({ ...patient, department: patient.department ?? "", project: patient.project ?? "" }) });
-export const getAppointments = (filters: { status?: string; fromAt?: string; toAt?: string; page?: number; pageSize?: number } = {}) => {
+export const getAppointments = async (filters: { status?: string; fromAt?: string; toAt?: string; page?: number; pageSize?: number } = {}): Promise<ApiAppointment[]> => {
   const params = new URLSearchParams({ page: String(filters.page ?? 1), page_size: String(filters.pageSize ?? 100) });
   if (filters.status) params.set("status", filters.status);
   if (filters.fromAt) params.set("from_at", filters.fromAt);
   if (filters.toAt) params.set("to_at", filters.toAt);
-  return request<ApiAppointment[]>(`/appointments?${params.toString()}`);
+  try {
+    return await request<ApiAppointment[]>(`/appointments?${params.toString()}`);
+  } catch (error) {
+    if (localStorage.getItem(DEMO_MODE_KEY) === "true" || isDemoRequestFailure(error)) {
+      return [
+        {
+          id: "demo-apt-1",
+          patient_id: "demo-pt-1",
+          patient_name: "Mariam Hassan",
+          patient_code: "PT-2048",
+          starts_at: new Date(Date.now() + 3600000).toISOString(),
+          reason: "Follow-up consultation",
+          status: "confirmed",
+          reminder_status: "scheduled",
+        },
+        {
+          id: "demo-apt-2",
+          patient_id: "demo-pt-2",
+          patient_name: "Omar Khaled",
+          patient_code: "PT-2047",
+          starts_at: new Date(Date.now() + 7200000).toISOString(),
+          reason: "Diabetes review",
+          status: "arrived",
+          reminder_status: "scheduled",
+        },
+      ];
+    }
+    throw error;
+  }
 };
 export const createAppointment = (appointment: { patient_id: string; starts_at: string; reason: string; status?: string }) => request<ApiAppointment>("/appointments", { method: "POST", body: JSON.stringify(appointment) });
 export type WalkInPayload = {
