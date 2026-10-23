@@ -725,31 +725,20 @@ export function Landing({
           >
             {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
           </button>
-          <div className="landing-auth-links">
+          <div className="landing-auth-links" dir={isArabic ? "rtl" : "ltr"}>
             <button
               type="button"
-              className="landing-auth-link"
+              className="landing-pill-google-btn"
               onClick={() => setShowGoogleModal(true)}
               title={isArabic ? "دخول الزوار بحساب Google" : "Visitor Google Sign-In"}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
-                background: "rgba(255,255,255,0.85)",
-                border: "1px solid #cbd5e1",
-                padding: "6px 12px",
-                borderRadius: "8px",
-                fontSize: "12px",
-                fontWeight: 700,
-                color: "#0f172a",
-                cursor: "pointer",
-              }}
             >
               <GoogleIcon size={14} />
               <span>{isArabic ? "دخول Google" : "Google Sign-In"}</span>
             </button>
+            <span className="landing-pill-divider" aria-hidden="true" />
             <button
-              className="landing-auth-link landing-auth-link-login"
+              type="button"
+              className="landing-pill-signin-btn"
               onClick={() => onEnter("signin")}
             >
               {isArabic ? "تسجيل الدخول" : "Sign In"}

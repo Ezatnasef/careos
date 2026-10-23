@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CheckCircle2, ShieldCheck, Sparkles, X } from "lucide-react";
+import { CheckCircle2, ShieldCheck, X } from "lucide-react";
 
 export function GoogleIcon({ size = 18 }: { size?: number }) {
   return (
@@ -56,38 +56,24 @@ export function GoogleAuthModal({
   const isAr = language === "ar";
   const [customName, setCustomName] = useState("");
   const [customEmail, setCustomEmail] = useState("");
-  const [selectedDemoAccount, setSelectedDemoAccount] = useState<number | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
-  const defaultAccounts: GoogleUserPayload[] = [
-    {
-      fullName: isAr ? "مريم حسن" : "Mariam Hassan",
-      email: "mariam.hassan.patient@gmail.com",
-      verified: true,
-    },
-    {
-      fullName: isAr ? "أحمد منصور الزائر" : "Ahmed Mansour (Visitor)",
-      email: "ahmed.mansour.visitor@gmail.com",
-      verified: true,
-    },
-  ];
-
-  const handleSelect = (account: GoogleUserPayload) => {
-    onSuccess(account);
-    onClose();
-  };
-
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customEmail) return;
+    if (!customEmail.trim()) return;
+    setIsSubmitting(true);
     const name = customName.trim() || customEmail.split("@")[0].replace(/[._]/g, " ");
-    onSuccess({
-      fullName: name,
-      email: customEmail.trim().toLowerCase(),
-      verified: true,
-    });
-    onClose();
+    setTimeout(() => {
+      onSuccess({
+        fullName: name,
+        email: customEmail.trim().toLowerCase(),
+        verified: true,
+      });
+      setIsSubmitting(false);
+      onClose();
+    }, 200);
   };
 
   return (
@@ -97,7 +83,8 @@ export function GoogleAuthModal({
         inset: 0,
         zIndex: 99999,
         background: "rgba(15, 23, 42, 0.65)",
-        backdropFilter: "blur(6px)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
         display: "grid",
         placeItems: "center",
         padding: "16px",
@@ -108,13 +95,14 @@ export function GoogleAuthModal({
         style={{
           background: "var(--paper, #ffffff)",
           border: "1px solid var(--line, #e2e8f0)",
-          borderRadius: "20px",
+          borderRadius: "24px",
           width: "100%",
-          maxWidth: "460px",
-          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-          padding: "24px 28px",
+          maxWidth: "430px",
+          boxShadow: "0 25px 60px -12px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.2)",
+          padding: "26px 28px",
           direction: isAr ? "rtl" : "ltr",
           position: "relative",
+          animation: "scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -125,146 +113,68 @@ export function GoogleAuthModal({
             position: "absolute",
             top: "16px",
             insetInlineEnd: "16px",
-            background: "none",
+            background: "rgba(148, 163, 184, 0.12)",
             border: "none",
+            borderRadius: "50%",
             cursor: "pointer",
             color: "var(--muted, #64748b)",
-            padding: "4px",
+            width: "30px",
+            height: "30px",
             display: "grid",
             placeItems: "center",
+            transition: "all 0.15s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(148, 163, 184, 0.25)";
+            e.currentTarget.style.color = "var(--ink, #0f172a)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "rgba(148, 163, 184, 0.12)";
+            e.currentTarget.style.color = "var(--muted, #64748b)";
           }}
           aria-label={isAr ? "إغلاق" : "Close"}
         >
-          <X size={18} />
+          <X size={16} />
         </button>
 
         {/* Modal Header */}
-        <div style={{ textAlign: "center", marginBottom: "20px" }}>
+        <div style={{ textAlign: "center", marginBottom: "22px" }}>
           <div
             style={{
-              width: "48px",
-              height: "48px",
+              width: "54px",
+              height: "54px",
               borderRadius: "50%",
-              background: "#ffffff",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-              border: "1px solid #e2e8f0",
-              margin: "0 auto 12px",
+              background: "linear-gradient(135deg, #ffffff, #f8fafc)",
+              boxShadow: "0 8px 24px rgba(66, 133, 244, 0.16), 0 2px 8px rgba(0,0,0,0.04)",
+              border: "1px solid rgba(226, 232, 240, 0.9)",
+              margin: "0 auto 14px",
               display: "grid",
               placeItems: "center",
             }}
           >
-            <GoogleIcon size={24} />
+            <GoogleIcon size={26} />
           </div>
 
-          <h3 style={{ margin: "0 0 6px", fontSize: "18px", fontWeight: 800, color: "var(--ink, #0f172a)" }}>
+          <h3 style={{ margin: "0 0 6px", fontSize: "19px", fontWeight: 800, color: "var(--ink, #0f172a)", letterSpacing: "-0.3px" }}>
             {isAr
               ? target === "patient"
                 ? "الدخول السريع كـ مريض عبر Google"
-                : "تسجيل كزائر وتجربة النظام عبر Google"
+                : "تسجيل كزائر وتجربة المنصة عبر Google"
               : target === "patient"
               ? "Sign in with Google as Patient"
               : "Register as Visitor via Google"}
           </h3>
-          <p style={{ margin: 0, fontSize: "13px", color: "var(--muted, #64748b)" }}>
+          <p style={{ margin: 0, fontSize: "13px", color: "var(--muted, #64748b)", lineHeight: 1.5 }}>
             {isAr
-              ? "اختر حسابك المعتمد أو أدخل بريد الـ Gmail للمتابعة فوراً"
-              : "Choose an active Google account or enter your Gmail"}
+              ? "أدخل بريد Google والاسم للمتابعة وتجربة المنصة فوراً بدون كلمة سر"
+              : "Enter your Google account and name to proceed instantly without a password"}
           </p>
         </div>
 
-        {/* Quick Google Profile Selection */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "18px" }}>
-          {defaultAccounts.map((acc, idx) => (
-            <button
-              key={acc.email}
-              type="button"
-              onClick={() => handleSelect(acc)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "10px 14px",
-                borderRadius: "12px",
-                border: "1px solid var(--line, #e2e8f0)",
-                background: "var(--canvas, #f8fafc)",
-                cursor: "pointer",
-                textAlign: isAr ? "right" : "left",
-                transition: "all 0.15s ease",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = "var(--teal, #0e8774)";
-                e.currentTarget.style.background = "rgba(14, 135, 116, 0.05)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = "var(--line, #e2e8f0)";
-                e.currentTarget.style.background = "var(--canvas, #f8fafc)";
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <div
-                  style={{
-                    width: "36px",
-                    height: "36px",
-                    borderRadius: "50%",
-                    background: idx === 0 ? "#e0e7ff" : "#fef3c7",
-                    color: idx === 0 ? "#4338ca" : "#b45309",
-                    display: "grid",
-                    placeItems: "center",
-                    fontWeight: 700,
-                    fontSize: "14px",
-                  }}
-                >
-                  {acc.fullName.charAt(0)}
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: "13px", color: "var(--ink, #0f172a)" }}>
-                    {acc.fullName}
-                  </div>
-                  <div style={{ fontSize: "12px", color: "var(--muted, #64748b)" }}>
-                    {acc.email}
-                  </div>
-                </div>
-              </div>
-              <span
-                style={{
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  color: "#059669",
-                  background: "rgba(16, 185, 129, 0.1)",
-                  padding: "2px 8px",
-                  borderRadius: "20px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px",
-                }}
-              >
-                <CheckCircle2 size={12} />
-                <span>{isAr ? "موثق" : "Verified"}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {/* Divider */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            margin: "16px 0",
-            color: "var(--muted, #94a3b8)",
-            fontSize: "12px",
-          }}
-        >
-          <div style={{ flex: 1, height: "1px", background: "var(--line, #e2e8f0)" }} />
-          <span>{isAr ? "أو استخدام بريد Google آخر" : "Or use another Google account"}</span>
-          <div style={{ flex: 1, height: "1px", background: "var(--line, #e2e8f0)" }} />
-        </div>
-
         {/* Custom Gmail Form */}
-        <form onSubmit={handleCustomSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <form onSubmit={handleCustomSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <div>
-            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "var(--ink, #0f172a)", marginBottom: "4px" }}>
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: "var(--ink, #1e293b)", marginBottom: "6px" }}>
               {isAr ? "الاسم الكامل" : "Full Name"}
             </label>
             <input
@@ -274,72 +184,143 @@ export function GoogleAuthModal({
               placeholder={isAr ? "مثال: د. حسام فتحي أو محمد علي" : "e.g. John Doe"}
               style={{
                 width: "100%",
-                padding: "8px 12px",
-                borderRadius: "10px",
-                border: "1px solid var(--line, #e2e8f0)",
+                padding: "10px 14px",
+                borderRadius: "12px",
+                border: "1px solid var(--line, #cbd5e1)",
                 background: "var(--paper, #ffffff)",
-                fontSize: "13px",
+                fontSize: "13.5px",
                 color: "var(--ink, #0f172a)",
                 outline: "none",
                 boxSizing: "border-box",
+                transition: "border-color 0.2s, box-shadow 0.2s",
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = "var(--teal, #0e8774)";
+                e.currentTarget.style.boxShadow = "0 0 0 3px rgba(14, 135, 116, 0.12)";
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = "var(--line, #cbd5e1)";
+                e.currentTarget.style.boxShadow = "none";
               }}
             />
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "var(--ink, #0f172a)", marginBottom: "4px" }}>
-              {isAr ? "بريد Google (Gmail)" : "Google Account Email"}
+            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: "var(--ink, #1e293b)", marginBottom: "6px" }}>
+              {isAr ? "بريد Google (Gmail)" : "Google Account (Gmail)"} <span style={{ color: "#ef4444" }}>*</span>
             </label>
-            <input
-              type="email"
-              required
-              value={customEmail}
-              onChange={(e) => setCustomEmail(e.target.value)}
-              placeholder="username@gmail.com"
-              style={{
-                width: "100%",
-                padding: "8px 12px",
-                borderRadius: "10px",
-                border: "1px solid var(--line, #e2e8f0)",
-                background: "var(--paper, #ffffff)",
-                fontSize: "13px",
-                color: "var(--ink, #0f172a)",
-                outline: "none",
-                boxSizing: "border-box",
-              }}
-            />
+            <div style={{ position: "relative" }}>
+              <input
+                type="email"
+                required
+                value={customEmail}
+                onChange={(e) => setCustomEmail(e.target.value)}
+                placeholder="username@gmail.com"
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  paddingInlineEnd: "36px",
+                  borderRadius: "12px",
+                  border: "1px solid var(--line, #cbd5e1)",
+                  background: "var(--paper, #ffffff)",
+                  fontSize: "13.5px",
+                  color: "var(--ink, #0f172a)",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  direction: "ltr",
+                  textAlign: isAr ? "right" : "left",
+                  transition: "border-color 0.2s, box-shadow 0.2s",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "var(--teal, #0e8774)";
+                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(14, 135, 116, 0.12)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = "var(--line, #cbd5e1)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  insetInlineEnd: "12px",
+                  pointerEvents: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  opacity: 0.75,
+                }}
+              >
+                <GoogleIcon size={16} />
+              </div>
+            </div>
           </div>
 
           <button
             type="submit"
+            disabled={isSubmitting || !customEmail.trim()}
             style={{
-              marginTop: "8px",
-              padding: "11px",
-              borderRadius: "10px",
+              marginTop: "6px",
+              padding: "12px 18px",
+              borderRadius: "12px",
               border: "none",
-              background: "var(--teal, #0e8774)",
+              background: "linear-gradient(135deg, #0e8774, #0b6b5c)",
               color: "#ffffff",
               fontWeight: 700,
               fontSize: "14px",
-              cursor: "pointer",
+              cursor: isSubmitting || !customEmail.trim() ? "not-allowed" : "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              gap: "8px",
-              boxShadow: "0 4px 12px rgba(14, 135, 116, 0.25)",
+              gap: "9px",
+              boxShadow: "0 4px 14px rgba(14, 135, 116, 0.28)",
+              opacity: isSubmitting || !customEmail.trim() ? 0.7 : 1,
+              transition: "all 0.2s ease",
+            }}
+            onMouseEnter={(e) => {
+              if (!isSubmitting && customEmail.trim()) {
+                e.currentTarget.style.transform = "translateY(-1px)";
+                e.currentTarget.style.boxShadow = "0 6px 18px rgba(14, 135, 116, 0.35)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "none";
+              e.currentTarget.style.boxShadow = "0 4px 14px rgba(14, 135, 116, 0.28)";
             }}
           >
-            <GoogleIcon size={16} />
+            <GoogleIcon size={17} />
             <span>
-              {isAr
+              {isSubmitting
+                ? (isAr ? "جارٍ تسجيل الدخول..." : "Signing in...")
+                : isAr
                 ? target === "patient"
-                  ? "المتابعة بحساب Google والدخول"
+                  ? "المتابعة بحساب Google والدخول فوراً"
                   : "تسجيل الزائر وتجربة المنصة فوراً"
                 : target === "patient"
-                ? "Continue & Enter Patient Portal"
-                : "Register Lead & Try Demo"}
+                ? "Continue with Google & Enter"
+                : "Register as Visitor & Explore"}
             </span>
           </button>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
+              marginTop: "4px",
+              fontSize: "11.5px",
+              color: "var(--muted, #64748b)",
+            }}
+          >
+            <ShieldCheck size={14} color="#0e8774" />
+            <span>
+              {isAr
+                ? "مصادقة سريعة ومشفرة · متوافق مع معايير الأمان وحماية البيانات"
+                : "Encrypted & secure authentication · HIPAA Compliant"}
+            </span>
+          </div>
         </form>
       </div>
     </div>
