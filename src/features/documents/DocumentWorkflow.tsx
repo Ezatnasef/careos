@@ -753,7 +753,7 @@ export function DocumentWorkflow({
                     <span>
                       {document.type} · {document.uploadedAt}
                       {document.status === "verified" && (
-                        <> · RAG ({document.chunksIndexed ?? 0} chunks)</>
+                        <> · {language === "ar" ? `RAG (${document.chunksIndexed ?? 0} مقطع)` : `RAG (${document.chunksIndexed ?? 0} chunks)`}</>
                       )}
                     </span>
                   </div>
@@ -768,7 +768,7 @@ export function DocumentWorkflow({
           </div>
         </section>
         {selectedDocument && (
-          <section className="panel documents-detail-panel">
+          <section className="panel documents-detail-panel" dir={language === "ar" ? "rtl" : "ltr"}>
             <PanelHeading title={t("selectedDocumentLabel")} detail={selectedDocument.type} />
             <div className="document-summary">
               <div className="detail-header-row">
@@ -788,10 +788,16 @@ export function DocumentWorkflow({
                     data-testid="document-rag-status"
                   >
                     {selectedDocument.status === "verified"
-                      ? `RAG Indexed (${selectedDocument.chunksIndexed ?? 0} chunks)`
+                      ? (language === "ar"
+                          ? `مفهرس في الذكاء الاصطناعي RAG (${selectedDocument.chunksIndexed ?? 0} مقطع)`
+                          : `RAG Indexed (${selectedDocument.chunksIndexed ?? 0} chunks)`)
                       : selectedDocument.status === "rejected"
-                        ? "Excluded from RAG (Rejected)"
-                        : "Pending Review — Not in RAG until approved"}
+                        ? (language === "ar"
+                            ? "مستبعد من RAG (مرفوض)"
+                            : "Excluded from RAG (Rejected)")
+                        : (language === "ar"
+                            ? "قيد المراجعة — لن يدخل في RAG حتى يتم اعتماده"
+                            : "Pending Review — Not in RAG until approved")}
                   </span>
                   <span className={`status ${documentStatusClass(selectedDocument.status)}`}>
                     {selectedDocument.status === "verified"
@@ -805,6 +811,7 @@ export function DocumentWorkflow({
                 <div
                   className="card"
                   data-testid="document-structured-candidates"
+                  dir={language === "ar" ? "rtl" : "ltr"}
                   style={{
                     marginTop: "0.85rem",
                     padding: "0.9rem",
@@ -816,20 +823,27 @@ export function DocumentWorkflow({
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
                     <span className="eyebrow" style={{ margin: 0 }}>
-                      Organized Clinical Data (OCR Structured Extraction)
+                      {language === "ar" ? "بيانات سريرية منظمة (استخراج OCR الدقيق)" : "Organized Clinical Data (OCR Structured Extraction)"}
                     </span>
                     <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
                       <span className="status confirmed" data-testid="structured-document-type">
-                        Type: {cand.document_type.replace(/_/g, " ")}
+                        {language === "ar" ? "النوع: " : "Type: "}
+                        {language === "ar"
+                          ? (cand.document_type.includes("prescription") || cand.document_type.includes("روشتة")
+                              ? "روشتة طبية"
+                              : cand.document_type.includes("clinical")
+                                ? "مستند سريري"
+                                : cand.document_type.replace(/_/g, " "))
+                          : cand.document_type.replace(/_/g, " ")}
                       </span>
                       {cand.document_date && (
                         <span className="status pending" data-testid="structured-document-date">
-                          Date: {cand.document_date}
+                          {language === "ar" ? "التاريخ: " : "Date: "}{cand.document_date}
                         </span>
                       )}
                       {cand.provenance?.ocr_engine && (
                         <span className="status pending">
-                          OCR: {cand.provenance.ocr_engine}
+                          {language === "ar" ? "محرك OCR: " : "OCR: "}{cand.provenance.ocr_engine}
                           {typeof cand.provenance.ocr_confidence === "number"
                             ? ` (${Math.round(cand.provenance.ocr_confidence * 100)}%)`
                             : ""}
@@ -841,7 +855,7 @@ export function DocumentWorkflow({
                           data-testid="structured-human-review-badge"
                           style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}
                         >
-                          <AlertTriangle size={13} /> Human Review Required
+                          <AlertTriangle size={13} /> {language === "ar" ? "يتطلب مراجعة الطبيب" : "Human Review Required"}
                         </span>
                       )}
                     </div>
@@ -1003,7 +1017,7 @@ export function DocumentWorkflow({
                   {cand.allergies && cand.allergies.length > 0 && (
                     <div data-testid="structured-allergies">
                       <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                        Allergies ({cand.allergies.length})
+                        {language === "ar" ? `الحساسية (${cand.allergies.length})` : `Allergies (${cand.allergies.length})`}
                       </strong>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
                         {cand.allergies.map((alg, idx) => (
@@ -1023,7 +1037,7 @@ export function DocumentWorkflow({
                   {cand.labs && cand.labs.length > 0 && (
                     <div data-testid="structured-labs">
                       <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                        Lab & Vital Results ({cand.labs.length})
+                        {language === "ar" ? `نتائج التحاليل والمؤشرات الحيوية (${cand.labs.length})` : `Lab & Vital Results (${cand.labs.length})`}
                       </strong>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", fontSize: "0.86rem" }}>
                         {cand.labs.map((lab, idx) => (
@@ -1040,9 +1054,9 @@ export function DocumentWorkflow({
                   {cand.follow_up && cand.follow_up.length > 0 && (
                     <div data-testid="structured-follow-up">
                       <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                        Follow-up & Plan
+                        {language === "ar" ? "المتابعة وخطة العلاج" : "Follow-up & Plan"}
                       </strong>
-                      <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.86rem" }}>
+                      <ul style={{ margin: 0, paddingInlineStart: "1.2rem", fontSize: "0.86rem" }}>
                         {cand.follow_up.map((item, idx) => (
                           <li key={idx}>{item.value}</li>
                         ))}
@@ -1056,8 +1070,12 @@ export function DocumentWorkflow({
                       data-testid="document-human-review-warnings"
                       style={{ margin: 0, fontSize: "0.85rem" }}
                     >
-                      <strong>Unreadable / Uncertain / Conflicting Fields Flagged for Clinician Review:</strong>
-                      <ul style={{ margin: "0.3rem 0 0", paddingLeft: "1.2rem" }}>
+                      <strong>
+                        {language === "ar"
+                          ? "حقول غير مؤكدة أو متضاربة تم تحديدها لمراجعة الطبيب:"
+                          : "Unreadable / Uncertain / Conflicting Fields Flagged for Clinician Review:"}
+                      </strong>
+                      <ul style={{ margin: "0.3rem 0 0", paddingInlineStart: "1.2rem" }}>
                         {cand.unreadable_segments?.map((seg, idx) => (
                           <li key={`unreadable-${idx}`}>
                             [{seg.field_hint || "general"} · {seg.status}] {seg.raw}
@@ -1065,7 +1083,7 @@ export function DocumentWorkflow({
                         ))}
                         {cand.conflicts?.map((conf, idx) => (
                           <li key={`conflict-${idx}`}>
-                            [Conflict: {conf.domain}] {conf.description}
+                            [{language === "ar" ? "تعارض: " : "Conflict: "}{conf.domain}] {conf.description}
                           </li>
                         ))}
                       </ul>
@@ -1096,7 +1114,7 @@ export function DocumentWorkflow({
                   disabled={rerunningOcr || reviewingStatus !== null || deletingDocument}
                   onClick={() => void handleRerunOcr()}
                 >
-                  <RefreshCw size={15} /> {rerunningOcr ? t("processingDocument") : "Re-run OCR"}
+                  <RefreshCw size={15} /> {rerunningOcr ? t("processingDocument") : (language === "ar" ? "إعادة تشغيل OCR" : "Re-run OCR")}
                 </button>
                 {canReviewDocuments && selectedDocument.status === "uploaded" && (
                   <>
@@ -1151,6 +1169,7 @@ export function DocumentWorkflow({
                 <div
                   className="card"
                   data-testid="document-rag-verify-panel"
+                  dir={language === "ar" ? "rtl" : "ltr"}
                   style={{
                     marginTop: "1rem",
                     padding: "0.9rem",
@@ -1162,10 +1181,14 @@ export function DocumentWorkflow({
                 >
                   <div>
                     <span className="eyebrow" style={{ margin: 0 }}>
-                      Verify Clinical RAG Retrieval (Approved Patient Documents)
+                      {language === "ar"
+                        ? "التحقق من استرجاع الملفات السريرية (RAG للمستندات المعتمدة)"
+                        : "Verify Clinical RAG Retrieval (Approved Patient Documents)"}
                     </span>
                     <p style={{ margin: "0.2rem 0 0", fontSize: "0.84rem", opacity: 0.8 }}>
-                      Ask a question about this patient&apos;s approved documents to verify chunk retrieval, grounding, and source citations.
+                      {language === "ar"
+                        ? "اطرح أي سؤال عن مستندات وروشتات هذا المريض المعتمدة للتحقق من دقة الاسترجاع والأدلة والمصادر السريرية."
+                        : "Ask a question about this patient's approved documents to verify chunk retrieval, grounding, and source citations."}
                     </p>
                   </div>
                   <form
@@ -1177,7 +1200,11 @@ export function DocumentWorkflow({
                       data-testid="document-rag-question-input"
                       value={ragQuestion}
                       onChange={(e) => setRagQuestion(e.target.value)}
-                      placeholder="e.g., What medications and HbA1c value are documented for this patient?"
+                      placeholder={
+                        language === "ar"
+                          ? "مثال: ما هي الأدوية وجرعاتها الموصوفة للمريض؟ أو ما هي شكوى المريض؟"
+                          : "e.g., What medications and HbA1c value are documented for this patient?"
+                      }
                       disabled={ragLoading}
                       style={{ flex: 1, minWidth: "220px" }}
                     />
@@ -1187,7 +1214,7 @@ export function DocumentWorkflow({
                       data-testid="document-rag-verify-btn"
                       disabled={ragLoading || !ragQuestion.trim()}
                     >
-                      <Search size={15} /> {ragLoading ? t("loading") : "Test RAG Retrieval"}
+                      <Search size={15} /> {ragLoading ? t("loading") : (language === "ar" ? "اختبار استرجاع RAG" : "Test RAG Retrieval")}
                     </button>
                   </form>
                   {ragError && (
@@ -1204,21 +1231,29 @@ export function DocumentWorkflow({
                         <span className={`status ${ragResult.grounded ? "confirmed" : "attention"}`}>
                           {ragResult.grounded ? (
                             <>
-                              <CheckCircle2 size={13} /> Evidence Grounded
+                              <CheckCircle2 size={13} /> {language === "ar" ? "مدعوم بأدلة سريرية موثقة" : "Evidence Grounded"}
                             </>
                           ) : (
                             <>
-                              <ShieldAlert size={13} /> Abstained / Insufficient Evidence
+                              <ShieldAlert size={13} /> {language === "ar" ? "أدلة غير كافية أو غير مسجلة في الملف" : "Abstained / Insufficient Evidence"}
                             </>
                           )}
                         </span>
-                        <span className="status pending">Mode: {ragResult.query_mode}</span>
-                        <span className="status pending">Chunks used: {ragResult.chunks_used}</span>
+                        <span className="status pending">
+                          {language === "ar" ? "النمط: " : "Mode: "}{ragResult.query_mode}
+                        </span>
+                        <span className="status pending">
+                          {language === "ar" ? "المقاطع المستخدمة: " : "Chunks used: "}{ragResult.chunks_used}
+                        </span>
                       </div>
                       <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{ragResult.answer}</div>
                       {ragResult.citations.length > 0 && (
                         <div style={{ display: "grid", gap: "0.4rem" }}>
-                          <strong>Retrieved Citations ({ragResult.citations.length}):</strong>
+                          <strong>
+                            {language === "ar"
+                              ? `المصادر والمقاطع المسترجعة (${ragResult.citations.length}):`
+                              : `Retrieved Citations (${ragResult.citations.length}):`}
+                          </strong>
                           {ragResult.citations.map((cit, idx) => (
                             <div
                               key={cit.chunk_id}
@@ -1230,10 +1265,10 @@ export function DocumentWorkflow({
                             >
                               <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
                                 <span>
-                                  [Source {idx + 1}] {cit.source} (Page {cit.page}
-                                  {cit.document_id ? ` · Doc ${cit.document_id}` : ""})
+                                  [{language === "ar" ? "المصدر " : "Source "}{idx + 1}] {cit.source} ({language === "ar" ? "صفحة " : "Page "}{cit.page}
+                                  {cit.document_id ? ` · ${language === "ar" ? "المستند " : "Doc "}${cit.document_id}` : ""})
                                 </span>
-                                <span>Score: {(cit.relevance_score * 100).toFixed(1)}%</span>
+                                <span>{language === "ar" ? "نسبة التطابق: " : "Score: "}{(cit.relevance_score * 100).toFixed(1)}%</span>
                               </div>
                               <div style={{ opacity: 0.85, marginTop: "0.2rem" }}>{cit.excerpt}</div>
                             </div>
