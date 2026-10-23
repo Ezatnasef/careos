@@ -323,8 +323,8 @@ def _build_extractive_answer(
         has_patient_context = bool(patient_context and patient_context.has_data())
         if not has_patient_context and not chunks:
             if lang == "ar":
-                return "لا توجد بيانات سريرية مسجلة للمريض للإجابة على هذا السؤال."
-            return "No patient-specific clinical data is available to answer this question."
+                return "لم يتم العثور على أدوية أو بيانات سريرية معتمدة مسجلة لهذا المريض حتى الآن. يرجى التأكد من اعتماد الروشتة أولاً (زر اعتماد المستند / Approve Document) لتتمكن المنظومة من استرجاعها."
+            return "No patient-specific clinical data is available to answer this question. Please ensure the document is approved first."
 
         if has_patient_context:
             if lang == "ar":
@@ -341,7 +341,7 @@ def _build_extractive_answer(
                 lines.append(f"- {w}")
         if chunks:
             if lang == "ar":
-                lines.append("\n**مقتطفات من مستندات المريض:**")
+                lines.append("\n**المعلومات المسترجعة من مستندات وروشتات المريض:**")
             else:
                 lines.append("\n**Patient Document Excerpts:**")
             for idx, chunk in enumerate(chunks[:3], start=1):
@@ -349,9 +349,15 @@ def _build_extractive_answer(
                 if len(excerpt) > 300:
                     excerpt = excerpt[:297].rsplit(" ", 1)[0] + "..."
                 source_type = chunk.get("source_type") or "guideline"
-                lines.append(
-                    f"- [Source {idx}] ({source_type}: {chunk['source']}, p.{chunk['page']}): {excerpt}"
-                )
+                if lang == "ar":
+                    source_label = "روشتة / مستند مريض" if source_type == "patient_document" else "إرشادات طبية"
+                    lines.append(
+                        f"- [المصدر {idx}] ({source_label}: *{chunk['source']}*، ص. {chunk['page']}):\n{excerpt}"
+                    )
+                else:
+                    lines.append(
+                        f"- [Source {idx}] ({source_type}: {chunk['source']}, p.{chunk['page']}): {excerpt}"
+                    )
         if patient_factors:
             if lang == "ar":
                 lines.append("\n**العوامل السريرية المطبقة:** " + "؛ ".join(patient_factors))
@@ -398,14 +404,26 @@ def _build_extractive_answer(
             )
         return "\n".join(lines)
 
-    for idx, chunk in enumerate(chunks, start=1):
-        source = chunk.get("source", "Unknown")
-        page = chunk.get("page", "?")
-        text = sanitize_untrusted_clinical_text(chunk.get("text", "").strip().replace("\n", " "))
-        if len(text) > 350:
-            text = text[:347].rsplit(" ", 1)[0] + "..."
-        source_type = chunk.get("source_type") or "guideline"
-        lines.append(f"- **[Source {idx}]** ({source_type}: *{source}*, p. {page}): {text}")
+    if lang == "ar":
+        lines.append("**المقتطفات السريرية المسترجعة من الإرشادات المعتمدة:**\n")
+        for idx, chunk in enumerate(chunks, start=1):
+            source = chunk.get("source", "Unknown")
+            page = chunk.get("page", "?")
+            text = sanitize_untrusted_clinical_text(chunk.get("text", "").strip().replace("\n", " "))
+            if len(text) > 350:
+                text = text[:347].rsplit(" ", 1)[0] + "..."
+            source_type = chunk.get("source_type") or "guideline"
+            source_lbl = "مستند / روشتة مريض" if source_type == "patient_document" else "إرشادات طبية سريرية"
+            lines.append(f"**[المصدر {idx}]** ({source_lbl}: *{source}*، ص. {page}):\n{text}\n")
+    else:
+        for idx, chunk in enumerate(chunks, start=1):
+            source = chunk.get("source", "Unknown")
+            page = chunk.get("page", "?")
+            text = sanitize_untrusted_clinical_text(chunk.get("text", "").strip().replace("\n", " "))
+            if len(text) > 350:
+                text = text[:347].rsplit(" ", 1)[0] + "..."
+            source_type = chunk.get("source_type") or "guideline"
+            lines.append(f"- **[Source {idx}]** ({source_type}: *{source}*, p. {page}): {text}")
 
     return "\n".join(lines)
 

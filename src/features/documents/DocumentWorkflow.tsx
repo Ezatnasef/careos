@@ -1240,16 +1240,42 @@ export function DocumentWorkflow({
                           )}
                         </span>
                         <span className="status pending">
-                          {language === "ar" ? "النمط: " : "Mode: "}{ragResult.query_mode}
+                          {(() => {
+                            if (language !== "ar") return `Mode: ${ragResult.query_mode}`;
+                            switch (ragResult.query_mode) {
+                              case "guideline_only":
+                                return "النمط: إرشادات طبية سريرية";
+                              case "patient_only":
+                                return "النمط: مستندات وروشتات المريض";
+                              case "mixed":
+                                return "النمط: مستندات المريض + إرشادات سريرية";
+                              default:
+                                return `النمط: ${ragResult.query_mode}`;
+                            }
+                          })()}
                         </span>
                         <span className="status pending">
                           {language === "ar" ? "المقاطع المستخدمة: " : "Chunks used: "}{ragResult.chunks_used}
                         </span>
                       </div>
-                      <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{ragResult.answer}</div>
+                      <div
+                        dir="auto"
+                        style={{
+                          padding: "0.85rem 1.1rem",
+                          borderRadius: "0.6rem",
+                          background: "rgba(148, 163, 184, 0.06)",
+                          border: "1px solid rgba(148, 163, 184, 0.18)",
+                          lineHeight: 1.65,
+                          fontSize: "0.92rem",
+                          textAlign: "start",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        <FormattedMessage text={ragResult.answer} />
+                      </div>
                       {ragResult.citations.length > 0 && (
-                        <div style={{ display: "grid", gap: "0.4rem" }}>
-                          <strong>
+                        <div style={{ display: "grid", gap: "0.4rem", marginTop: "0.2rem" }}>
+                          <strong style={{ fontSize: "0.88rem" }}>
                             {language === "ar"
                               ? `المصادر والمقاطع المسترجعة (${ragResult.citations.length}):`
                               : `Retrieved Citations (${ragResult.citations.length}):`}
@@ -1258,19 +1284,31 @@ export function DocumentWorkflow({
                             <div
                               key={cit.chunk_id}
                               style={{
-                                padding: "0.45rem 0.6rem",
-                                borderRadius: "0.4rem",
+                                padding: "0.6rem 0.8rem",
+                                borderRadius: "0.5rem",
                                 background: "rgba(148, 163, 184, 0.08)",
+                                border: "1px solid rgba(148, 163, 184, 0.15)",
                               }}
                             >
-                              <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, fontSize: "0.84rem" }}>
                                 <span>
                                   [{language === "ar" ? "المصدر " : "Source "}{idx + 1}] {cit.source} ({language === "ar" ? "صفحة " : "Page "}{cit.page}
                                   {cit.document_id ? ` · ${language === "ar" ? "المستند " : "Doc "}${cit.document_id}` : ""})
                                 </span>
                                 <span>{language === "ar" ? "نسبة التطابق: " : "Score: "}{(cit.relevance_score * 100).toFixed(1)}%</span>
                               </div>
-                              <div style={{ opacity: 0.85, marginTop: "0.2rem" }}>{cit.excerpt}</div>
+                              <div
+                                dir="auto"
+                                style={{
+                                  opacity: 0.9,
+                                  marginTop: "0.35rem",
+                                  lineHeight: 1.55,
+                                  textAlign: "start",
+                                  fontSize: "0.85rem",
+                                }}
+                              >
+                                {cit.excerpt}
+                              </div>
                             </div>
                           ))}
                         </div>

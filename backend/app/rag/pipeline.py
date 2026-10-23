@@ -571,7 +571,16 @@ _PATIENT_ONLY_PATTERNS = [
         r"ايه\s+(?:تحاليل|تحليل|فحوصات|فحص)\s+(?:المريض|المريضة)|"
         r"وريني\s+(?:نتيجة|نتائج)\s+(?:ال)?(?:تحاليل|تحليل|فحوصات|فحص)|"
         r"ما\s+(?:هي\s+)?(?:ادوية|دواء|الدواء|حساسية|بيانات|حالة|امراض|تشخيص|تشخيصات)\s+(?:المريض|المريضة)|"
-        r"لخص\s+(?:حالة|بيانات|ملف|تاريخ)\s+المريض)"
+        r"لخص\s+(?:حالة|بيانات|ملف|تاريخ)\s+المريض)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:ما\s+(?:هي\s+)?(?:ال)?(?:ادوية|دواء|الدواء|روشتة|الروشتة|علاج|العلاج|فحوصات|تحاليل|تشخيص|حساسية|بيانات|جرعات)\b.*?\b(?:المريض|المريضة|لهذا\s+المريض|لهذه\s+المريضة))",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:what\s+(?:medications?|drugs?|prescriptions?|doses?|dosages?|labs?|tests?)\b.*?\b(?:for|of|is)\s+(?:the|this)\s+patient)\b",
+        re.IGNORECASE,
     ),
 ]
 
@@ -588,14 +597,28 @@ def classify_rag_query(
 ) -> QueryMode:
     """Classify query intent; the mode does not determine evidence-source provenance."""
     q = _normalize_arabic_text((question or "").strip())
-    has_guideline_intent = bool(_GUIDELINE_KEYWORDS_IN_PATIENT_QUERY.search(q))
-    is_patient_lookup = any(pat.search(q) for pat in _PATIENT_ONLY_PATTERNS)
-    has_patient_reference = bool(re.search(r"\bpatient(?:'s)?\b|المريض|المريضة", q))
+    has_patient_reference = bool(re.search(r"\bpatient(?:'s)?\b|المريض|المريضة|لهذا\s+المريض|لهذه\s+المريضة", q))
+    asks_patient_record = bool(
+        re.search(
+            r"(?:موصوف|موصوفة|مسجل|مسجلة|مدون|مدونة|مكتوب|مكتوبة|في\s+الروشتة|في\s+الملف|في\s+المستند|prescribed|documented|recorded|taking|current)",
+            q,
+        )
+    )
+    has_explicit_guideline_word = bool(
+        re.search(r"\b(?:guideline|according\s+to\s+guidelines?|who\s+guidelines?)\b|(?:حسب\s+الدليل|ارشادات|توصيات\s+الهيئات)", q)
+    )
+    has_guideline_intent = (not asks_patient_record) and bool(_GUIDELINE_KEYWORDS_IN_PATIENT_QUERY.search(q))
+    if has_explicit_guideline_word:
+        has_guideline_intent = True
 
-    if is_patient_lookup and not has_guideline_intent:
+    is_patient_lookup = any(pat.search(q) for pat in _PATIENT_ONLY_PATTERNS) or (has_patient_reference and asks_patient_record)
+
+    if is_patient_lookup and not has_explicit_guideline_word:
         return "patient_only"
 
     if patient_context is None or not patient_context.has_data():
+        if is_patient_lookup:
+            return "patient_only"
         return "guideline_only"
 
     if has_guideline_intent and (is_patient_lookup or has_patient_reference):
