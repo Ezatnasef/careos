@@ -131,6 +131,13 @@ export type StructuredClinicalCandidates = {
     age?: number | string | null;
     sex?: string | null;
   };
+  clinician_metadata?: {
+    clinician_name?: string | null;
+    specialty?: string | null;
+    facility?: string | null;
+    clinic_address?: string | null;
+    clinic_phone?: string | null;
+  };
   diagnoses?: Array<{
     value: string;
     status: string;
@@ -144,6 +151,7 @@ export type StructuredClinicalCandidates = {
     dose?: string | null;
     frequency?: string | null;
     duration?: string | null;
+    instructions?: string | null;
     raw?: string;
     status?: string;
     confidence?: number;

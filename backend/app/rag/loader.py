@@ -49,6 +49,39 @@ _UNCERTAINTY_CANDIDATE_RE = re.compile(
     r"(?:اشتباه|محتمل|استبعاد|غير\s+مؤكد))",
     re.IGNORECASE,
 )
+_WATERMARK_NOISE_RE = re.compile(
+    r"^(?:"
+    r"(\b[للا]{2,4}\b\s*){2,}.*|"
+    r".*لال\s+الجين.*|"
+    r".*اواد\s+لال.*|"
+    r".*لجافا.*|"
+    r"^[^\w\s\u0600-\u06FF]{2,}$|"
+    r"^[٥5•*]$"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def _clean_medical_ocr_artifacts(text: str) -> str:
+    if not text:
+        return ""
+    t = re.sub(r"يومي[اإً]?ل[اإ]?لمدة", "يومياً لمدة", text)
+    t = re.sub(r"يومي[اإً]?لمدة", "يومياً لمدة", t)
+    t = re.sub(r"يومي[اإً]?لأسبوع", "يومياً لأسبوع", t)
+    t = re.sub(r"المدةأسبوع", "المدة أسبوع", t)
+    t = re.sub(r"المدةأسبوعين", "المدة أسبوعين", t)
+    t = re.sub(r"وَ?ث?ك?ر[ا-ي\s]*الل[ثت]وم", "وتكرر عند اللزوم", t)
+    t = re.sub(r"وتكرر\s+ين\s+الل[ثت]وم", "وتكرر عند اللزوم", t)
+    t = re.sub(r"تكر[رين]*\s+الل[ثت]وم", "تكرر عند اللزوم", t)
+    t = re.sub(r"عند\s+اللزوم\s+وتكرر", "وتكرر عند اللزوم", t)
+    t = re.sub(r"طبيب\s+وجراج", "طبيب وجراح", t)
+    t = re.sub(r"جامة\s+الأزهر", "جامعة الأزهر", t)
+    t = re.sub(r"الأقر\s+الدولي", "الأقصر الدولي", t)
+    t = re.sub(r"^\s*R[1|\\\/]\s*$", "R/", t, flags=re.MULTILINE)
+    t = re.sub(r"^\s*R[1|\\\/]\s+", "R/ ", t, flags=re.MULTILINE)
+    return t
+
+
 _DATE_EXTRACT_RE = re.compile(
     r"(?:(?:date(?:\s+of\s+(?:visit|report|service|exam|discharge))?|dated|التاريخ|تاريخ\s+(?:التقرير|الزيارة|الخروج|التحليل))\s*[:\-]?\s*)?"
     r"\b(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})\b",
@@ -56,13 +89,18 @@ _DATE_EXTRACT_RE = re.compile(
 )
 _DURATION_EXTRACT_RE = re.compile(
     r"(?:\b(?:for|x)\s+(\d+\s*(?:days?|weeks?|months?|d|wk|wks|mo))\b|"
-    r"(?:لمدة\s+(?:\d+\s*(?:أيام|يوم|أسابيع|أسبوع|أشهر|شهر)|أسبوعين|يومين|شهرين)))",
+    r"(?:لمدة\s+(?:أسبوعين|اسبوعين|أسبوع|اسبوع|شهرين|شهر|يومين|[0-9٠-٩]+\s*(?:أيام|ايام|يوم|أسابيع|اسابيع|أسبوع|اسبوع|أشهر|اشهر|شهر))))",
     re.IGNORECASE,
 )
 _FREQUENCY_EXTRACT_RE = re.compile(
     r"(?:\b(once\s+daily|twice\s+daily|three\s+times\s+daily|daily|BID|TID|QID|PRN|q\d+h|at\s+bedtime|every\s+\d+\s*hours?|PO|IV|IM)\b|"
-    r"(يومياً|يوميا|مرتين\s+يومياً|مرتين\s+يوميا|ثلاث\s+مرات\s+يومياً|ثلاث\s+مرات\s+يوميا|كل\s+\d+\s*ساعات|عند\s+اللزوم|مساءً|صباحاً))",
+    r"([1-9١-٩]\s*مرات\s*(?:يومياً|يوميا|باليوم|في\s+اليوم)?|يومياً|يوميا|مرتين\s+يومياً|مرتين\s+يوميا|مرتين|ثلاث\s+مرات\s+يومياً|ثلاث\s+مرات\s+يوميا|كل\s+[0-9١-٩]+\s*ساعات|عند\s+اللزوم|مساءً|صباحاً))",
     re.IGNORECASE,
+)
+_SYMPTOM_DIAGNOSIS_KEYWORDS = (
+    "إحمرار", "احمرار", "إجهاد", "اجهاد", "العينين", "العين", "حساسية", "التهاب",
+    "ألم", "الم", "صداع", "مغص", "سعال", "كحة", "جفاف", "مياه بيضاء", "مياه زرقاء",
+    "ضعف نظر", "حرارة", "سخونة", "طنين", "نزيف", "قيء", "غثيان", "ضيق تنفس",
 )
 _MEDICATION_LINE_RE = re.compile(
     r"(?:^|[\s\-•*:\d.)])"
@@ -83,7 +121,7 @@ _LAB_RESULT_RE = re.compile(
     re.IGNORECASE,
 )
 _PATIENT_NAME_RE = re.compile(
-    r"(?:^\s*(?:patient\s+name|patient|الاسم|اسم\s+المريض)\s*[:\-]\s*)([^\n|;،,]+)",
+    r"(?:^\s*(?:patient\s+name|patient|الاسم|اسم\s+المريض|الإسم)\s*[:\-]?\s*)([^\n|;،,]+)",
     re.IGNORECASE,
 )
 _MRN_RE = re.compile(
@@ -134,6 +172,7 @@ def normalize_clinical_text(
         raw = str(page_dict.get("text") or "")
         cleaned = _CONTROL_CHARS_RE.sub("", raw).replace("\r\n", "\n").replace("\r", "\n")
         cleaned = _BROKEN_HYPHEN_RE.sub(r"\1\2", cleaned)
+        cleaned = _clean_medical_ocr_artifacts(cleaned)
         lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in cleaned.split("\n")]
         non_empty = [ln for ln in lines if ln]
         if non_empty:
@@ -168,7 +207,11 @@ def normalize_clinical_text(
                 if kept_lines and kept_lines[-1] != "":
                     kept_lines.append("")
                 continue
-            if _DECORATIVE_LINE_RE.match(ln) or _STANDALONE_BOILERPLATE_RE.match(ln):
+            if (
+                _DECORATIVE_LINE_RE.match(ln)
+                or _STANDALONE_BOILERPLATE_RE.match(ln)
+                or _WATERMARK_NOISE_RE.match(ln)
+            ):
                 boilerplate_removed.append(ln)
                 continue
             if idx == first_idx and ln.lower() in repeated_headers:
@@ -211,17 +254,26 @@ def _extract_patient_metadata(full_text: str) -> Dict[str, Any]:
     mrn: Optional[str] = None
     age: Optional[int] = None
     sex: Optional[str] = None
+    extracted_symptom: Optional[str] = None
 
     for raw_line in full_text.split("\n"):
         line = raw_line.strip()
         if not line:
             continue
-        if patient_name is None:
+        if patient_name is None and extracted_symptom is None:
             nm = _PATIENT_NAME_RE.search(line)
             if nm:
-                candidate_name = re.split(r"\b(?:MRN|Age|Sex|Gender|DOB|رقم\s+الملف|العمر|الجنس)\b", nm.group(1), flags=re.IGNORECASE)[0].strip(" :-|،,")
+                candidate_name = re.split(
+                    r"\b(?:MRN|Age|Sex|Gender|DOB|رقم\s+الملف|العمر|السن|الجنس|النوع|التاريخ|تاريخ)\b",
+                    nm.group(1),
+                    flags=re.IGNORECASE,
+                )[0].strip(" :-|،,")
                 if candidate_name and not _UNREADABLE_MARKER_RE.search(candidate_name):
-                    patient_name = candidate_name
+                    norm_cand = re.sub(r"[\u064B-\u065F\u0670]", "", candidate_name)
+                    if any(kw in norm_cand for kw in _SYMPTOM_DIAGNOSIS_KEYWORDS):
+                        extracted_symptom = candidate_name
+                    else:
+                        patient_name = candidate_name
         if mrn is None:
             mm = _MRN_RE.search(line)
             if mm:
@@ -248,6 +300,53 @@ def _extract_patient_metadata(full_text: str) -> Dict[str, Any]:
         "mrn": mrn,
         "age": age,
         "sex": sex,
+        "extracted_symptom": extracted_symptom,
+    }
+
+
+def _extract_clinician_metadata(full_text: str) -> Dict[str, Any]:
+    clinician_name = None
+    specialty = None
+    facility = None
+    clinic_address = None
+    clinic_phone = None
+
+    lines = [ln.strip() for ln in full_text.splitlines() if ln.strip()]
+    for i, line in enumerate(lines):
+        if clinician_name is None:
+            m_doc = re.search(r"^(?:دكتور|د\.|طبيب|Dr\.|Doctor)\s*(.*)$", line, re.IGNORECASE)
+            if m_doc:
+                parts = [m_doc.group(0).strip()]
+                if i + 1 < len(lines) and not re.search(r"(?:طبيب|جراح|أخصائي|استشاري|جامعة|مستشفى|مركز|عيادة|التاريخ|الإسم|الاسم|R/)", lines[i + 1]):
+                    parts.append(lines[i + 1])
+                    if i + 2 < len(lines) and re.match(r"^[A-Za-z\s]+$", lines[i + 2]) and len(lines[i + 2]) < 40:
+                        parts.append(lines[i + 2])
+                clinician_name = " ".join(parts).strip()
+
+        if specialty is None:
+            if re.search(r"(?:طبيب\s+وجراح|جراح|أخصائي|اخصائي|استشاري|استشارية|قسم)\s+([^\n]+)", line):
+                specialty = line
+
+        if facility is None:
+            if re.search(r"(?:جامعة|مستشفى|مركز|عيادة|عيادات|مجمع)\s+([^\n]+)", line):
+                facility = line
+
+        if clinic_phone is None:
+            m_ph = re.search(r"(?:01[0125]\d{8}|(?:\+?20|0020)?\s*1[0125]\d{8})", line)
+            if m_ph:
+                clinic_phone = m_ph.group(0)
+
+        if clinic_address is None:
+            if any(loc in line for loc in ("الأقصر", "الاقصر", "القاهرة", "الجيزة", "الإسكندرية", "أسوان", "قنا", "سوهاج", "أسيوط", "المنيا", "البعيرات", "القرنة", "شارع", "بجوار", "أعلى صيدلية", "صيدلية")):
+                if not re.search(r"(?:دكتور|جامعة|مستشفى|التاريخ|الإسم|R/)", line):
+                    clinic_address = line
+
+    return {
+        "clinician_name": clinician_name,
+        "specialty": specialty,
+        "facility": facility,
+        "clinic_address": clinic_address,
+        "clinic_phone": clinic_phone,
     }
 
 
@@ -289,10 +388,11 @@ def extract_clinical_candidates(
     else:
         document_type = "clinical_document"
 
-    # 2. Explicit document date & patient metadata
+    # 2. Explicit document date, patient metadata & clinician metadata
     date_match = _DATE_EXTRACT_RE.search(full_text)
     document_date = date_match.group(1) if date_match else None
     patient_metadata = _extract_patient_metadata(full_text)
+    clinician_metadata = _extract_clinician_metadata(full_text)
 
     base_conf = (
         round(float(ocr_confidence), 3)
@@ -315,6 +415,22 @@ def extract_clinical_candidates(
     seen_diag: set[str] = set()
     seen_allergies: set[str] = set()
 
+    extracted_symptom = patient_metadata.pop("extracted_symptom", None)
+    if extracted_symptom:
+        diag_key = f"{extracted_symptom.lower()}::present"
+        if diag_key not in seen_diag:
+            seen_diag.add(diag_key)
+            diagnoses.append(
+                {
+                    "value": extracted_symptom,
+                    "status": "present",
+                    "confidence": base_conf,
+                    "page": 1,
+                    "source": source,
+                    "source_document_id": source_document_id,
+                }
+            )
+
     _excluded_med_tokens = {
         "page", "hemoglobin", "haemoglobin", "glucose", "fasting",
         "wbc", "rbc", "creatinine", "ejection", "fraction", "lvef",
@@ -328,6 +444,74 @@ def extract_clinical_candidates(
         r"(قرص\s+واحد|قرصين|كبسولة\s+واحدة|كبسولتين|\d+\s*(?:أقراص|قرص|كبسولات|كبسولة)))",
         re.IGNORECASE,
     )
+
+    # Extract Rx prescription blocks (e.g. R/ Drug Name \n Directions ...)
+    all_lines = [ln.strip() for ln in full_text.splitlines() if ln.strip()]
+    idx = 0
+    while idx < len(all_lines):
+        ln = all_lines[idx]
+        if ln == "R/" or ln.startswith("R/ ") or ln.startswith("R/"):
+            med_name = ln[2:].strip(" /:-") if not ln.startswith("R/ ") else ln[3:].strip()
+            if not med_name and idx + 1 < len(all_lines):
+                idx += 1
+                med_name = all_lines[idx].strip(" -•*:.")
+
+            drug_lower = med_name.lower()
+            if med_name and drug_lower not in _excluded_med_tokens and not any(tok in drug_lower.split() for tok in _excluded_med_tokens):
+                dosage = None
+                freq_str = None
+                dur_str = None
+                instructions = None
+                raw_parts = [ln, med_name]
+
+                j = idx + 1
+                while j < len(all_lines) and not (all_lines[j] == "R/" or all_lines[j].startswith("R/ ") or all_lines[j].startswith("R/")):
+                    nxt = all_lines[j]
+                    raw_parts.append(nxt)
+                    norm_nxt = re.sub(r"[\u064B-\u065F\u0670]", "", nxt)
+
+                    if not dosage:
+                        for df in ("eye drop", "eye drops", "ear drop", "drops", "drop", "ointment", "cream", "syrup", "gel", "lotion", "spray", "inhaler", "قطرة", "نقط", "مرهم", "كريم", "شراب", "جل", "بخاخ"):
+                            if df in med_name.lower() or df in norm_nxt.lower():
+                                dosage = "قطرة" if ("drop" in df or "قطرة" in df) else df
+                                break
+
+                    if not freq_str:
+                        m_f = _FREQUENCY_EXTRACT_RE.search(norm_nxt)
+                        if m_f:
+                            freq_str = m_f.group(1) or m_f.group(2) or m_f.group(0)
+
+                    if not dur_str:
+                        m_d = _DURATION_EXTRACT_RE.search(norm_nxt)
+                        if m_d:
+                            dur_str = m_d.group(1) or m_d.group(0)
+
+                    if not instructions:
+                        if "عند اللزوم" in norm_nxt or "تكرر" in norm_nxt or "as needed" in nxt.lower() or "prn" in nxt.lower():
+                            instructions = "وتكرر عند اللزوم" if ("وتكرر" in norm_nxt or "تكرر" in norm_nxt) else "عند اللزوم (PRN)"
+
+                    j += 1
+
+                med_key = f"{med_name.lower()}::{dosage or 'rx'}"
+                if med_key not in seen_meds:
+                    seen_meds.add(med_key)
+                    medications.append({
+                        "name": med_name,
+                        "strength": None,
+                        "dose": dosage,
+                        "dosage": dosage,
+                        "frequency": freq_str,
+                        "duration": dur_str,
+                        "instructions": instructions,
+                        "raw": " \n ".join(raw_parts),
+                        "status": "present",
+                        "confidence": base_conf,
+                        "page": 1,
+                        "source": source,
+                        "source_document_id": source_document_id,
+                    })
+                idx = j - 1
+        idx += 1
 
     for page_obj in normalized_pages:
         page_num = int(page_obj.get("page") or 1)
@@ -577,7 +761,16 @@ def extract_clinical_candidates(
                     )
                 )
             )
-            if not line.startswith("#") and not line.startswith("|") and not is_meta_or_header:
+            is_rx_or_clinician_line = (
+                line.startswith("R/")
+                or line in ("R/", "R1")
+                or any(m.get("name") and m["name"] in line for m in medications)
+                or (bool(clinician_metadata.get("clinician_name")) and line in str(clinician_metadata.get("clinician_name")))
+                or (bool(clinician_metadata.get("specialty")) and line in str(clinician_metadata.get("specialty")))
+                or (bool(clinician_metadata.get("facility")) and line in str(clinician_metadata.get("facility")))
+                or (bool(clinician_metadata.get("clinic_address")) and line in str(clinician_metadata.get("clinic_address")))
+            )
+            if not line.startswith("#") and not line.startswith("|") and not is_meta_or_header and not is_rx_or_clinician_line:
                 clinical_findings.append(
                     {
                         "value": line,
@@ -682,6 +875,7 @@ def extract_clinical_candidates(
         "document_type": document_type,
         "document_date": document_date,
         "patient_metadata": patient_metadata,
+        "clinician_metadata": clinician_metadata,
         "diagnoses": diagnoses,
         "medications": medications,
         "allergies": allergies,

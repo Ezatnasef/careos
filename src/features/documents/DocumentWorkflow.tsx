@@ -660,6 +660,49 @@ export function DocumentWorkflow({
                     </div>
                   </div>
 
+                  {cand.clinician_metadata &&
+                    (cand.clinician_metadata.clinician_name || cand.clinician_metadata.facility) && (
+                      <div
+                        data-testid="structured-clinician-metadata"
+                        style={{
+                          padding: "0.55rem 0.75rem",
+                          borderRadius: "0.5rem",
+                          background: "rgba(16, 185, 129, 0.08)",
+                          border: "1px solid rgba(16, 185, 129, 0.22)",
+                          fontSize: "0.88rem",
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: "0.8rem",
+                          alignItems: "center",
+                        }}
+                      >
+                        {cand.clinician_metadata.clinician_name && (
+                          <span>
+                            <strong>{language === "ar" ? "الطبيب المعالج:" : "Physician:"}</strong>{" "}
+                            {cand.clinician_metadata.clinician_name}
+                          </span>
+                        )}
+                        {cand.clinician_metadata.specialty && (
+                          <span>
+                            <strong>{language === "ar" ? "التخصص:" : "Specialty:"}</strong>{" "}
+                            {cand.clinician_metadata.specialty}
+                          </span>
+                        )}
+                        {cand.clinician_metadata.facility && (
+                          <span>
+                            <strong>{language === "ar" ? "المستشفى / الجهة:" : "Facility:"}</strong>{" "}
+                            {cand.clinician_metadata.facility}
+                          </span>
+                        )}
+                        {cand.clinician_metadata.clinic_phone && (
+                          <span>
+                            <strong>{language === "ar" ? "الهاتف:" : "Phone:"}</strong>{" "}
+                            {cand.clinician_metadata.clinic_phone}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
                   {cand.patient_metadata &&
                     (cand.patient_metadata.patient_name ||
                       cand.patient_metadata.mrn ||
@@ -671,22 +714,22 @@ export function DocumentWorkflow({
                       >
                         {cand.patient_metadata.patient_name && (
                           <span>
-                            <strong>Patient:</strong> {cand.patient_metadata.patient_name}
+                            <strong>{language === "ar" ? "المريض:" : "Patient:"}</strong> {cand.patient_metadata.patient_name}
                           </span>
                         )}
                         {cand.patient_metadata.mrn && (
                           <span>
-                            <strong>MRN:</strong> {cand.patient_metadata.mrn}
+                            <strong>{language === "ar" ? "رقم الملف:" : "MRN:"}</strong> {cand.patient_metadata.mrn}
                           </span>
                         )}
                         {cand.patient_metadata.age !== null && cand.patient_metadata.age !== undefined && (
                           <span>
-                            <strong>Age:</strong> {cand.patient_metadata.age}
+                            <strong>{language === "ar" ? "السن:" : "Age:"}</strong> {cand.patient_metadata.age}
                           </span>
                         )}
                         {cand.patient_metadata.sex && (
                           <span>
-                            <strong>Sex:</strong> {cand.patient_metadata.sex}
+                            <strong>{language === "ar" ? "النوع:" : "Sex:"}</strong> {cand.patient_metadata.sex}
                           </span>
                         )}
                       </div>
@@ -695,7 +738,7 @@ export function DocumentWorkflow({
                   {cand.diagnoses && cand.diagnoses.length > 0 && (
                     <div data-testid="structured-diagnoses">
                       <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                        Diagnoses ({cand.diagnoses.length})
+                        {language === "ar" ? `التشخيصات والشكوى السريرية (${cand.diagnoses.length})` : `Diagnoses (${cand.diagnoses.length})`}
                       </strong>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
                         {cand.diagnoses.map((diag, idx) => (
@@ -719,29 +762,51 @@ export function DocumentWorkflow({
                   {cand.medications && cand.medications.length > 0 && (
                     <div data-testid="structured-medications">
                       <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                        Medications ({cand.medications.length})
+                        {language === "ar" ? `الأدوية والوصفات الطبية (${cand.medications.length})` : `Medications (${cand.medications.length})`}
                       </strong>
-                      <div style={{ display: "grid", gap: "0.35rem", fontSize: "0.86rem" }}>
+                      <div style={{ display: "grid", gap: "0.45rem", fontSize: "0.86rem" }}>
                         {cand.medications.map((med, idx) => (
                           <div
                             key={`${med.name}-${idx}`}
                             style={{
-                              padding: "0.45rem 0.6rem",
-                              borderRadius: "0.4rem",
+                              padding: "0.55rem 0.75rem",
+                              borderRadius: "0.45rem",
                               background: "rgba(148, 163, 184, 0.08)",
+                              border: "1px solid rgba(148, 163, 184, 0.15)",
                               display: "flex",
                               flexWrap: "wrap",
-                              gap: "0.6rem",
+                              gap: "0.75rem",
                               alignItems: "center",
                             }}
                           >
-                            <strong>{med.name}</strong>
+                            <strong style={{ color: "var(--teal-primary, #0d9488)", fontSize: "0.92rem" }}>
+                              {med.name}
+                            </strong>
                             {(med.strength || med.dose) && (
-                              <span>Strength: {med.strength || med.dose}</span>
+                              <span>
+                                <strong>{language === "ar" ? "الجرعة:" : "Strength:"}</strong> {med.strength || med.dose}
+                              </span>
                             )}
-                            {med.dosage && <span>Dosage: {med.dosage}</span>}
-                            {med.frequency && <span>Frequency: {med.frequency}</span>}
-                            {med.duration && <span>Duration: {med.duration}</span>}
+                            {med.dosage && med.dosage !== (med.strength || med.dose) && (
+                              <span>
+                                <strong>{language === "ar" ? "الشكل:" : "Form:"}</strong> {med.dosage}
+                              </span>
+                            )}
+                            {med.frequency && (
+                              <span>
+                                <strong>{language === "ar" ? "التكرار:" : "Frequency:"}</strong> {med.frequency}
+                              </span>
+                            )}
+                            {med.duration && (
+                              <span>
+                                <strong>{language === "ar" ? "المدة:" : "Duration:"}</strong> {med.duration}
+                              </span>
+                            )}
+                            {med.instructions && (
+                              <span style={{ color: "var(--amber-text, #d97706)" }}>
+                                <strong>{language === "ar" ? "تعليمات:" : "Note:"}</strong> {med.instructions}
+                              </span>
+                            )}
                           </div>
                         ))}
                       </div>

@@ -1705,3 +1705,88 @@ def test_structured_ocr_evaluation_suite_arabic_and_english() -> None:
     assert total_fields_checked == total_fields_matched
 
 
+def test_egyptian_ophthalmology_prescription_ocr_and_candidate_extraction() -> None:
+    from app.rag.loader import extract_clinical_candidates, normalize_clinical_text
+
+    raw_ocr_output = (
+        "دكتور\n"
+        "٥\n"
+        "معاذ عطيتو\n"
+        "Moaz Ateto\n"
+        "طبيب وجراج العيون والمياه البيضاء والليزك\n"
+        "جامة الأزهر مستشفى الأقر الدولي\n"
+        "التاريخ٢٠٢\n"
+        "الإسم إحمراروإجهاد العينين السن\n"
+        "R/\n"
+        "Efemyo Eye Drop\n"
+        "قطرة ٣ مرات يوميالمدة أسبوع\n"
+        "R1\n"
+        "Lubrivic Eye Drop\n"
+        "قطرة ٣ مَرات يوميلالمدة أسبُوعين\n"
+        "وَثكر ين اللثوم\n"
+        "لال الجين\n"
+        "اواد لال االمين\n"
+        "لجافا"
+    )
+
+    norm = normalize_clinical_text(raw_ocr_output)
+    normalized = norm["normalized_text"]
+
+    # 1. Boilerplate / watermark artifacts stripped
+    assert "لال الجين" not in normalized
+    assert "اواد لال االمين" not in normalized
+    assert "لجافا" not in normalized
+    assert "٥" in norm["boilerplate_removed"] or "لال الجين" in norm["boilerplate_removed"]
+
+    # 2. Typos & spacing corrected
+    assert "طبيب وجراح" in normalized
+    assert "جامعة الأزهر" in normalized
+    assert "مستشفى الأقصر الدولي" in normalized
+    assert "يومياً لمدة أسبوع" in normalized
+    assert "وتكرر عند اللزوم" in normalized
+
+    # 3. Clinical candidate extraction
+    cands = extract_clinical_candidates(
+        raw_ocr_output,
+        source="moaz_ateto_prescription.jpg",
+        ocr_applied=True,
+        ocr_engine="PaddleOCR",
+        ocr_confidence=0.88,
+        review_status="pending",
+    )
+
+    # Patient name should NOT be the symptom
+    assert cands["patient_metadata"]["patient_name"] is None
+
+    # Symptom extracted as clinical diagnosis
+    diag_values = [d["value"] for d in cands["diagnoses"]]
+    assert any("إحمرار" in v and "العينين" in v for v in diag_values)
+    assert cands["field_status"]["diagnoses"] == "present"
+
+    # Clinician metadata extracted
+    assert cands["clinician_metadata"] is not None
+    assert "معاذ عطيتو" in cands["clinician_metadata"]["clinician_name"]
+    assert "طبيب وجراح العيون" in cands["clinician_metadata"]["specialty"]
+    assert "الأقصر الدولي" in cands["clinician_metadata"]["facility"]
+
+    # Medications extracted with drops dosage, frequency, duration & instructions
+    assert len(cands["medications"]) == 2
+    meds = {m["name"]: m for m in cands["medications"]}
+    assert "Efemyo Eye Drop" in meds
+    assert "Lubrivic Eye Drop" in meds
+
+    efemyo = meds["Efemyo Eye Drop"]
+    assert efemyo["dosage"] == "قطرة"
+    assert "٣ مرات" in (efemyo["frequency"] or "")
+    assert "أسبوع" in (efemyo["duration"] or "")
+
+    lubrivic = meds["Lubrivic Eye Drop"]
+    assert lubrivic["dosage"] == "قطرة"
+    assert "٣ مرات" in (lubrivic["frequency"] or "")
+    assert "أسبوعين" in (lubrivic["duration"] or "")
+    assert lubrivic["instructions"] == "وتكرر عند اللزوم"
+
+    assert cands["field_status"]["medications"] == "present"
+
+
+
