@@ -1789,4 +1789,115 @@ def test_egyptian_ophthalmology_prescription_ocr_and_candidate_extraction() -> N
     assert cands["field_status"]["medications"] == "present"
 
 
+def test_egyptian_psychiatric_prescription_dr_amir_samir_normalization_and_extraction() -> None:
+    from app.rag.loader import extract_clinical_candidates, normalize_clinical_text
+
+    raw_ocr_output = (
+        "دكتور\n"
+        "Dr\n"
+        "أمير سمير\n"
+        "Amir Samir\n"
+        "طبيب نفسى وعلاج إدمان\n"
+        "Psychiatrist and Addiction Therapist\n"
+        "عضو الجمعية الأمرّيكية للطب النفسي\n"
+        "D\n"
+        "Member of the American Psychiatric Association\n"
+        "Ami\n"
+        "وعلاج\n"
+        "مهن امحدأر\n"
+        "الأسو؛\n"
+        "vo0enseee\n"
+        "RlAtomox ex\n"
+        "6\n"
+        "كبيورلة\n"
+        "v\n"
+        "Estiean\n"
+        "بن ال\n"
+        "َب\n"
+        "2/Amipride\n"
+        "َب\n"
+        "رب الث\n"
+        "2\n"
+        "Quetiapine\n"
+        "5٢ه\n"
+        "R\n"
+        "r\n"
+        "فأميرسي\n"
+        "R\n"
+        "بد شهه\n"
+        "موعد المتابعه\n"
+        "للتواصل والحجز\n"
+        "متوفر كشف منزلى وكشف اونلاين\n"
+        "٥٠١٠٦٢٣٤٢٩٠٧"
+    )
+
+    norm = normalize_clinical_text(raw_ocr_output)
+    normalized = norm["normalized_text"]
+
+    # 1. Noise / artifacts stripped
+    assert "vo0enseee" not in normalized
+
+    # 2. Typos & medical corrections
+    assert "أمير سمير" in normalized
+    assert "الأمريكية" in normalized
+    assert "مهند أحمد عمر" in normalized
+    assert "السن: 22" in normalized
+    assert "Atomox Apex 60mg" in normalized
+    assert "Estikan 20mg" in normalized
+    assert "Amipride 200mg" in normalized
+    assert "Quetiapine 25mg" in normalized
+    assert "موعد المتابعة: بعد شهرين" in normalized
+
+    # 3. Clinical candidates extraction
+    cands = extract_clinical_candidates(
+        raw_ocr_output,
+        source="dr_amir_samir_prescription.jpg",
+        ocr_applied=True,
+        ocr_engine="PaddleOCR",
+        ocr_confidence=0.89,
+        review_status="pending",
+    )
+
+    # Clinician metadata
+    assert cands["clinician_metadata"] is not None
+    assert "أمير سمير" in cands["clinician_metadata"]["clinician_name"]
+    assert "Amir Samir" in cands["clinician_metadata"]["clinician_name"]
+    assert "طبيب نفس" in cands["clinician_metadata"]["specialty"]
+    assert "الجمعية الأمريكية للطب النفسي" in cands["clinician_metadata"]["facility"]
+    assert cands["clinician_metadata"]["clinic_phone"] == "01062342907"
+
+    # Patient metadata
+    assert cands["patient_metadata"]["patient_name"] == "مهند أحمد عمر"
+    assert cands["patient_metadata"]["age"] == 22
+
+    # Medications
+    meds = {m["name"]: m for m in cands["medications"]}
+    assert "Atomox Apex 60mg" in meds
+    assert "Estikan 20mg" in meds
+    assert "Amipride 200mg" in meds
+    assert "Quetiapine 25mg" in meds
+
+    atomox = meds["Atomox Apex 60mg"]
+    assert atomox["strength"] == "60mg"
+    assert atomox["dosage"] == "كبسولة"
+    assert "بعد الغداء" in (atomox["instructions"] or "")
+
+    estikan = meds["Estikan 20mg"]
+    assert estikan["strength"] == "20mg"
+    assert estikan["dosage"] == "قرص"
+    assert "بعد العشاء" in (estikan["instructions"] or "")
+
+    amipride = meds["Amipride 200mg"]
+    assert amipride["strength"] == "200mg"
+    assert "نصف قرص" in (amipride["instructions"] or "")
+
+    quetiapine = meds["Quetiapine 25mg"]
+    assert quetiapine["strength"] == "25mg"
+    assert "2 قرص" in (quetiapine["instructions"] or "")
+
+    # Follow-up
+    assert len(cands["follow_up"]) >= 1
+    assert any("بعد شهرين" in f["value"] for f in cands["follow_up"])
+
+
 

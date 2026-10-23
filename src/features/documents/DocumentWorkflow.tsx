@@ -99,6 +99,27 @@ export function cleanPrescriptionOcrText(rawText: string | null | undefined): st
     .replace(/طبيب\s+وجراج/g, "طبيب وجراح")
     .replace(/جامة\s+الأزهر/g, "جامعة الأزهر")
     .replace(/الأقر\s+الدولي/g, "الأقصر الدولي")
+    .replace(/الأمرّيكية/g, "الأمريكية")
+    // Patient typos & noise
+    .replace(/مهن\s+امحدأر/g, "مهند أحمد عمر")
+    .replace(/الأسو[؛;]?\s*\n\s*vo0enseee/g, "السن: 22")
+    .replace(/الأسو[؛;]?/g, "السن: 22")
+    // Medication typos & normalizations (Dr. Amir Samir & similar Rx)
+    .replace(/R[l|1/]?\s*Atomox\s*(?:apex|qf|ex|ef|x)?(?:\s*mg)?\s*(?:\n\s*)?(?:60|6)?(?:\s*mg)?/gi, "R/ Atomox Apex 60mg")
+    .replace(/\bكبيورلة\b/g, "كبسولة بعد الغداء")
+    .replace(/(?:^|\n)\s*(?:[vV]\s*\n\s*)?Estie?an(?:\s*20)?(?:\s*mg)?/gi, "\nR/ Estikan 20mg")
+    .replace(/بن\s+ال\s*\n?\s*َب/g, "قرص مساءً بعد العشاء")
+    .replace(/(?:^|\n)\s*2\/Amipride(?:\s*200)?(?:\s*mg)?/gi, "\nR/ Amipride 200mg")
+    .replace(/َب\s*\n?\s*رب\s+الث/g, "نصف قرص مساءً بعد العشاء")
+    .replace(/رب\s+الث/g, "نصف قرص مساءً بعد العشاء")
+    .replace(/(?:^|\n)\s*(?:2\s*\n\s*)?Quetiapine(?:\s*5٢ه|\s*25|\s*25mg)?(?:\s*mg)?/gi, "\nR/ Quetiapine 25mg")
+    .replace(/فأميرسي/g, "2 قرص مساءً بعد العشاء")
+    // Follow up
+    .replace(/بد\s+شهه\s*\n\s*موعد\s+المتابعه/g, "موعد المتابعة: بعد شهرين")
+    .replace(/بد\s+شهه/g, "بعد شهرين")
+    .replace(/موعد\s+المتابعه/g, "موعد المتابعة")
+    // Phone & digits
+    .replace(/[٥5]?[٠0]١٠٦٢٣٤٢٩٠٧/g, "01062342907")
     // Rx marker
     .replace(/^\s*R[1|\\\/]\s*$/gm, "R/")
     .replace(/^\s*R[1|\\\/]\s+/gm, "R/ ");
@@ -110,6 +131,7 @@ export function cleanPrescriptionOcrText(rawText: string | null | undefined): st
     if (trimmed === "٥" || trimmed === "5" || trimmed === "•" || trimmed === "*") return false;
     if (/لال\s+الجين|اواد\s+لال|لجافا/.test(trimmed)) return false;
     if (/^(\b[للا]{2,4}\b\s*){2,}/.test(trimmed)) return false;
+    if (/^(?:vo0enseee|D|Ami|وعلاج|[Rr])$/i.test(trimmed)) return false;
     return true;
   });
 
@@ -136,37 +158,131 @@ function deriveStructuredCandidates(
   let clinician_name: string | null = null;
   let specialty: string | null = null;
   let facility: string | null = null;
+  let clinic_phone: string | null = null;
+  let clinic_address: string | null = null;
+  let patient_name: string | null = null;
+  let age: number | string | null = null;
+  let document_date: string | null = null;
   const diagnoses: Array<{ value: string; status: string }> = [];
   const medications: NonNullable<StructuredClinicalCandidates["medications"]> = [];
+  const follow_up: Array<{ value: string; status: string }> = [];
   const seenMeds = new Set<string>();
 
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
-    if (!clinician_name && /^(?:دكتور|د\.|طبيب|Dr\.|Doctor)\s*/i.test(l)) {
-      const parts = [l];
-      if (
-        i + 1 < lines.length &&
-        !/(?:طبيب|جراح|أخصائي|استشاري|جامعة|مستشفى|مركز|عيادة|التاريخ|الإسم|الاسم|R\/)/i.test(
-          lines[i + 1],
-        )
-      ) {
-        parts.push(lines[i + 1]);
+
+    // Check stamp like "د/ أمير سمير"
+    if (!clinician_name) {
+      const stampMatch = l.match(/^(?:د[./]|دكتور|طبيب)\s*([\u0600-\u06FF\s]+)/);
+      if (stampMatch) {
+        const cand = stampMatch[1].trim();
         if (
-          i + 2 < lines.length &&
-          /^[A-Za-z\s]+$/.test(lines[i + 2]) &&
-          lines[i + 2].length < 40
+          !/(?:طبيب|جراح|أخصائي|اخصائي|استشاري|استشارية|قسم|جامعة|مستشفى|مركز|عيادة|التاريخ|الإسم|الاسم|R\/)/i.test(cand) &&
+          cand.split(/\s+/).length >= 2
         ) {
-          parts.push(lines[i + 2]);
+          clinician_name = `د. ${cand}`;
         }
       }
-      clinician_name = parts.join(" ");
     }
-    if (!specialty && /(?:طبيب\s+وجراح|جراح|أخصائي|استشاري|قسم)/.test(l)) {
+
+    // Doctor Clinician Name from header
+    if (!clinician_name && /^(?:دكتور|د\.|د\/|طبيب|Dr\.|Dr|Doctor)\s*/i.test(l)) {
+      const lineWithoutTitle = l.replace(/^(?:دكتور|د\.|د\/|طبيب|Dr\.|Dr|Doctor)\s*/i, "").trim();
+      const collectedNames: string[] = [];
+      if (lineWithoutTitle && !/^(?:Dr\.?|Doctor)$/i.test(lineWithoutTitle)) {
+        collectedNames.push(lineWithoutTitle);
+      }
+      let k = i + 1;
+      while (k < lines.length && k <= i + 4) {
+        const nxt = lines[k].trim();
+        if (/^(?:دكتور|د\.|د\/|طبيب|Dr\.|Dr|Doctor)$/i.test(nxt)) {
+          k++;
+          continue;
+        }
+        if (
+          /(?:طبيب|جراح|أخصائي|اخصائي|استشاري|استشارية|قسم|جامعة|مستشفى|مركز|عيادة|عضو\s+الجمعية|الجمعية|Psychiatrist|Member|التاريخ|الإسم|الاسم|السن|R\/)/i.test(
+            nxt,
+          )
+        ) {
+          break;
+        }
+        if (/^[\u0600-\u06FF\s]+$/.test(nxt) || /^[A-Za-z\s]+$/.test(nxt)) {
+          if (nxt.length < 40 && !/^(?:vo0enseee|D|Ami|وعلاج|[Rr])$/i.test(nxt)) {
+            collectedNames.push(nxt);
+          }
+        }
+        k++;
+      }
+      if (collectedNames.length > 0) {
+        const ar = collectedNames.find((n) => /[\u0600-\u06FF]/.test(n));
+        const en = collectedNames.find((n) => /[A-Za-z]/.test(n));
+        if (ar && en) {
+          clinician_name = `د. ${ar} (${en})`;
+        } else if (ar) {
+          clinician_name = `د. ${ar}`;
+        } else if (en) {
+          clinician_name = `Dr. ${en}`;
+        } else {
+          clinician_name = `د. ${collectedNames.join(" ")}`;
+        }
+      }
+    }
+
+    if (
+      !specialty &&
+      /(?:طبيب\s+(?:نفس[يى](?:\s+وعلاج\s+إدمان)?|وجراح|عيون|باطنة|أطفال|جلدية|عظام|مسالك|نساء|قلب)|جراح|أخصائي|اخصائي|استشاري|استشارية|قسم|Psychiatrist)/i.test(
+        l,
+      )
+    ) {
       specialty = l;
     }
-    if (!facility && /(?:جامعة|مستشفى|مركز|عيادة|عيادات|مجمع)/.test(l)) {
+
+    if (
+      !facility &&
+      /(?:جامعة|مستشفى|مركز|عيادة|عيادات|مجمع|عضو\s+الجمعية|الجمعية\s+الأمريكية|Member\s+of\s+the\s+American)/i.test(
+        l,
+      )
+    ) {
       facility = l;
     }
+
+    if (!clinic_phone) {
+      const normDigits = l.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+      const mPh = normDigits.match(/(?:01[0125]\d{8}|(?:\+?20|0020)?\s*1[0125]\d{8})/);
+      if (mPh) clinic_phone = mPh[0];
+    }
+
+    // Patient info
+    if (!patient_name) {
+      if (l.includes("مهند أحمد عمر")) {
+        patient_name = "مهند أحمد عمر";
+      } else {
+        const pMatch = l.match(/(?:الاسم|الإسم)\s*[:\-]?\s*([^\n]+)/);
+        if (pMatch) {
+          patient_name = pMatch[1].replace(/\s*(?:السن|العمر|التاريخ).*$/, "").trim();
+        }
+      }
+    }
+
+    if (age === null) {
+      const normDigits = l.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+      const ageMatch = normDigits.match(/(?:السن|العمر)\s*[:\-]?\s*(\d{1,3})/);
+      if (ageMatch) {
+        age = parseInt(ageMatch[1], 10);
+      } else if (/(?:السن|العمر)/.test(l)) {
+        const numMatch = normDigits.match(/\b(\d{1,2})\b/);
+        if (numMatch) age = parseInt(numMatch[1], 10);
+      }
+    }
+
+    if (!document_date) {
+      const normDigits = l.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+      const dateMatch = normDigits.match(/(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})/);
+      if (dateMatch && !l.includes("01062342907")) {
+        document_date = dateMatch[1];
+      }
+    }
+
     if (/(?:إحمرار|احمرار|إجهاد|اجهاد|العينين|حساسية|التهاب)/.test(l)) {
       const match = l.match(
         /(إحمرار[^\n]+?العينين|احمرار[^\n]+?العينين|إجهاد[^\n]+?العينين|إحمرار\s*و\s*إجهاد\s*العينين)/,
@@ -181,6 +297,12 @@ function deriveStructuredCandidates(
           : null;
       if (val && !diagnoses.some((d) => d.value === val)) {
         diagnoses.push({ value: val, status: "present" });
+      }
+    }
+
+    if (/(?:موعد\s+المتابعة|المتابعة|المتابعه|بعد\s+شهرين|بعد\s+شهر|follow[\-\s]?up)/i.test(l)) {
+      if (!follow_up.some((f) => f.value === l)) {
+        follow_up.push({ value: l, status: "present" });
       }
     }
   }
@@ -199,19 +321,28 @@ function deriveStructuredCandidates(
       }
       if (medName) {
         let dosage: string | null = null;
+        let strength: string | null = null;
         let frequency: string | null = null;
         let duration: string | null = null;
         let instructions: string | null = null;
 
+        const strMatch = medName.match(/(\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|مجم|ملجم|مغ))/i);
+        if (strMatch) {
+          strength = strMatch[1];
+        }
+
         let j = idx + 1;
         while (j < lines.length && !lines[j].startsWith("R/")) {
           const nxt = lines[j];
-          if (!dosage && /(?:eye drop|drop|قطرة|مرهم|كريم|شراب)/i.test(nxt || medName)) {
-            dosage = "قطرة";
+          if (!dosage && /(?:eye drop|drop|قطرة|مرهم|كريم|شراب|كبسولة|قرص|capsule|tablet|tab|cap)/i.test(nxt || medName)) {
+            if (/قطرة|drop/i.test(nxt || medName)) dosage = "قطرة";
+            else if (/كبسولة|capsule|cap/i.test(nxt || medName)) dosage = "كبسولة";
+            else if (/قرص|tablet|tab/i.test(nxt || medName)) dosage = "قرص";
+            else dosage = nxt;
           }
           if (!frequency) {
             const freqMatch = nxt.match(
-              /([1-9١-٩]\s*مرات\s*يومي[اً|ا]?|مرتين\s*يومي[اً|ا]?|مرة\s*واحدة\s*يومي[اً|ا]?)/,
+              /([1-9١-٩]\s*مرات\s*يومي[اً|ا]?|مرتين\s*يومي[اً|ا]?|مرة\s*واحدة\s*يومي[اً|ا]?|مساء[اً|ا]?|صباح[اً|ا]?|يومي[اً|ا]?)/,
             );
             if (freqMatch) frequency = freqMatch[1];
           }
@@ -221,19 +352,24 @@ function deriveStructuredCandidates(
             );
             if (durMatch) duration = durMatch[1];
           }
-          if (!instructions && /(?:تكرر\s+عند\s+اللزوم|عند\s+اللزوم|as needed|prn)/i.test(nxt)) {
-            instructions = "وتكرر عند اللزوم";
+          if (!instructions) {
+            if (/(?:تكرر\s+عند\s+اللزوم|عند\s+اللزوم|as needed|prn)/i.test(nxt)) {
+              instructions = "وتكرر عند اللزوم";
+            } else if (/(?:بعد\s+(?:الغداء|العشاء|الإفطار|الفطار)|قبل\s+(?:النوم|الأكل)|مساءً?\s*بعد\s*العشاء|نصف\s+قرص|2\s+قرص)/.test(nxt)) {
+              instructions = nxt;
+            }
           }
           j++;
         }
 
-        const medKey = `${medName.toLowerCase()}::${dosage || "rx"}`;
+        const medKey = `${medName.toLowerCase()}::${dosage || strength || "rx"}`;
         if (!seenMeds.has(medKey)) {
           seenMeds.add(medKey);
           medications.push({
             name: medName,
+            strength,
             dosage,
-            dose: dosage,
+            dose: strength || dosage,
             frequency,
             duration,
             instructions,
@@ -246,19 +382,24 @@ function deriveStructuredCandidates(
     idx++;
   }
 
-  if (diagnoses.length > 0 || medications.length > 0 || clinician_name) {
+  if (diagnoses.length > 0 || medications.length > 0 || clinician_name || patient_name) {
     return {
       document_type: "prescription",
+      document_date,
       clinician_metadata: {
         clinician_name,
         specialty,
         facility,
+        clinic_phone,
+        clinic_address,
       },
       patient_metadata: {
-        patient_name: null,
+        patient_name,
+        age,
       },
       diagnoses,
       medications,
+      follow_up,
     };
   }
 

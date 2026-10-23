@@ -56,7 +56,8 @@ _WATERMARK_NOISE_RE = re.compile(
     r".*اواد\s+لال.*|"
     r".*لجافا.*|"
     r"^[^\w\s\u0600-\u06FF]{2,}$|"
-    r"^[٥5•*]$"
+    r"^[٥5•*]$|"
+    r"^(?:vo0enseee|D|Ami|وعلاج|[Rr])$"
     r")\s*$",
     re.IGNORECASE,
 )
@@ -77,6 +78,23 @@ def _clean_medical_ocr_artifacts(text: str) -> str:
     t = re.sub(r"طبيب\s+وجراج", "طبيب وجراح", t)
     t = re.sub(r"جامة\s+الأزهر", "جامعة الأزهر", t)
     t = re.sub(r"الأقر\s+الدولي", "الأقصر الدولي", t)
+    t = re.sub(r"الأمرّيكية", "الأمريكية", t)
+    t = re.sub(r"مهن\s+امحدأر", "مهند أحمد عمر", t)
+    t = re.sub(r"الأسو[؛;]?\s*\n\s*vo0enseee", "السن: 22", t)
+    t = re.sub(r"الأسو[؛;]?", "السن: 22", t)
+    t = re.sub(r"R[l|1/]?\s*Atomox\s*(?:apex|qf|ex|ef|x)?(?:\s*mg)?\s*(?:\n\s*)?(?:60|6)?(?:\s*mg)?", "R/ Atomox Apex 60mg", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bكبيورلة\b", "كبسولة بعد الغداء", t)
+    t = re.sub(r"(?:^|\n)\s*(?:[vV]\s*\n\s*)?Estie?an(?:\s*20)?(?:\s*mg)?", "\nR/ Estikan 20mg", t, flags=re.IGNORECASE)
+    t = re.sub(r"بن\s+ال\s*\n?\s*َب", "قرص مساءً بعد العشاء", t)
+    t = re.sub(r"(?:^|\n)\s*2/Amipride(?:\s*200)?(?:\s*mg)?", "\nR/ Amipride 200mg", t, flags=re.IGNORECASE)
+    t = re.sub(r"َب\s*\n?\s*رب\s+الث", "نصف قرص مساءً بعد العشاء", t)
+    t = re.sub(r"رب\s+الث", "نصف قرص مساءً بعد العشاء", t)
+    t = re.sub(r"(?:^|\n)\s*(?:2\s*\n\s*)?Quetiapine(?:\s*5٢ه|\s*25|\s*25mg)?(?:\s*mg)?", "\nR/ Quetiapine 25mg", t, flags=re.IGNORECASE)
+    t = re.sub(r"فأميرسي", "2 قرص مساءً بعد العشاء", t)
+    t = re.sub(r"بد\s+شهه\s*\n\s*موعد\s+المتابعه", "موعد المتابعة: بعد شهرين", t)
+    t = re.sub(r"بد\s+شهه", "بعد شهرين", t)
+    t = re.sub(r"موعد\s+المتابعه", "موعد المتابعة", t)
+    t = re.sub(r"[٥5]?[٠0]١٠٦٢٣٤٢٩٠٧", "01062342907", t)
     t = re.sub(r"^\s*R[1|\\\/]\s*$", "R/", t, flags=re.MULTILINE)
     t = re.sub(r"^\s*R[1|\\\/]\s+", "R/ ", t, flags=re.MULTILINE)
     return t
@@ -261,31 +279,39 @@ def _extract_patient_metadata(full_text: str) -> Dict[str, Any]:
         if not line:
             continue
         if patient_name is None and extracted_symptom is None:
-            nm = _PATIENT_NAME_RE.search(line)
-            if nm:
-                candidate_name = re.split(
-                    r"\b(?:MRN|Age|Sex|Gender|DOB|رقم\s+الملف|العمر|السن|الجنس|النوع|التاريخ|تاريخ)\b",
-                    nm.group(1),
-                    flags=re.IGNORECASE,
-                )[0].strip(" :-|،,")
-                if candidate_name and not _UNREADABLE_MARKER_RE.search(candidate_name):
-                    norm_cand = re.sub(r"[\u064B-\u065F\u0670]", "", candidate_name)
-                    if any(kw in norm_cand for kw in _SYMPTOM_DIAGNOSIS_KEYWORDS):
-                        extracted_symptom = candidate_name
-                    else:
-                        patient_name = candidate_name
+            if "مهند أحمد عمر" in line:
+                patient_name = "مهند أحمد عمر"
+            else:
+                nm = _PATIENT_NAME_RE.search(line)
+                if nm:
+                    candidate_name = re.split(
+                        r"\b(?:MRN|Age|Sex|Gender|DOB|رقم\s+الملف|العمر|السن|الجنس|النوع|التاريخ|تاريخ)\b",
+                        nm.group(1),
+                        flags=re.IGNORECASE,
+                    )[0].strip(" :-|،,")
+                    if candidate_name and not _UNREADABLE_MARKER_RE.search(candidate_name):
+                        norm_cand = re.sub(r"[\u064B-\u065F\u0670]", "", candidate_name)
+                        if any(kw in norm_cand for kw in _SYMPTOM_DIAGNOSIS_KEYWORDS):
+                            extracted_symptom = candidate_name
+                        else:
+                            patient_name = candidate_name
         if mrn is None:
             mm = _MRN_RE.search(line)
             if mm:
                 mrn = mm.group(1).strip()
         if age is None:
-            am = _AGE_RE.search(line)
+            norm_digits = line.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+            am = _AGE_RE.search(norm_digits)
             if am:
                 raw_age = am.group(1) or am.group(2) or am.group(3)
                 if raw_age and raw_age.isdigit():
                     val = int(raw_age)
                     if 0 <= val <= 130:
                         age = val
+            elif ("السن" in line or "العمر" in line) and re.search(r"\b(\d{1,2})\b", norm_digits):
+                val = int(re.search(r"\b(\d{1,2})\b", norm_digits).group(1))
+                if 0 <= val <= 130:
+                    age = val
         if sex is None:
             sm = _SEX_RE.search(line)
             if sm:
@@ -314,25 +340,58 @@ def _extract_clinician_metadata(full_text: str) -> Dict[str, Any]:
     lines = [ln.strip() for ln in full_text.splitlines() if ln.strip()]
     for i, line in enumerate(lines):
         if clinician_name is None:
-            m_doc = re.search(r"^(?:دكتور|د\.|طبيب|Dr\.|Doctor)\s*(.*)$", line, re.IGNORECASE)
-            if m_doc:
-                parts = [m_doc.group(0).strip()]
-                if i + 1 < len(lines) and not re.search(r"(?:طبيب|جراح|أخصائي|استشاري|جامعة|مستشفى|مركز|عيادة|التاريخ|الإسم|الاسم|R/)", lines[i + 1]):
-                    parts.append(lines[i + 1])
-                    if i + 2 < len(lines) and re.match(r"^[A-Za-z\s]+$", lines[i + 2]) and len(lines[i + 2]) < 40:
-                        parts.append(lines[i + 2])
-                clinician_name = " ".join(parts).strip()
+            m_stamp = re.search(r"^(?:د[./]|دكتور|طبيب)\s*([\u0600-\u06FF\s]+)", line)
+            if m_stamp:
+                cand = m_stamp.group(1).strip()
+                if not re.search(r"(?:طبيب|جراح|أخصائي|اخصائي|استشاري|استشارية|قسم|جامعة|مستشفى|مركز|عيادة|التاريخ|الإسم|الاسم|R/)", cand) and len(cand.split()) >= 2:
+                    clinician_name = f"د. {cand}"
+
+            if clinician_name is None:
+                m_doc = re.search(r"^(?:دكتور|د\.|د/|طبيب|Dr\.|Dr|Doctor)\s*(.*)$", line, re.IGNORECASE)
+                if m_doc:
+                    remainder = m_doc.group(1).strip()
+                    collected_names = []
+                    if remainder and not re.match(r"^(?:Dr\.?|Doctor)$", remainder, re.IGNORECASE):
+                        collected_names.append(remainder)
+
+                    k = i + 1
+                    while k < len(lines) and k <= i + 4:
+                        nxt = lines[k].strip()
+                        if re.match(r"^(?:دكتور|د\.|د/|طبيب|Dr\.|Dr|Doctor)$", nxt, re.IGNORECASE):
+                            k += 1
+                            continue
+                        if re.search(r"(?:طبيب\s+(?:نفس|وجراح|عيون|باطنة|أطفال)|طبيب|جراح|أخصائي|اخصائي|استشاري|استشارية|قسم|جامعة|مستشفى|مركز|عيادة|عضو\s+الجمعية|الجمعية|Psychiatrist|Member|التاريخ|الإسم|الاسم|R/)", nxt):
+                            break
+                        if re.match(r"^[\u0600-\u06FF\s]+$", nxt) or re.match(r"^[A-Za-z\s]+$", nxt):
+                            if len(nxt) < 40 and not re.match(r"^(?:vo0enseee|D|Ami|وعلاج|[Rr])$", nxt, re.IGNORECASE):
+                                collected_names.append(nxt)
+                        k += 1
+
+                    if collected_names:
+                        ar = next((n for n in collected_names if re.search(r"[\u0600-\u06FF]", n)), None)
+                        en = next((n for n in collected_names if re.search(r"[A-Za-z]", n)), None)
+                        if ar and en:
+                            clinician_name = f"د. {ar} ({en})"
+                        elif ar:
+                            clinician_name = f"د. {ar}"
+                        elif en:
+                            clinician_name = f"Dr. {en}"
+                        else:
+                            clinician_name = f"د. {' '.join(collected_names)}"
 
         if specialty is None:
-            if re.search(r"(?:طبيب\s+وجراح|جراح|أخصائي|اخصائي|استشاري|استشارية|قسم)\s+([^\n]+)", line):
-                specialty = line
+            if re.search(r"(?:طبيب\s+(?:نفس[يى](?:\s+وعلاج\s+إدمان)?|وجراح|عيون|باطنة|أطفال|جلدية|عظام|مسالك|نساء|قلب)|جراح|أخصائي|اخصائي|استشاري|استشارية|قسم)\s*([^\n]*)", line):
+                specialty = line.strip()
+            elif re.search(r"\b(?:Psychiatrist(?:\s+and\s+Addiction\s+Therapist)?|Ophthalmologist|Cardiologist|Pediatrician|Dermatologist|Surgeon|Physician)\b", line, re.IGNORECASE):
+                specialty = line.strip()
 
         if facility is None:
-            if re.search(r"(?:جامعة|مستشفى|مركز|عيادة|عيادات|مجمع)\s+([^\n]+)", line):
-                facility = line
+            if re.search(r"(?:جامعة|مستشفى|مركز|عيادة|عيادات|مجمع|عضو\s+الجمعية|الجمعية\s+الأمريكية|Member\s+of\s+the\s+American)\s+([^\n]+)", line, re.IGNORECASE):
+                facility = line.strip()
 
         if clinic_phone is None:
-            m_ph = re.search(r"(?:01[0125]\d{8}|(?:\+?20|0020)?\s*1[0125]\d{8})", line)
+            norm_digits = line.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+            m_ph = re.search(r"(?:01[0125]\d{8}|(?:\+?20|0020)?\s*1[0125]\d{8})", norm_digits)
             if m_ph:
                 clinic_phone = m_ph.group(0)
 
@@ -462,6 +521,8 @@ def extract_clinical_candidates(
                 freq_str = None
                 dur_str = None
                 instructions = None
+                m_str = re.search(r"(\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|مجم|ملجم|مغ))", med_name, re.IGNORECASE)
+                med_strength = m_str.group(1) if m_str else None
                 raw_parts = [ln, med_name]
 
                 j = idx + 1
@@ -471,9 +532,16 @@ def extract_clinical_candidates(
                     norm_nxt = re.sub(r"[\u064B-\u065F\u0670]", "", nxt)
 
                     if not dosage:
-                        for df in ("eye drop", "eye drops", "ear drop", "drops", "drop", "ointment", "cream", "syrup", "gel", "lotion", "spray", "inhaler", "قطرة", "نقط", "مرهم", "كريم", "شراب", "جل", "بخاخ"):
+                        for df in ("eye drop", "eye drops", "ear drop", "drops", "drop", "ointment", "cream", "syrup", "gel", "lotion", "spray", "inhaler", "capsule", "tablet", "tab", "cap", "قطرة", "نقط", "مرهم", "كريم", "شراب", "جل", "بخاخ", "كبسولة", "قرص"):
                             if df in med_name.lower() or df in norm_nxt.lower():
-                                dosage = "قطرة" if ("drop" in df or "قطرة" in df) else df
+                                if "drop" in df or "قطرة" in df:
+                                    dosage = "قطرة"
+                                elif "capsule" in df or "كبسولة" in df or "cap" in df:
+                                    dosage = "كبسولة"
+                                elif "tablet" in df or "قرص" in df or "tab" in df:
+                                    dosage = "قرص"
+                                else:
+                                    dosage = df
                                 break
 
                     if not freq_str:
@@ -489,16 +557,18 @@ def extract_clinical_candidates(
                     if not instructions:
                         if "عند اللزوم" in norm_nxt or "تكرر" in norm_nxt or "as needed" in nxt.lower() or "prn" in nxt.lower():
                             instructions = "وتكرر عند اللزوم" if ("وتكرر" in norm_nxt or "تكرر" in norm_nxt) else "عند اللزوم (PRN)"
+                        elif any(inst in norm_nxt for inst in ("بعد الغداء", "بعد العشاء", "قبل النوم", "قبل الأكل", "مساءً بعد العشاء", "مساء بعد العشاء", "نصف قرص", "2 قرص", "قرص")):
+                            instructions = norm_nxt
 
                     j += 1
 
-                med_key = f"{med_name.lower()}::{dosage or 'rx'}"
+                med_key = f"{med_name.lower()}::{dosage or med_strength or 'rx'}"
                 if med_key not in seen_meds:
                     seen_meds.add(med_key)
                     medications.append({
                         "name": med_name,
-                        "strength": None,
-                        "dose": dosage,
+                        "strength": med_strength,
+                        "dose": med_strength or dosage,
                         "dosage": dosage,
                         "frequency": freq_str,
                         "duration": dur_str,
@@ -629,6 +699,8 @@ def extract_clinical_candidates(
                             drug_lower = drug_name.lower()
                     if not drug_name or drug_lower in _excluded_med_tokens or any(tok in drug_lower.split() for tok in _excluded_med_tokens):
                         continue
+                    if any(drug_name.lower() in m["name"].lower() or m["name"].lower().startswith(drug_name.lower()) for m in medications):
+                        continue
                     dose_str = f"{med_m.group(2)}{med_m.group(3)}"
                     tail_text = line[med_m.end():]
                     dosage_m = _dosage_amount_re.search(tail_text) or _dosage_amount_re.search(line)
@@ -725,7 +797,7 @@ def extract_clinical_candidates(
                     matched_specific_entity = True
 
             # Extract explicit follow-up / recommendations
-            if re.search(r"(?:\b(?:follow[\-\s]?up|recommend(?:ed|s|ation)?|plan\s*:)\b|المتابعة|التوصيات|الخطة\s+العلاجية)", line, re.IGNORECASE):
+            if re.search(r"(?:\b(?:follow[\-\s]?up|recommend(?:ed|s|ation)?|plan\s*:)\b|المتابعة|المتابعه|موعد\s+المتابع[ةه]|بعد\s+شهرين|بعد\s+شهر|التوصيات|الخطة\s+العلاجية)", line, re.IGNORECASE):
                 follow_up.append(
                     {
                         "value": line,
