@@ -36,6 +36,7 @@ export type GoogleUserPayload = {
   email: string;
   avatarUrl?: string;
   verified: boolean;
+  role?: "doctor" | "patient";
 };
 
 type GoogleAuthModalProps = {
@@ -63,6 +64,7 @@ export function GoogleAuthModal({
         document.querySelector(".landing-page")?.classList.contains("dark-mode-landing")));
   const [customName, setCustomName] = useState("");
   const [customEmail, setCustomEmail] = useState("");
+  const [visitorRole, setVisitorRole] = useState<"doctor" | "patient">("doctor");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
@@ -77,6 +79,7 @@ export function GoogleAuthModal({
         fullName: name,
         email: customEmail.trim().toLowerCase(),
         verified: true,
+        role: target === "visitor" ? visitorRole : "patient",
       });
       setIsSubmitting(false);
       onClose();
@@ -184,6 +187,70 @@ export function GoogleAuthModal({
 
         {/* Custom Gmail Form */}
         <form onSubmit={handleCustomSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+          {target === "visitor" && (
+            <div>
+              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: isDark ? "#e2e8f0" : "#1e293b", marginBottom: "8px" }}>
+                {isAr ? "مساحة التجربة السريرية:" : "Choose Experience:"}
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => setVisitorRole("doctor")}
+                  style={{
+                    padding: "9px 10px",
+                    borderRadius: "12px",
+                    border: visitorRole === "doctor"
+                      ? "2px solid #0e8774"
+                      : isDark ? "1px solid #334155" : "1px solid #cbd5e1",
+                    background: visitorRole === "doctor"
+                      ? isDark ? "rgba(14, 135, 116, 0.25)" : "rgba(14, 135, 116, 0.08)"
+                      : isDark ? "#0f172a" : "#f8fafc",
+                    color: isDark ? "#f8fafc" : "#0f172a",
+                    cursor: "pointer",
+                    textAlign: "center",
+                    fontWeight: visitorRole === "doctor" ? 700 : 500,
+                    fontSize: "12px",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "3px",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <span style={{ fontSize: "16px" }}>🩺</span>
+                  <span>{isAr ? "طبيب معالج (سريري)" : "Clinician (Doctor)"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisitorRole("patient")}
+                  style={{
+                    padding: "9px 10px",
+                    borderRadius: "12px",
+                    border: visitorRole === "patient"
+                      ? "2px solid #0e8774"
+                      : isDark ? "1px solid #334155" : "1px solid #cbd5e1",
+                    background: visitorRole === "patient"
+                      ? isDark ? "rgba(14, 135, 116, 0.25)" : "rgba(14, 135, 116, 0.08)"
+                      : isDark ? "#0f172a" : "#f8fafc",
+                    color: isDark ? "#f8fafc" : "#0f172a",
+                    cursor: "pointer",
+                    textAlign: "center",
+                    fontWeight: visitorRole === "patient" ? 700 : 500,
+                    fontSize: "12px",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "3px",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <span style={{ fontSize: "16px" }}>👤</span>
+                  <span>{isAr ? "بوابة المريض" : "Patient Portal"}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div>
             <label style={{ display: "block", fontSize: "12.5px", fontWeight: 700, color: isDark ? "#e2e8f0" : "#1e293b", marginBottom: "6px" }}>
               {isAr ? "الاسم الكامل" : "Full Name"}

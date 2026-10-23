@@ -59,7 +59,7 @@ type Props = {
   language: Language;
   setLanguage: (language: Language) => void;
   onEnter: (mode?: "signin" | "signup") => void;
-  onDemoLogin?: (account: DemoAccount) => void;
+  onDemoLogin?: (account: DemoAccount, customName?: string) => void;
   t: Translator;
   theme: Theme;
   setTheme: (theme: Theme) => void;
@@ -109,18 +109,30 @@ export function Landing({
         email: user.email,
         source: "Google Landing Lead",
         company: isArabic ? "زائر صفحة الهبوط" : "Landing Page Visitor",
-        notes: isArabic ? "تسجيل دخول وتجربة عبر Google OAuth" : "Visitor verified via Google Sign-In",
+        notes: isArabic
+          ? `تسجيل دخول وتجربة عبر Google OAuth - الدور: ${user.role === "patient" ? "مريض" : "طبيب"}`
+          : `Visitor verified via Google Sign-In - Role: ${user.role || "doctor"}`,
       });
     } catch {}
+
+    const isPatient = user.role === "patient";
+    const targetAccount = isPatient
+      ? (demoAccounts.find((a) => a.role === "patient") || demoAccounts[7])
+      : (demoAccounts.find((a) => a.role === "doctor") || demoAccounts[1]);
+
     setGoogleSuccessToast(
       isArabic
-        ? `أهلاً بك يا ${user.fullName}! تم تسجيلك بنجاح ونقلك للتجربة الحية...`
-        : `Welcome ${user.fullName}! Verified successfully, entering live demo...`
+        ? isPatient
+          ? `أهلاً بك يا ${user.fullName}! تم تسجيلك ونقلك لبوابة المريض...`
+          : `أهلاً بك يا ${user.fullName}! تم تسجيلك ونقلك لمساحة الطبيب السريرية...`
+        : isPatient
+          ? `Welcome ${user.fullName}! Verified successfully, entering Patient Portal...`
+          : `Welcome ${user.fullName}! Verified successfully, entering Clinician Workspace...`
     );
     setTimeout(() => {
       setGoogleSuccessToast("");
       if (onDemoLogin) {
-        onDemoLogin(demoAccounts[0]);
+        onDemoLogin(targetAccount, user.fullName);
       } else {
         onEnter("signin");
       }

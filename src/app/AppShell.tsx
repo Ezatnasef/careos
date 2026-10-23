@@ -207,12 +207,12 @@ export default function AppShell() {
     return () => { active = false; };
   }, []);
 
-  const handleDemoLogin = async (account: DemoAccount) => {
+  const handleDemoLogin = async (account: DemoAccount, customName?: string) => {
     try {
       const result = await apiDemoLogin(account.role, account.username, account.password);
       if (result.portal_access_token) {
         setPortalMode(true);
-        setDoctorName(result.user.full_name);
+        setDoctorName(customName || result.user.full_name);
         setUserRole("patient");
         setUserPermissions([]);
         setView("portal");
@@ -228,7 +228,10 @@ export default function AppShell() {
           onboarding_complete?: boolean;
         };
         setPortalMode(false);
-        setDoctorName(user.full_name);
+        const displayName = customName
+          ? (customName.startsWith("د.") || customName.toLowerCase().startsWith("dr.") ? customName : `د. ${customName}`)
+          : user.full_name;
+        setDoctorName(displayName);
         setUserRole(normalizeFrontendRole(user.role));
         setUserPermissions(user.permissions ?? []);
         setDepartment(user.department || "General Medicine");

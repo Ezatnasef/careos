@@ -123,6 +123,62 @@ export function ContactDirectory({ t, language }: ContactDirectoryProps) {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const handleExportCsv = () => {
+    const listToExport = filteredContacts.length > 0 ? filteredContacts : contacts;
+    if (listToExport.length === 0) {
+      alert(isAr ? "لا توجد جهات اتصال لتصديرها حالياً" : "No contacts available to export");
+      return;
+    }
+
+    const headers = isAr
+      ? ["المعرف", "الفئة", "الاسم الكامل", "البريد الإلكتروني", "رقم الهاتف", "الدور / المسمى الوظيفي", "القسم أو المصدر", "تاريخ الإضافة"]
+      : ["ID", "Category", "Full Name", "Email", "Phone", "Role / Title", "Department / Source", "Created At"];
+
+    const escapeCsv = (val: unknown) => {
+      const str = val == null ? "" : String(val).trim();
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    const rows = listToExport.map((c) => [
+      c.id,
+      getCategoryLabel(c.category),
+      c.full_name,
+      c.email,
+      c.phone || "-",
+      c.role_or_type,
+      c.department_or_source,
+      c.created_at ? new Date(c.created_at).toLocaleDateString(isAr ? "ar-EG" : "en-US") : "-",
+    ]);
+
+    const csvContent =
+      "\uFEFF" +
+      [headers, ...rows]
+        .map((row) => row.map(escapeCsv).join(","))
+        .join("\r\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const catLabel = activeTab === "all" ? "All" : activeTab;
+    link.setAttribute(
+      "download",
+      `CareOS_Contacts_${catLabel}_${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    window.dispatchEvent(
+      new CustomEvent("careos:toast", {
+        detail: isAr
+          ? `تم تصدير ملف CSV بنجاح (${listToExport.length} جهة اتصال)`
+          : `Contacts exported to CSV successfully (${listToExport.length} contacts)`,
+      })
+    );
+  };
+
   const handleDeleteLead = async (id: string) => {
     if (!window.confirm(isAr ? "هل أنت متأكد من حذف جهة الاتصال هذه؟" : "Are you sure you want to remove this lead?")) {
       return;
@@ -223,14 +279,15 @@ export function ContactDirectory({ t, language }: ContactDirectoryProps) {
             </button>
 
             {/* Export CSV */}
-            <a
-              href={getExportContactsUrl(activeTab, searchQuery)}
-              download
+            <button
+              type="button"
+              onClick={handleExportCsv}
               className="dir-btn"
+              title={isAr ? "تصدير جهات الاتصال الحالية إلى ملف CSV" : "Export current contacts to CSV"}
             >
               <Download size={16} />
               <span>{isAr ? "تصدير CSV" : "Export CSV"}</span>
-            </a>
+            </button>
 
             {/* Add Lead / Contact */}
             <button

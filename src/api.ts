@@ -368,7 +368,7 @@ function saveDemoSession(user: AuthUser, isPortal = false): void {
 }
 
 function getDemoAccountByRole(role: string) {
-  return demoAccounts.find((account) => account.role === role) ?? demoAccounts[0];
+  return demoAccounts.find((account) => account.role === role) ?? (demoAccounts.find((a) => a.role === "doctor") || demoAccounts[1]);
 }
 
 function isDemoRequestFailure(error: unknown): boolean {
