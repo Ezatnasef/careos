@@ -9,6 +9,7 @@ import {
 import { GlobalChat } from "../chat/GlobalChat";
 import { FormattedMessage } from "../chat/FormattedMessage";
 import { demoAccounts, type DemoAccount } from "../auth/LoginRoute";
+import { capturePublicLead } from "../../api/directory";
 import {
   Activity,
   AlertCircle,
@@ -1787,15 +1788,36 @@ export function Landing({
                     </p>
 
                     <form
-                      onSubmit={(event) => {
+                      onSubmit={async (event) => {
                         event.preventDefault();
+                        const form = event.currentTarget;
+                        const fullName = (form.elements.namedItem("fullName") as HTMLInputElement)?.value || "";
+                        const company = (form.elements.namedItem("company") as HTMLInputElement)?.value || "";
+                        const email = (form.elements.namedItem("email") as HTMLInputElement)?.value || "";
+                        const phone = (form.elements.namedItem("phone") as HTMLInputElement)?.value || "";
+                        const scale = (form.elements.namedItem("scale") as HTMLSelectElement)?.value || "";
+                        const notes = (form.elements.namedItem("notes") as HTMLTextAreaElement)?.value || "";
+
                         setDemoRequested(true);
+                        try {
+                          await capturePublicLead({
+                            full_name: fullName,
+                            email,
+                            phone,
+                            company,
+                            source: "landing_demo_request",
+                            notes: `Scale: ${scale}${notes ? ` | Notes: ${notes}` : ""}`,
+                          });
+                        } catch {
+                          // Offline or local demo fallback
+                        }
                       }}
                     >
                       <div className="contact-fields-grid">
                         <div className="contact-field-group">
                           <label>{isArabic ? "الاسم الكامل / المسمى الوظيفي" : "Full Name & Clinical Role"}</label>
                           <input
+                            name="fullName"
                             type="text"
                             required
                             placeholder={isArabic ? "د. أحمد سامي - مدير طبي" : "Dr. Ahmed Sami - Medical Director"}
@@ -1805,6 +1827,7 @@ export function Landing({
                         <div className="contact-field-group">
                           <label>{isArabic ? "اسم المستشفى أو المركز الطبي" : "Hospital / Clinic Name"}</label>
                           <input
+                            name="company"
                             type="text"
                             required
                             placeholder={isArabic ? "مستشفى الأمل التخصصي" : "Al-Amal Specialized Hospital"}
@@ -1814,6 +1837,7 @@ export function Landing({
                         <div className="contact-field-group">
                           <label>{isArabic ? "البريد الإلكتروني المهني" : "Work Email"}</label>
                           <input
+                            name="email"
                             type="email"
                             required
                             placeholder="doctor@hospital.org"
@@ -1823,6 +1847,7 @@ export function Landing({
                         <div className="contact-field-group">
                           <label>{isArabic ? "رقم الهاتف / الواتساب" : "Phone / WhatsApp"}</label>
                           <input
+                            name="phone"
                             type="tel"
                             required
                             placeholder="+20 100 123 4567"
@@ -1831,7 +1856,7 @@ export function Landing({
 
                         <div className="contact-field-group full-width">
                           <label>{isArabic ? "حجم المنشأة الطبية" : "Hospital Scale & Departments"}</label>
-                          <select defaultValue="polyclinic">
+                          <select name="scale" defaultValue="polyclinic">
                             <option value="clinic">{isArabic ? "عيادة مستقلة (1 - 3 أطباء)" : "Private Clinic (1-3 Doctors)"}</option>
                             <option value="polyclinic">{isArabic ? "مجمع عيادات تخصصية (4 - 15 عيادة)" : "Polyclinic Complex (4-15 Clinics)"}</option>
                             <option value="hospital-mid">{isArabic ? "مستشفى عام (50 - 150 سرير)" : "General Hospital (50-150 Beds)"}</option>
@@ -1842,6 +1867,7 @@ export function Landing({
                         <div className="contact-field-group full-width">
                           <label>{isArabic ? "ملاحظات أو احتياجات خاصة (اختياري)" : "Specific Notes or Requirements (Optional)"}</label>
                           <textarea
+                            name="notes"
                             rows={3}
                             placeholder={isArabic ? "مثال: الربط مع أجهزة المعمل، التوثيق الصوتي بالطوارئ..." : "E.g., Lab integration, emergency voice dictation..."}
                           />

@@ -30,6 +30,7 @@ import { AdminHub } from "../features/workspace/AdminHub";
 import { FileLibrary } from "../features/workspace/FileLibrary";
 import { StaffManagement } from "../features/workspace/StaffManagement";
 import { ClinicOperationsBoard } from "../features/workspace/ClinicOperationsBoard";
+import { ContactDirectory } from "../features/directory/ContactDirectory";
 import type { ReactNode } from "react";
 
 type Theme = "light" | "dark";
@@ -266,6 +267,7 @@ export default function AppShell() {
     account: <AccountPage doctorName={doctorName} role={userRole} department={department} project={project} onLogout={logout} t={t} />,
     integrations: <IntegrationHub t={t} language={language} />,
     teamAudit: <TeamAudit t={t} language={language} />,
+    contacts: <ContactDirectory t={t} language={language} />,
   };
   const activeView = portalMode && view !== "account" ? "portal" : canAccessView(userRole, view, userPermissions) ? view : firstAllowedView(userRole, userPermissions);
     return <div className={`app-shell ${theme === "dark" ? "dark-mode" : ""}`} dir={language === "ar" ? "rtl" : "ltr"}><Sidebar view={activeView} setView={changeView} mobileNav={mobileNav} setMobileNav={setMobileNav} language={language} doctorName={doctorName} role={userRole} permissions={userPermissions} t={t} />{mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label={t("openNavigation")} />}<main className="main-content"><Header view={activeView} language={language} setLanguage={changeLanguage} setMobileNav={setMobileNav} showNotifications={showNotifications} setShowNotifications={setShowNotifications} theme={theme} setTheme={changeTheme} onHelp={() => setHelpOpen(true)} onAccount={() => changeView("account")} onNavigate={changeView} t={t} role={userRole} allowDemoRoleSwitch={isOfflineDemo} onRoleChange={isOfflineDemo ? (newRole) => { setUserRole(newRole); setUserPermissions(rolePermissions[newRole] || []); const nextView = newRole === "patient" ? "portal" : "dashboard"; setPortalMode(newRole === "patient"); setView(nextView); localStorage.setItem("careos-active-view", nextView); navigateToView(nextView); } : undefined} /><div className="page-content">{pages[activeView] ?? pages.dashboard}</div></main>{helpOpen && <div className="modal-backdrop" onClick={() => setHelpOpen(false)}><div className="modal" onClick={(event) => event.stopPropagation()}><h2>{t("helpTitle")}</h2><p>{t("helpBody")}</p><button className="primary-btn" onClick={() => setHelpOpen(false)}>{t("close")}</button></div></div>}{toast && <div className="toast" role="status">{toast}</div>}</div>;

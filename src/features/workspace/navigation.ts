@@ -12,6 +12,7 @@ import {
   UserRound,
   Users,
   HeartPulse,
+  Contact2,
   type LucideIcon,
 } from "lucide-react";
 import type { TranslationKey } from "../../i18n";
@@ -41,6 +42,7 @@ export const navItems: NavItem[] = [
   { id: "documents", label: "documentation", icon: Database },
   { id: "appointments", label: "appointments", icon: CalendarDays },
   { id: "messages", label: "messages", icon: MessageCircle },
+  { id: "contacts", label: "contactsDirectory", icon: Contact2 },
   { id: "portal", label: "patientPortal", icon: UserRound },
   { id: "analytics", label: "analytics", icon: BarChart3 },
   { id: "departments", label: "departments", icon: Building2 },
@@ -60,6 +62,7 @@ export const roleNavMap: Record<Role, AppView[]> = {
     "clinicOps",
     "admin",
     "staff",
+    "contacts",
     "teamAudit",
     "integrations",
     "settings",
@@ -73,6 +76,7 @@ export const roleNavMap: Record<Role, AppView[]> = {
     "documents",
     "appointments",
     "messages",
+    "contacts",
     "departments",
     "clinicOps",
     "integrations",
@@ -95,6 +99,7 @@ export const roleNavMap: Record<Role, AppView[]> = {
     "patients",
     "appointments",
     "messages",
+    "contacts",
     "departments",
     "clinicOps",
     "settings",
@@ -108,6 +113,7 @@ export const roleNavMap: Record<Role, AppView[]> = {
     "clinicOps",
     "admin",
     "staff",
+    "contacts",
     "teamAudit",
     "integrations",
     "settings",
@@ -117,6 +123,7 @@ export const roleNavMap: Record<Role, AppView[]> = {
     "dashboard",
     "admin",
     "staff",
+    "contacts",
     "teamAudit",
     "integrations",
     "settings",
@@ -128,6 +135,7 @@ export const roleNavMap: Record<Role, AppView[]> = {
     "appointments",
     "departments",
     "reports",
+    "contacts",
     "clinicOps",
     "settings",
     "account",
@@ -298,6 +306,7 @@ export const viewPermissions: Record<AppView, string[]> = {
   integrations: ["dashboard.read", "sso.view", "sso.manage"],
   account: ["dashboard.read"],
   teamAudit: ["team.read", "users.view", "audit.read", "audit_logs.view"],
+  contacts: ["dashboard.read"],
 };
 
 export const roleAccessWarning: Partial<Record<Role, string>> = {

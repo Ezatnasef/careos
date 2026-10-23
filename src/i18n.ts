@@ -1087,6 +1087,7 @@ export const translations = {
     auditActionUpdated: "Updated",
     auditActionDeleted: "Deleted",
     fileLibrary: "File Library",
+    contactsDirectory: "Contact Directory",
   },
   ar: {
     workspace: "مساحة العمل",
@@ -2166,6 +2167,7 @@ export const translations = {
     featureJourney: "رحلة مريض مترابطة",
     featureJourneyDetail: "تابع المواعيد والمتابعات وتنسيق فريق الرعاية من مكان واحد.",
     fileLibrary: "مكتبة الملفات",
+    contactsDirectory: "دليل جهات الاتصال",
   },
 } as const;
 

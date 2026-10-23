@@ -55,7 +55,7 @@ from .rbac import ROLE_PERMISSIONS, can_access_section, normalize_role
 from .ai.orchestrator.contracts import OrchestratorState
 from .ai.orchestrator.orchestrator import CareOSOrchestrator
 from .integrations import get_speech_to_text_provider, get_text_to_speech_provider, notification_provider, rag_provider, summary_provider, to_egyptian_colloquial_speech
-from .models import Appointment, AudioFile, AuditEvent, AuthSession, BreakGlassAccess, CarePlan, ClinicalNote, ClinicalNoteVersion, ClinicianSchedule, DocumentChunk, Encounter, LabOrder, LabResult, Notification, Organization, Patient, PatientDocument, PatientMessage, PatientPortalAccount, PatientPortalDocument, PatientPortalSession, PasswordResetToken, PatientProfile, Permission, Prescription, ReminderJob, Role, RolePermission, ScheduleOverride, SSOConfiguration, Task, TeamInvite, Transcript, TranscriptVersion, TranscriptionJob, User, UserRole, VitalSigns
+from .models import Appointment, AudioFile, AuditEvent, AuthSession, BreakGlassAccess, CarePlan, ClinicalNote, ClinicalNoteVersion, ClinicianSchedule, DocumentChunk, Encounter, LabOrder, LabResult, Notification, Organization, Patient, PatientDocument, PatientMessage, PatientPortalAccount, PatientPortalDocument, PatientPortalSession, PasswordResetToken, PatientProfile, Permission, Prescription, ReminderJob, Role, RolePermission, ScheduleOverride, SSOConfiguration, SystemLead, Task, TeamInvite, Transcript, TranscriptVersion, TranscriptionJob, User, UserRole, VitalSigns
 from .patient_access import ensure_patient_access, owned_patient, patient_scope_matches
 from .rag.loader import build_ocr_diagnostics, extract_clinical_candidates, extract_document_bytes, get_ocr_status_info, normalize_clinical_text
 from .rag.pipeline import async_answer_question, async_ingest_patient_document, async_search_documents
@@ -5261,3 +5261,244 @@ async def rag_stats(
         patient_document_chunks=patient_doc_chunks,
         sources=sources,
     )
+
+
+# ==========================================
+# Audience & Contact Directory (Leads & Users)
+# ==========================================
+
+class LeadCaptureInput(BaseModel):
+    full_name: str = Field(min_length=1, max_length=160)
+    email: EmailStr
+    phone: str | None = Field(default=None, max_length=40)
+    company: str | None = Field(default=None, max_length=160)
+    source: str = Field(default="landing_page", max_length=64)
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class DirectoryContactItem(BaseModel):
+    id: str
+    category: str  # "staff" | "patient" | "lead"
+    full_name: str
+    email: str
+    phone: str | None = None
+    role_or_type: str
+    department_or_source: str
+    created_at: str
+
+
+class DirectoryContactsResponse(BaseModel):
+    total_count: int
+    staff_count: int
+    patient_count: int
+    lead_count: int
+    contacts: list[DirectoryContactItem]
+
+
+@router.post("/public/leads", tags=["Leads & Directory"])
+async def capture_public_lead(
+    payload: LeadCaptureInput,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Capture public interest lead / visitor from landing page or public portal."""
+    email_clean = payload.email.lower().strip()
+    existing = await session.scalar(
+        select(SystemLead).where(SystemLead.email == email_clean)
+    )
+    if existing:
+        existing.full_name = payload.full_name.strip()
+        if payload.phone:
+            existing.phone = payload.phone.strip()
+        if payload.company:
+            existing.company = payload.company.strip()
+        if payload.notes:
+            existing.notes = (existing.notes or "") + f"\n[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}] " + payload.notes.strip()
+        await session.commit()
+        return {"status": "ok", "message": "Lead updated successfully", "id": str(existing.id)}
+
+    new_lead = SystemLead(
+        full_name=payload.full_name.strip(),
+        email=email_clean,
+        phone=payload.phone.strip() if payload.phone else None,
+        company=payload.company.strip() if payload.company else None,
+        source=payload.source.strip() if payload.source else "landing_page",
+        notes=payload.notes.strip() if payload.notes else None,
+        status="new",
+    )
+    session.add(new_lead)
+    await session.commit()
+    return {"status": "ok", "message": "Lead registered successfully", "id": str(new_lead.id)}
+
+
+@router.get("/directory/contacts", response_model=DirectoryContactsResponse, tags=["Leads & Directory"])
+async def get_directory_contacts(
+    category: str = Query(default="all"),
+    search: str | None = Query(default=None),
+    limit: int = Query(default=300, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    user=Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> DirectoryContactsResponse:
+    """Fetch unified directory of staff, patients with emails, and visitor leads."""
+    all_contacts: list[DirectoryContactItem] = []
+
+    # 1. Staff / Users
+    staff_stmt = select(User).where(
+        User.organization_id == user.organization_id,
+        User.deleted_at.is_(None)
+    )
+    staff_results = (await session.scalars(staff_stmt)).all()
+    staff_count = len(staff_results)
+
+    if category in ("all", "staff"):
+        for u in staff_results:
+            all_contacts.append(
+                DirectoryContactItem(
+                    id=str(u.id),
+                    category="staff",
+                    full_name=u.full_name,
+                    email=u.email,
+                    phone=None,
+                    role_or_type=u.role,
+                    department_or_source=u.department or "General",
+                    created_at=u.created_at.isoformat() if u.created_at else "",
+                )
+            )
+
+    # 2. Patients (with email in Profile)
+    patient_stmt = (
+        select(Patient, PatientProfile.email, PatientProfile.phone)
+        .join(PatientProfile, PatientProfile.patient_id == Patient.id, isouter=True)
+        .where(
+            Patient.organization_id == user.organization_id,
+            Patient.deleted_at.is_(None),
+            PatientProfile.email.is_not(None),
+            PatientProfile.email != "",
+        )
+    )
+    patient_rows = (await session.execute(patient_stmt)).all()
+    patient_count = len(patient_rows)
+
+    if category in ("all", "patient"):
+        for p, p_email, p_phone in patient_rows:
+            all_contacts.append(
+                DirectoryContactItem(
+                    id=str(p.id),
+                    category="patient",
+                    full_name=f"{p.given_name} {p.family_name}".strip(),
+                    email=p_email,
+                    phone=p_phone,
+                    role_or_type="patient",
+                    department_or_source=p.department or "General Clinic",
+                    created_at=p.created_at.isoformat() if p.created_at else "",
+                )
+            )
+
+    # 3. System Leads / Visitors
+    lead_stmt = select(SystemLead).where(
+        or_(
+            SystemLead.organization_id.is_(None),
+            SystemLead.organization_id == user.organization_id,
+        )
+    ).order_by(SystemLead.created_at.desc())
+    lead_results = (await session.scalars(lead_stmt)).all()
+    lead_count = len(lead_results)
+
+    if category in ("all", "lead"):
+        for lead in lead_results:
+            all_contacts.append(
+                DirectoryContactItem(
+                    id=str(lead.id),
+                    category="lead",
+                    full_name=lead.full_name,
+                    email=lead.email,
+                    phone=lead.phone,
+                    role_or_type=lead.status or "lead",
+                    department_or_source=lead.source or "landing_page",
+                    created_at=lead.created_at.isoformat() if lead.created_at else "",
+                )
+            )
+
+    # Filter by search string if provided
+    if search:
+        s_lower = search.strip().lower()
+        all_contacts = [
+            c for c in all_contacts
+            if s_lower in c.full_name.lower()
+            or s_lower in c.email.lower()
+            or (c.phone and s_lower in c.phone.lower())
+            or s_lower in c.department_or_source.lower()
+            or s_lower in c.role_or_type.lower()
+        ]
+
+    total_count = staff_count + patient_count + lead_count
+    paginated = all_contacts[offset : offset + limit]
+
+    return DirectoryContactsResponse(
+        total_count=total_count,
+        staff_count=staff_count,
+        patient_count=patient_count,
+        lead_count=lead_count,
+        contacts=paginated,
+    )
+
+
+@router.get("/directory/contacts/export", tags=["Leads & Directory"])
+async def export_directory_contacts(
+    category: str = Query(default="all"),
+    search: str | None = Query(default=None),
+    user=Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Export contacts list to CSV formatted output."""
+    import csv
+    import io
+
+    res = await get_directory_contacts(
+        category=category,
+        search=search,
+        limit=10000,
+        offset=0,
+        user=user,
+        session=session,
+    )
+
+    output = io.StringIO()
+    # Write UTF-8 BOM so Excel opens Arabic correctly
+    output.write("\ufeff")
+    writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL)
+    writer.writerow(["ID", "Category", "Full Name", "Email", "Phone", "Role / Type", "Department / Source", "Created At"])
+    for c in res.contacts:
+        writer.writerow([
+            c.id,
+            c.category,
+            c.full_name,
+            c.email,
+            c.phone or "",
+            c.role_or_type,
+            c.department_or_source,
+            c.created_at,
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8")
+    filename = f"careos_contacts_{category}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete("/directory/leads/{lead_id}", tags=["Leads & Directory"])
+async def delete_system_lead(
+    lead_id: UUID,
+    user=Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, bool]:
+    lead = await session.scalar(select(SystemLead).where(SystemLead.id == lead_id))
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    await session.delete(lead)
+    await session.commit()
+    return {"deleted": True}
+

@@ -637,3 +637,21 @@ class LabResult(Base):
     interpretation: Mapped[str] = mapped_column(String(64), nullable=False, default="normal")
     verified_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class SystemLead(Base):
+    """External leads and visitors capturing interest, demo requests, and newsletter signups."""
+
+    __tablename__ = "system_leads"
+
+    id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True, default=uuid4)
+    organization_id: Mapped[UUID | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
+    full_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    company: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="landing_page")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="new")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
