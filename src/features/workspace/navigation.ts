@@ -343,13 +343,27 @@ export function canAccessView(role: Role, view: AppView, permissions?: readonly 
     return false;
   }
 
+  // Dashboard is accessible to all staff roles who have dashboard in their allowed list
+  if (view === "dashboard") return true;
+
   const required = viewPermissions[view];
   if (!required || required.length === 0) return true;
+
+  // Direct match if permissions list contains the view name itself
+  if (permissions && permissions.includes(view)) return true;
+
   const effectivePermissions = permissions && permissions.length > 0 ? permissions : permissionsForRole(role);
-  return required.some((permission) => effectivePermissions.includes(permission));
+  return (
+    required.some((permission) => effectivePermissions.includes(permission)) ||
+    effectivePermissions.includes(view)
+  );
 }
 
 export function firstAllowedView(role: Role, permissions?: readonly string[]): AppView {
+  if (role === "patient") return "portal";
   const candidates = roleNavMap[role] ?? roleNavMap.receptionist;
+  if (candidates.includes("dashboard") && canAccessView(role, "dashboard", permissions)) {
+    return "dashboard";
+  }
   return candidates.find((candidate) => canAccessView(role, candidate, permissions)) ?? "dashboard";
 }

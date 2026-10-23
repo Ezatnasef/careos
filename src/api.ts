@@ -1,5 +1,6 @@
 import { ApiError, clearSession, portalRequest, request } from "./api/client";
 import { demoAccounts } from "./features/auth/LoginRoute";
+import { rolePermissions, type Role } from "./features/workspace/navigation";
 
 export type AuthUser = {
   id: string;
@@ -313,6 +314,12 @@ const DEMO_USER_KEY = "careos-demo-user";
 
 function buildDemoUser(accountRole: string): AuthUser {
   const role = accountRole === "patient" ? "patient" : accountRole;
+  const canonicalRole = (role in rolePermissions ? role : "receptionist") as Role;
+  const fullPerms = role === "patient" ? [] : Array.from(new Set([
+    ...(rolePermissions[canonicalRole] || []),
+    "dashboard", "patients", "appointments", "messages", "analytics", "contacts", "settings", "reports", "departments", "clinicOps", "notes", "assistant", "documents", "teamAudit", "integrations", "admin", "staff"
+  ]));
+
   const baseUser: AuthUser = {
     id: `demo-${role}`,
     organization_id: "demo-org",
@@ -322,32 +329,10 @@ function buildDemoUser(accountRole: string): AuthUser {
     email: `${role === "patient" ? "patient.demo" : `${role}.demo`}@careos.demo`,
     full_name: role === "patient" ? "Mariam Hassan" : `${role === "doctor" ? "Dr. Rana Samir" : role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, " ")}`,
     role,
-    permissions: role === "patient" ? [] : ["dashboard", "patients", "appointments", "messages", "analytics"],
+    permissions: fullPerms,
     onboarding_complete: true,
     mfa_enabled: false,
   };
-
-  if (role === "admin") {
-    baseUser.permissions = ["dashboard", "patients", "appointments", "messages", "analytics", "settings", "teamAudit", "integrations"];
-  }
-  if (role === "doctor") {
-    baseUser.permissions = ["dashboard", "patients", "notes", "assistant", "appointments", "messages", "analytics"];
-  }
-  if (role === "nurse") {
-    baseUser.permissions = ["dashboard", "patients", "notes", "appointments", "messages"];
-  }
-  if (role === "receptionist") {
-    baseUser.permissions = ["dashboard", "appointments", "messages", "analytics"];
-  }
-  if (role === "hospital_director") {
-    baseUser.permissions = ["dashboard", "patients", "appointments", "analytics", "reports"];
-  }
-  if (role === "it_admin") {
-    baseUser.permissions = ["dashboard", "integrations", "settings", "teamAudit"];
-  }
-  if (role === "administrative_staff") {
-    baseUser.permissions = ["dashboard", "appointments", "messages"];
-  }
 
   return baseUser;
 }

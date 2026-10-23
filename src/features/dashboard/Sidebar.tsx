@@ -38,7 +38,16 @@ export function Sidebar({ view, setView, mobileNav, setMobileNav, language, doct
 
   return (
     <aside className={`sidebar ${mobileNav ? "is-open" : ""}`}>
-      <div className="brand">
+      <div
+        className="brand"
+        onClick={() => {
+          setView(role === "patient" ? "portal" : "dashboard");
+          setMobileNav(false);
+        }}
+        style={{ cursor: "pointer" }}
+        role="button"
+        tabIndex={0}
+      >
         <div className="brand-mark"><HeartPulse size={19} /></div>
         <span>care<span>os</span></span>
       </div>
