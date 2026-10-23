@@ -34,7 +34,7 @@ export function AccountPage({
   t,
 }: AccountPageProps) {
   const [copied, setCopied] = useState(false);
-  const isArabic = typeof document !== "undefined" && document.documentElement.dir === "rtl";
+  const isArabic = typeof document !== "undefined" && (document.documentElement.dir === "rtl" || document.dir === "rtl" || document.querySelector(".app-shell")?.getAttribute("dir") === "rtl" || t("workspace") === "مساحة العمل");
 
   const roleKeys: Partial<Record<Role, TranslationKey>> = {
     admin: "roleAdminLabel",
@@ -69,47 +69,84 @@ export function AccountPage({
         style={{
           background: "var(--paper, #ffffff)",
           border: "1px solid var(--line, #e2e8f0)",
-          borderRadius: "18px",
+          borderRadius: "20px",
           overflow: "hidden",
-          boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.03)",
-          marginBottom: "24px",
+          boxShadow: "0 10px 30px -5px rgba(0, 0, 0, 0.05), 0 4px 12px -2px rgba(0, 0, 0, 0.025)",
+          marginBottom: "28px",
         }}
       >
         {/* Decorative Top Banner */}
         <div
           style={{
-            height: "90px",
-            background: "linear-gradient(135deg, rgba(13, 148, 136, 0.85) 0%, rgba(20, 184, 166, 0.75) 50%, rgba(14, 165, 233, 0.7) 100%)",
+            height: "125px",
+            background: "linear-gradient(135deg, #0e8774 0%, #14b8a6 45%, #0284c7 100%)",
             position: "relative",
+            overflow: "hidden",
           }}
-        />
+        >
+          {/* Subtle Ambient Glow and Hospital Watermark */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "radial-gradient(circle at 15% 30%, rgba(255, 255, 255, 0.22) 0%, transparent 45%), radial-gradient(circle at 85% 75%, rgba(255, 255, 255, 0.15) 0%, transparent 50%)",
+              pointerEvents: "none",
+            }}
+          />
+          <Hospital
+            size={110}
+            style={{
+              position: "absolute",
+              top: "-15px",
+              insetInlineEnd: "24px",
+              color: "#ffffff",
+              opacity: 0.12,
+              pointerEvents: "none",
+            }}
+          />
+        </div>
 
-        {/* Profile Content */}
+        {/* Profile Content Body */}
         <div
           style={{
-            padding: "0 28px 24px",
+            padding: "0 32px 28px",
             position: "relative",
             display: "flex",
             flexWrap: "wrap",
             justifyContent: "space-between",
             alignItems: "flex-end",
-            gap: "16px",
+            gap: "20px",
           }}
         >
-          {/* Avatar & Main Info */}
-          <div style={{ display: "flex", alignItems: "flex-end", gap: "18px", marginTop: "-44px" }}>
-            <div style={{ position: "relative" }}>
+          {/* Left Column: Avatar + Profile Titles */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-end",
+              gap: "22px",
+              flexWrap: "wrap",
+            }}
+          >
+            {/* Avatar Circle - positioned precisely overlapping the banner */}
+            <div
+              style={{
+                position: "relative",
+                marginTop: "-52px",
+                flexShrink: 0,
+                zIndex: 2,
+              }}
+            >
               <div
                 style={{
-                  width: "88px",
-                  height: "88px",
+                  width: "98px",
+                  height: "98px",
                   borderRadius: "50%",
-                  background: "#ffffff",
-                  border: "4px solid #ffffff",
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+                  background: "var(--paper, #ffffff)",
+                  border: "4px solid var(--paper, #ffffff)",
+                  boxShadow: "0 10px 25px -4px rgba(14, 135, 116, 0.25), 0 4px 10px rgba(0, 0, 0, 0.08)",
                   display: "grid",
                   placeItems: "center",
-                  color: "var(--teal, #0d9488)",
+                  color: "var(--teal, #0e8774)",
                 }}
               >
                 <div
@@ -117,89 +154,220 @@ export function AccountPage({
                     width: "100%",
                     height: "100%",
                     borderRadius: "50%",
-                    background: "rgba(13, 148, 136, 0.12)",
+                    background: "linear-gradient(135deg, rgba(14, 135, 116, 0.12) 0%, rgba(20, 184, 166, 0.22) 100%)",
                     display: "grid",
                     placeItems: "center",
                   }}
                 >
-                  <UserRound size={42} />
+                  <UserRound size={46} strokeWidth={2.2} />
                 </div>
               </div>
-              {/* Online Active Indicator Dot */}
+
+              {/* Online Active Status Indicator Dot */}
               <span
                 style={{
                   position: "absolute",
                   bottom: "4px",
-                  right: isArabic ? "auto" : "4px",
-                  left: isArabic ? "4px" : "auto",
-                  width: "16px",
-                  height: "16px",
+                  insetInlineEnd: "4px",
+                  width: "18px",
+                  height: "18px",
                   borderRadius: "50%",
-                  background: "#22c55e",
-                  border: "3px solid #ffffff",
+                  background: "#10b981",
+                  border: "3.5px solid var(--paper, #ffffff)",
+                  boxShadow: "0 0 0 2px rgba(16, 185, 129, 0.25)",
                 }}
                 title={isArabic ? "جلسة متصلة ونشطة" : "Active session"}
               />
             </div>
 
-            <div style={{ paddingBottom: "4px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 800, color: "var(--ink, #0f172a)" }}>
-                  {doctorName}
-                </h1>
-                <span
+            {/* User Name, Role Chip & Details */}
+            <div style={{ paddingTop: "12px", minWidth: "220px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <h1
                   style={{
-                    fontSize: "12px",
-                    fontWeight: 700,
-                    padding: "3px 10px",
-                    borderRadius: "20px",
-                    background: "rgba(13, 148, 136, 0.12)",
-                    color: "var(--teal, #0d9488)",
-                    border: "1px solid rgba(13, 148, 136, 0.2)",
+                    margin: 0,
+                    fontSize: "24px",
+                    fontWeight: 800,
+                    color: "var(--ink, #0f172a)",
+                    letterSpacing: "-0.02em",
                   }}
                 >
-                  {roleLabel}
+                  {doctorName}
+                </h1>
+
+                {/* Role Chip */}
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    padding: "4px 12px",
+                    borderRadius: "9999px",
+                    background: "rgba(14, 135, 116, 0.1)",
+                    color: "var(--teal, #0e8774)",
+                    border: "1px solid rgba(14, 135, 116, 0.24)",
+                  }}
+                >
+                  <ShieldCheck size={13} strokeWidth={2.5} />
+                  <span>{roleLabel}</span>
+                </span>
+
+                {/* Active Status Badge */}
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    padding: "3px 10px",
+                    borderRadius: "9999px",
+                    background: "rgba(16, 185, 129, 0.1)",
+                    color: "#059669",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: "6px",
+                      height: "6px",
+                      borderRadius: "50%",
+                      background: "#10b981",
+                    }}
+                  />
+                  <span>{isArabic ? "نشط الآن" : "Active"}</span>
                 </span>
               </div>
-              <p style={{ margin: "4px 0 0", fontSize: "13px", color: "var(--muted, #64748b)" }}>
-                {department} · {project}
-              </p>
+
+              {/* Subtitle / Department & Workspace */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "16px",
+                  marginTop: "8px",
+                  fontSize: "13px",
+                  color: "var(--muted, #64748b)",
+                  flexWrap: "wrap",
+                }}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                  <Building2 size={14} style={{ color: "var(--teal, #0e8774)" }} />
+                  <span>{department || (isArabic ? "الطب العام" : "General Medicine")}</span>
+                </span>
+
+                <span style={{ color: "var(--line, #cbd5e1)", fontSize: "12px" }}>•</span>
+
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                  <FolderGit2 size={14} style={{ color: "var(--teal, #0e8774)" }} />
+                  <span>{project || (isArabic ? "مساحة العمل" : "Workspace")}</span>
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Quick User Reference ID Tag */}
+          {/* Right Column: User ID Chip with Copy Action */}
           <div
             style={{
-              display: "inline-flex",
+              paddingTop: "12px",
+              display: "flex",
               alignItems: "center",
-              gap: "8px",
-              padding: "6px 12px",
-              borderRadius: "10px",
-              background: "var(--canvas, #f8fafc)",
-              border: "1px solid var(--line, #e2e8f0)",
-              fontSize: "12px",
             }}
           >
-            <span style={{ color: "var(--muted, #64748b)" }}>{isArabic ? "معرف المستخدم:" : "User ID:"}</span>
-            <code style={{ fontWeight: 700, color: "var(--ink, #0f172a)", direction: "ltr" }}>
-              USR-{role.toUpperCase().slice(0, 3)}-0824
-            </code>
-            <button
-              type="button"
-              onClick={handleCopyId}
+            <div
               style={{
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                padding: "2px",
-                color: copied ? "#10b981" : "var(--muted, #64748b)",
-                display: "grid",
-                placeItems: "center",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "8px 16px",
+                borderRadius: "14px",
+                background: "var(--canvas, #f8fafc)",
+                border: "1px solid var(--line, #e2e8f0)",
+                boxShadow: "0 2px 6px rgba(0, 0, 0, 0.02)",
               }}
-              title={isArabic ? "نسخ المعرف" : "Copy ID"}
             >
-              {copied ? <CheckCircle2 size={14} color="#10b981" /> : <Copy size={14} />}
-            </button>
+              <div
+                style={{
+                  width: "28px",
+                  height: "28px",
+                  borderRadius: "8px",
+                  background: "rgba(14, 135, 116, 0.1)",
+                  color: "var(--teal, #0e8774)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <KeyRound size={15} />
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                <span
+                  style={{
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    color: "var(--muted, #64748b)",
+                    lineHeight: 1,
+                  }}
+                >
+                  {isArabic ? "معرّف الحساب" : "User ID"}
+                </span>
+                <span
+                  style={{
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    color: "var(--ink, #0f172a)",
+                    direction: "ltr",
+                    letterSpacing: "0.5px",
+                    lineHeight: 1.2,
+                  }}
+                >
+                  USR-{role.toUpperCase().slice(0, 3)}-0824
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCopyId}
+                style={{
+                  background: copied ? "rgba(16, 185, 129, 0.12)" : "var(--paper, #ffffff)",
+                  border: `1px solid ${copied ? "#10b981" : "var(--line, #e2e8f0)"}`,
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  padding: "6px 8px",
+                  color: copied ? "#059669" : "var(--muted, #64748b)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "5px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  transition: "all 0.15s ease",
+                  marginInlineStart: "6px",
+                }}
+                title={isArabic ? "نسخ المعرّف" : "Copy ID"}
+              >
+                {copied ? (
+                  <>
+                    <CheckCircle2 size={13} color="#059669" />
+                    <span>{isArabic ? "تم النسخ" : "Copied"}</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy size={13} />
+                    <span>{isArabic ? "نسخ" : "Copy"}</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </section>
