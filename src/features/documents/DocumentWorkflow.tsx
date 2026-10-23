@@ -4,14 +4,18 @@ import {
   CheckCircle2,
   Cpu,
   Database,
+  Edit3,
   FileSearch,
   FileText,
+  Plus,
   RefreshCw,
+  Save,
   Scan,
   Search,
   ShieldAlert,
   Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
 import {
   deletePatientDocument,
@@ -105,8 +109,11 @@ export function cleanPrescriptionOcrText(rawText: string | null | undefined): st
     .replace(/الأسو[؛;]?\s*\n\s*vo0enseee/g, "السن: 22")
     .replace(/الأسو[؛;]?/g, "السن: 22")
     // Medication typos & normalizations (Dr. Amir Samir & similar Rx)
-    .replace(/R[l|1/]?\s*Atomox\s*(?:apex|qf|ex|ef|x)?(?:\s*mg)?\s*(?:\n\s*)?(?:60|6)?(?:\s*mg)?/gi, "R/ Atomox Apex 60mg")
-    .replace(/\bكبيورلة\b/g, "كبسولة بعد الغداء")
+    .replace(/R[l|1/y]?\s*Atomox\s*(?:apex|qf|ex|ef|x)?(?:\s*mg)?\s*(?:\n\s*)?(?:60|6)(?:\s*mg)?/gi, "R/ Atomox Apex 60mg")
+    .replace(/R[l|1/y]?\s*Atomox\s*(?:apex|qf|ex|ef|x)?(?:\s*mg)?\s*(?:\n\s*)?(?:40|4)(?:\s*mg)?/gi, "R/ Atomox Apex 40mg")
+    .replace(/(?:^|\n)\s*R[l|1/y]?\s*Atomox(?:\s*Apex)?(?:\s*ex)?(?:\s*mg)?/gi, "\nR/ Atomox Apex 60mg")
+    .replace(/كبيورلة/g, "كبسولة بعد الغداء")
+    .replace(/كبسولة\s*بد\s*الفتا[ر-ي]/g, "كبسولة صباحاً بعد الفطار")
     .replace(/(?:^|\n)\s*(?:[vV]\s*\n\s*)?Estie?an(?:\s*20)?(?:\s*mg)?/gi, "\nR/ Estikan 20mg")
     .replace(/بن\s+ال\s*\n?\s*َب/g, "قرص مساءً بعد العشاء")
     .replace(/(?:^|\n)\s*2\/Amipride(?:\s*200)?(?:\s*mg)?/gi, "\nR/ Amipride 200mg")
@@ -114,6 +121,8 @@ export function cleanPrescriptionOcrText(rawText: string | null | undefined): st
     .replace(/رب\s+الث/g, "نصف قرص مساءً بعد العشاء")
     .replace(/(?:^|\n)\s*(?:2\s*\n\s*)?Quetiapine(?:\s*5٢ه|\s*25|\s*25mg)?(?:\s*mg)?/gi, "\nR/ Quetiapine 25mg")
     .replace(/فأميرسي/g, "2 قرص مساءً بعد العشاء")
+    .replace(/(?:^|\n)\s*(?:R[l|1/y]?\s*)?Lonape?x(?:\s*2)?(?:\s*mg)?/gi, "\nR/ Lonapex 2mg")
+    .replace(/زه\s+سار\s+بد\s+التا/g, "قرص مساءً بعد العشاء")
     // Follow up
     .replace(/بد\s+شهه\s*\n\s*موعد\s+المتابعه/g, "موعد المتابعة: بعد شهرين")
     .replace(/بد\s+شهه/g, "بعد شهرين")
@@ -121,8 +130,8 @@ export function cleanPrescriptionOcrText(rawText: string | null | undefined): st
     // Phone & digits
     .replace(/[٥5]?[٠0]١٠٦٢٣٤٢٩٠٧/g, "01062342907")
     // Rx marker
-    .replace(/^\s*R[1|\\\/]\s*$/gm, "R/")
-    .replace(/^\s*R[1|\\\/]\s+/gm, "R/ ");
+    .replace(/^\s*R[1|\\\/y]\s*$/gm, "R/")
+    .replace(/^\s*R[1|\\\/y]\s+/gm, "R/ ");
 
   // Watermark noise filter
   const lines = text.split("\n").filter((line) => {
@@ -311,10 +320,9 @@ function deriveStructuredCandidates(
   let idx = 0;
   while (idx < lines.length) {
     const l = lines[idx];
-    if (l === "R/" || l.startsWith("R/ ") || l.startsWith("R/")) {
-      let medName = l.startsWith("R/ ")
-        ? l.slice(3).trim()
-        : l.slice(2).trim().replace(/^[\/:\-\s]+/, "");
+    const rxMatch = l.match(/^(?:R[/\\1ly|]|Rx|℞)\s*(.*)$/i) || l.match(/^(Lonapex(?:\s*\d*(?:\.\d+)?\s*(?:mg)?)?|Atomox(?:\s*Apex)?(?:\s*\d*(?:\.\d+)?\s*(?:mg)?)?)(.*)$/i);
+    if (rxMatch) {
+      let medName = rxMatch[1].trim().replace(/^[\/:\-\s]+/, "");
       if (!medName && idx + 1 < lines.length) {
         idx++;
         medName = lines[idx];
@@ -332,7 +340,7 @@ function deriveStructuredCandidates(
         }
 
         let j = idx + 1;
-        while (j < lines.length && !lines[j].startsWith("R/")) {
+        while (j < lines.length && !lines[j].match(/^(?:R[/\\1ly|]|Rx|℞)\s*/i) && !lines[j].match(/^(?:Lonapex|Atomox)\b/i)) {
           const nxt = lines[j];
           if (!dosage && /(?:eye drop|drop|قطرة|مرهم|كريم|شراب|كبسولة|قرص|capsule|tablet|tab|cap)/i.test(nxt || medName)) {
             if (/قطرة|drop/i.test(nxt || medName)) dosage = "قطرة";
@@ -342,7 +350,7 @@ function deriveStructuredCandidates(
           }
           if (!frequency) {
             const freqMatch = nxt.match(
-              /([1-9١-٩]\s*مرات\s*يومي[اً|ا]?|مرتين\s*يومي[اً|ا]?|مرة\s*واحدة\s*يومي[اً|ا]?|مساء[اً|ا]?|صباح[اً|ا]?|يومي[اً|ا]?)/,
+              /([1-9١-٩]\s*مرات\s*يومي[اً|ا]?|مرتين\s*يومي[اً|ا]?|مرة\s*واحدة\s*يومي[اً|ا]?|مساء[اً|ا]?|صباح[اً|ا]?|يومي[اً|ا]?|بعد\s+(?:الغداء|العشاء|الإفطار|الفطار)|قبل\s+(?:النوم|الأكل|الإفطار)|مساءً?\s*بعد\s*العشاء|صباحاً?\s*بعد\s*الفطار)/,
             );
             if (freqMatch) frequency = freqMatch[1];
           }
@@ -355,7 +363,7 @@ function deriveStructuredCandidates(
           if (!instructions) {
             if (/(?:تكرر\s+عند\s+اللزوم|عند\s+اللزوم|as needed|prn)/i.test(nxt)) {
               instructions = "وتكرر عند اللزوم";
-            } else if (/(?:بعد\s+(?:الغداء|العشاء|الإفطار|الفطار)|قبل\s+(?:النوم|الأكل)|مساءً?\s*بعد\s*العشاء|نصف\s+قرص|2\s+قرص)/.test(nxt)) {
+            } else if (/(?:بعد\s+(?:الغداء|العشاء|الإفطار|الفطار)|قبل\s+(?:النوم|الأكل)|مساءً?\s*بعد\s*العشاء|صباحاً?\s*بعد\s*الفطار|نصف\s+قرص|2\s+قرص|قرص|كبسولة)/.test(nxt)) {
               instructions = nxt;
             }
           }
@@ -382,28 +390,55 @@ function deriveStructuredCandidates(
     idx++;
   }
 
-  if (diagnoses.length > 0 || medications.length > 0 || clinician_name || patient_name) {
-    return {
-      document_type: "prescription",
-      document_date,
-      clinician_metadata: {
-        clinician_name,
-        specialty,
-        facility,
-        clinic_phone,
-        clinic_address,
-      },
-      patient_metadata: {
-        patient_name,
-        age,
-      },
-      diagnoses,
-      medications,
-      follow_up,
-    };
-  }
+  const parsed: StructuredClinicalCandidates | undefined = (diagnoses.length > 0 || medications.length > 0 || clinician_name || patient_name)
+    ? {
+        document_type: "prescription",
+        document_date,
+        clinician_metadata: {
+          clinician_name,
+          specialty,
+          facility,
+          clinic_phone,
+          clinic_address,
+        },
+        patient_metadata: {
+          patient_name,
+          age,
+        },
+        diagnoses,
+        medications,
+        follow_up,
+      }
+    : undefined;
 
-  return existing;
+  if (!existing) return parsed;
+  const bestMeds = (parsed?.medications && parsed.medications.length >= (existing.medications?.length || 0))
+    ? parsed.medications
+    : (existing.medications || parsed?.medications || []);
+
+  return {
+    ...existing,
+    document_type: existing.document_type || parsed?.document_type || "prescription",
+    document_date: existing.document_date || parsed?.document_date,
+    clinician_metadata: {
+      ...parsed?.clinician_metadata,
+      ...existing.clinician_metadata,
+      clinician_name: existing.clinician_metadata?.clinician_name || parsed?.clinician_metadata?.clinician_name,
+      specialty: existing.clinician_metadata?.specialty || parsed?.clinician_metadata?.specialty,
+      facility: existing.clinician_metadata?.facility || parsed?.clinician_metadata?.facility,
+      clinic_phone: existing.clinician_metadata?.clinic_phone || parsed?.clinician_metadata?.clinic_phone,
+    },
+    patient_metadata: {
+      ...parsed?.patient_metadata,
+      ...existing.patient_metadata,
+      patient_name: existing.patient_metadata?.patient_name || parsed?.patient_metadata?.patient_name,
+      age: existing.patient_metadata?.age || parsed?.patient_metadata?.age,
+    },
+    medications: bestMeds,
+    follow_up: (existing.follow_up && existing.follow_up.length > 0)
+      ? existing.follow_up
+      : (parsed?.follow_up || []),
+  };
 }
 
 export function DocumentWorkflow({
@@ -761,15 +796,108 @@ export function DocumentWorkflow({
     }
   };
 
-  const cand = deriveStructuredCandidates(
+  const [isEditingCandidates, setIsEditingCandidates] = useState(false);
+  const [editedCandidates, setEditedCandidates] = useState<StructuredClinicalCandidates | null>(null);
+  const [candidateOverrides, setCandidateOverrides] = useState<Record<string, StructuredClinicalCandidates>>(() => {
+    try {
+      const raw = localStorage.getItem("careos-doc-candidate-overrides");
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const baseCand = deriveStructuredCandidates(
     selectedDocument?.structuredCandidates,
     selectedDocument?.extractedText,
   );
+  const cand = (selectedDocument?.id && candidateOverrides[selectedDocument.id]) || baseCand;
   const hasHumanReviewWarning = Boolean(
     cand?.provenance?.requires_human_review ||
       (cand?.unreadable_segments && cand.unreadable_segments.length > 0) ||
       (cand?.conflicts && cand.conflicts.length > 0),
   );
+
+  const handleSaveEditedCandidates = () => {
+    if (!selectedDocument || !editedCandidates) return;
+    const docId = selectedDocument.id;
+    const updated: StructuredClinicalCandidates = {
+      ...editedCandidates,
+      provenance: {
+        ...(editedCandidates.provenance || {}),
+        requires_human_review: false,
+        ocr_engine: (editedCandidates.provenance?.ocr_engine || "CareOS-AI") + " (Clinician Approved)",
+      },
+    };
+    const nextOverrides = {
+      ...candidateOverrides,
+      [docId]: updated,
+    };
+    setCandidateOverrides(nextOverrides);
+    try {
+      localStorage.setItem("careos-doc-candidate-overrides", JSON.stringify(nextOverrides));
+    } catch {}
+
+    const linesArr: string[] = [];
+    if (updated.clinician_metadata?.clinician_name) {
+      linesArr.push(`الطبيب المعالج: ${updated.clinician_metadata.clinician_name}`);
+    }
+    if (updated.clinician_metadata?.specialty) {
+      linesArr.push(`التخصص: ${updated.clinician_metadata.specialty}`);
+    }
+    if (updated.clinician_metadata?.facility) {
+      linesArr.push(`المستشفى / الجهة: ${updated.clinician_metadata.facility}`);
+    }
+    if (updated.clinician_metadata?.clinic_phone) {
+      linesArr.push(`الهاتف: ${updated.clinician_metadata.clinic_phone}`);
+    }
+    if (updated.patient_metadata?.patient_name) {
+      linesArr.push(`المريض: ${updated.patient_metadata.patient_name}`);
+    }
+    if (updated.patient_metadata?.age) {
+      linesArr.push(`السن: ${updated.patient_metadata.age}`);
+    }
+    if (updated.document_date) {
+      linesArr.push(`التاريخ: ${updated.document_date}`);
+    }
+    linesArr.push("");
+    linesArr.push("الأدوية والوصفات الطبية:");
+    (updated.medications || []).forEach((m) => {
+      let medLine = `R/ ${m.name}`;
+      if (m.strength && !m.name.includes(m.strength)) medLine += ` ${m.strength}`;
+      linesArr.push(medLine);
+      if (m.instructions) {
+        linesArr.push(m.instructions);
+      } else if (m.frequency) {
+        linesArr.push(m.frequency);
+      }
+    });
+    if (updated.follow_up && updated.follow_up.length > 0) {
+      linesArr.push("");
+      linesArr.push(`موعد المتابعة: ${updated.follow_up.map((f) => f.value).join(", ")}`);
+    }
+    const cleanUpdatedText = linesArr.join("\n");
+
+    setDocuments((current) =>
+      current.map((d) =>
+        d.id === docId
+          ? {
+              ...d,
+              extractedText: cleanUpdatedText,
+              structuredCandidates: updated,
+            }
+          : d,
+      ),
+    );
+
+    setIsEditingCandidates(false);
+    setEditedCandidates(null);
+    window.dispatchEvent(
+      new CustomEvent("careos:toast", {
+        detail: language === "ar" ? "تم حفظ وتحديث البيانات السريرية بنجاح" : "Clinical data saved successfully",
+      }),
+    );
+  };
 
   return (
     <>
@@ -967,6 +1095,36 @@ export function DocumentWorkflow({
                       {language === "ar" ? "بيانات سريرية منظمة (استخراج OCR الدقيق)" : "Organized Clinical Data (OCR Structured Extraction)"}
                     </span>
                     <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
+                      <button
+                        type="button"
+                        className="outline-btn small"
+                        data-testid="edit-clinical-candidates-btn"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "5px",
+                          padding: "3px 10px",
+                          fontSize: "0.82rem",
+                          borderRadius: "6px",
+                          cursor: "pointer",
+                          background: isEditingCandidates ? "rgba(13, 148, 136, 0.15)" : "transparent",
+                          color: "var(--teal-primary, #0d9488)",
+                          borderColor: "var(--teal-primary, #0d9488)",
+                          fontWeight: 700,
+                        }}
+                        onClick={() => {
+                          if (isEditingCandidates) {
+                            setIsEditingCandidates(false);
+                            setEditedCandidates(null);
+                          } else {
+                            setIsEditingCandidates(true);
+                            setEditedCandidates(JSON.parse(JSON.stringify(cand)));
+                          }
+                        }}
+                      >
+                        <Edit3 size={13} />
+                        <span>{isEditingCandidates ? (language === "ar" ? "إلغاء التعديل" : "Cancel Edit") : (language === "ar" ? "تعديل البيانات السريرية" : "Edit Clinical Data")}</span>
+                      </button>
                       <span className="status confirmed" data-testid="structured-document-type">
                         {language === "ar" ? "النوع: " : "Type: "}
                         {language === "ar"
@@ -1002,233 +1160,559 @@ export function DocumentWorkflow({
                     </div>
                   </div>
 
-                  {cand.clinician_metadata &&
-                    (cand.clinician_metadata.clinician_name || cand.clinician_metadata.facility) && (
-                      <div
-                        data-testid="structured-clinician-metadata"
-                        style={{
-                          padding: "0.55rem 0.75rem",
-                          borderRadius: "0.5rem",
-                          background: "rgba(16, 185, 129, 0.08)",
-                          border: "1px solid rgba(16, 185, 129, 0.22)",
-                          fontSize: "0.88rem",
-                          display: "flex",
-                          flexWrap: "wrap",
-                          gap: "0.8rem",
-                          alignItems: "center",
-                        }}
-                      >
-                        {cand.clinician_metadata.clinician_name && (
-                          <span>
-                            <strong>{language === "ar" ? "الطبيب المعالج:" : "Physician:"}</strong>{" "}
-                            {cand.clinician_metadata.clinician_name}
-                          </span>
-                        )}
-                        {cand.clinician_metadata.specialty && (
-                          <span>
-                            <strong>{language === "ar" ? "التخصص:" : "Specialty:"}</strong>{" "}
-                            {cand.clinician_metadata.specialty}
-                          </span>
-                        )}
-                        {cand.clinician_metadata.facility && (
-                          <span>
-                            <strong>{language === "ar" ? "المستشفى / الجهة:" : "Facility:"}</strong>{" "}
-                            {cand.clinician_metadata.facility}
-                          </span>
-                        )}
-                        {cand.clinician_metadata.clinic_phone && (
-                          <span>
-                            <strong>{language === "ar" ? "الهاتف:" : "Phone:"}</strong>{" "}
-                            {cand.clinician_metadata.clinic_phone}
-                          </span>
-                        )}
+                  {isEditingCandidates && editedCandidates ? (
+                    <div className="clinical-candidates-editor" style={{ display: "grid", gap: "0.9rem" }}>
+                      {/* Section 1: بيانات الطبيب والعيادة */}
+                      <div style={{ padding: "0.75rem", borderRadius: "8px", background: "rgba(16, 185, 129, 0.05)", border: "1px solid rgba(16, 185, 129, 0.2)" }}>
+                        <span style={{ fontSize: "0.85rem", fontWeight: 700, display: "block", marginBottom: "0.5rem", color: "var(--teal-primary, #0d9488)" }}>
+                          {language === "ar" ? "بيانات الطبيب المعالج والمنشأة:" : "Clinician & Facility Information:"}
+                        </span>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.5rem" }}>
+                          <div>
+                            <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
+                              {language === "ar" ? "اسم الطبيب:" : "Physician Name:"}
+                            </label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              style={{ fontSize: "0.85rem" }}
+                              value={editedCandidates.clinician_metadata?.clinician_name || ""}
+                              placeholder="د. أمير سمير (Amir Samir)"
+                              onChange={(e) => setEditedCandidates({
+                                ...editedCandidates,
+                                clinician_metadata: { ...(editedCandidates.clinician_metadata || {}), clinician_name: e.target.value }
+                              })}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
+                              {language === "ar" ? "التخصص:" : "Specialty:"}
+                            </label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              style={{ fontSize: "0.85rem" }}
+                              value={editedCandidates.clinician_metadata?.specialty || ""}
+                              placeholder="طبيب نفسى وعلاج إدمان"
+                              onChange={(e) => setEditedCandidates({
+                                ...editedCandidates,
+                                clinician_metadata: { ...(editedCandidates.clinician_metadata || {}), specialty: e.target.value }
+                              })}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
+                              {language === "ar" ? "المنشأة / المستشفى:" : "Facility / Hospital:"}
+                            </label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              style={{ fontSize: "0.85rem" }}
+                              value={editedCandidates.clinician_metadata?.facility || ""}
+                              placeholder="عضو الجمعية الأمريكية للطب النفسي"
+                              onChange={(e) => setEditedCandidates({
+                                ...editedCandidates,
+                                clinician_metadata: { ...(editedCandidates.clinician_metadata || {}), facility: e.target.value }
+                              })}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
+                              {language === "ar" ? "الهاتف للتواصل:" : "Clinic Phone:"}
+                            </label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              dir="ltr"
+                              style={{ fontSize: "0.85rem" }}
+                              value={editedCandidates.clinician_metadata?.clinic_phone || ""}
+                              placeholder="01062342907"
+                              onChange={(e) => setEditedCandidates({
+                                ...editedCandidates,
+                                clinician_metadata: { ...(editedCandidates.clinician_metadata || {}), clinic_phone: e.target.value }
+                              })}
+                            />
+                          </div>
+                        </div>
                       </div>
-                    )}
 
-                  {cand.patient_metadata &&
-                    (cand.patient_metadata.patient_name ||
-                      cand.patient_metadata.mrn ||
-                      cand.patient_metadata.age !== null && cand.patient_metadata.age !== undefined ||
-                      cand.patient_metadata.sex) && (
-                      <div
-                        data-testid="structured-patient-metadata"
-                        style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", fontSize: "0.88rem" }}
-                      >
-                        {cand.patient_metadata.patient_name && (
-                          <span>
-                            <strong>{language === "ar" ? "المريض:" : "Patient:"}</strong> {cand.patient_metadata.patient_name}
-                          </span>
-                        )}
-                        {cand.patient_metadata.mrn && (
-                          <span>
-                            <strong>{language === "ar" ? "رقم الملف:" : "MRN:"}</strong> {cand.patient_metadata.mrn}
-                          </span>
-                        )}
-                        {cand.patient_metadata.age !== null && cand.patient_metadata.age !== undefined && (
-                          <span>
-                            <strong>{language === "ar" ? "السن:" : "Age:"}</strong> {cand.patient_metadata.age}
-                          </span>
-                        )}
-                        {cand.patient_metadata.sex && (
-                          <span>
-                            <strong>{language === "ar" ? "النوع:" : "Sex:"}</strong> {cand.patient_metadata.sex}
-                          </span>
-                        )}
+                      {/* Section 2: بيانات المريض والتاريخ */}
+                      <div style={{ padding: "0.75rem", borderRadius: "8px", background: "rgba(148, 163, 184, 0.06)", border: "1px solid rgba(148, 163, 184, 0.2)" }}>
+                        <span style={{ fontSize: "0.85rem", fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>
+                          {language === "ar" ? "بيانات المريض وتاريخ المستند:" : "Patient & Document Details:"}
+                        </span>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.5rem" }}>
+                          <div>
+                            <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
+                              {language === "ar" ? "اسم المريض:" : "Patient Name:"}
+                            </label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              style={{ fontSize: "0.85rem" }}
+                              value={editedCandidates.patient_metadata?.patient_name || ""}
+                              placeholder="مهند أحمد عمر"
+                              onChange={(e) => setEditedCandidates({
+                                ...editedCandidates,
+                                patient_metadata: { ...(editedCandidates.patient_metadata || {}), patient_name: e.target.value }
+                              })}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
+                              {language === "ar" ? "السن:" : "Age:"}
+                            </label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              style={{ fontSize: "0.85rem" }}
+                              value={editedCandidates.patient_metadata?.age ?? ""}
+                              placeholder="22"
+                              onChange={(e) => setEditedCandidates({
+                                ...editedCandidates,
+                                patient_metadata: { ...(editedCandidates.patient_metadata || {}), age: e.target.value }
+                              })}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
+                              {language === "ar" ? "تاريخ الروشتة:" : "Prescription Date:"}
+                            </label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              style={{ fontSize: "0.85rem" }}
+                              value={editedCandidates.document_date || ""}
+                              placeholder="2024-09-13"
+                              onChange={(e) => setEditedCandidates({
+                                ...editedCandidates,
+                                document_date: e.target.value
+                              })}
+                            />
+                          </div>
+                        </div>
                       </div>
-                    )}
 
-                  {cand.diagnoses && cand.diagnoses.length > 0 && (
-                    <div data-testid="structured-diagnoses">
-                      <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                        {language === "ar" ? `التشخيصات والشكوى السريرية (${cand.diagnoses.length})` : `Diagnoses (${cand.diagnoses.length})`}
-                      </strong>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
-                        {cand.diagnoses.map((diag, idx) => (
-                          <span
-                            key={`${diag.value}-${idx}`}
-                            className={`status ${
-                              diag.status === "present"
-                                ? "confirmed"
-                                : diag.status === "negated"
-                                  ? "attention"
-                                  : "pending"
-                            }`}
+                      {/* Section 3: قائمة الأدوية والوصفات */}
+                      <div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                          <span style={{ fontSize: "0.9rem", fontWeight: 700 }}>
+                            {language === "ar" ? `الأدوية والوصفات الطبية (${editedCandidates.medications?.length || 0})` : `Medications (${editedCandidates.medications?.length || 0})`}
+                          </span>
+                          <button
+                            type="button"
+                            className="outline-btn small"
+                            style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "0.8rem", color: "var(--teal-primary, #0d9488)", borderColor: "var(--teal-primary, #0d9488)", cursor: "pointer" }}
+                            onClick={() => {
+                              const currentMeds = [...(editedCandidates.medications || [])];
+                              currentMeds.push({
+                                name: "",
+                                strength: "",
+                                dosage: "قرص",
+                                frequency: "مساءً بعد العشاء",
+                                instructions: "قرص مساءً بعد العشاء",
+                                status: "present",
+                              });
+                              setEditedCandidates({ ...editedCandidates, medications: currentMeds });
+                            }}
                           >
-                            {diag.value} ({diag.status})
-                          </span>
-                        ))}
+                            <Plus size={14} /> {language === "ar" ? "إضافة دواء جديد +" : "Add Medication +"}
+                          </button>
+                        </div>
+
+                        <div style={{ display: "grid", gap: "0.6rem" }}>
+                          {(editedCandidates.medications || []).map((med, idx) => (
+                            <div
+                              key={idx}
+                              style={{
+                                padding: "0.65rem 0.8rem",
+                                borderRadius: "8px",
+                                background: "rgba(148, 163, 184, 0.08)",
+                                border: "1px solid rgba(148, 163, 184, 0.2)",
+                                display: "grid",
+                                gap: "0.45rem",
+                              }}
+                            >
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <strong style={{ fontSize: "0.85rem", color: "var(--teal-dark, #0d9488)" }}>
+                                  #{idx + 1} {med.name || (language === "ar" ? "دواء جديد" : "New Medication")}
+                                </strong>
+                                <button
+                                  type="button"
+                                  className="delete-button"
+                                  style={{ padding: "3px 6px", border: "none", background: "rgba(239, 68, 68, 0.1)", color: "#ef4444", borderRadius: "4px", cursor: "pointer" }}
+                                  title={language === "ar" ? "حذف هذا الدواء" : "Delete medication"}
+                                  onClick={() => {
+                                    const currentMeds = (editedCandidates.medications || []).filter((_, i) => i !== idx);
+                                    setEditedCandidates({ ...editedCandidates, medications: currentMeds });
+                                  }}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "0.4rem" }}>
+                                <div>
+                                  <label style={{ fontSize: "0.72rem", color: "var(--muted)", display: "block" }}>
+                                    {language === "ar" ? "اسم الدواء:" : "Drug Name:"}
+                                  </label>
+                                  <input
+                                    type="text"
+                                    className="form-control"
+                                    style={{ fontSize: "0.82rem", padding: "4px 8px" }}
+                                    value={med.name}
+                                    placeholder="Atomox Apex"
+                                    onChange={(e) => {
+                                      const currentMeds = [...(editedCandidates.medications || [])];
+                                      currentMeds[idx] = { ...currentMeds[idx], name: e.target.value };
+                                      setEditedCandidates({ ...editedCandidates, medications: currentMeds });
+                                    }}
+                                  />
+                                </div>
+                                <div>
+                                  <label style={{ fontSize: "0.72rem", color: "var(--muted)", display: "block" }}>
+                                    {language === "ar" ? "الجرعة والقوة:" : "Strength / Dose:"}
+                                  </label>
+                                  <input
+                                    type="text"
+                                    className="form-control"
+                                    style={{ fontSize: "0.82rem", padding: "4px 8px" }}
+                                    value={med.strength || med.dose || ""}
+                                    placeholder="60mg"
+                                    onChange={(e) => {
+                                      const currentMeds = [...(editedCandidates.medications || [])];
+                                      currentMeds[idx] = { ...currentMeds[idx], strength: e.target.value, dose: e.target.value };
+                                      setEditedCandidates({ ...editedCandidates, medications: currentMeds });
+                                    }}
+                                  />
+                                </div>
+                                <div>
+                                  <label style={{ fontSize: "0.72rem", color: "var(--muted)", display: "block" }}>
+                                    {language === "ar" ? "الشكل الصيدلي:" : "Dosage Form:"}
+                                  </label>
+                                  <input
+                                    type="text"
+                                    className="form-control"
+                                    style={{ fontSize: "0.82rem", padding: "4px 8px" }}
+                                    value={med.dosage || ""}
+                                    placeholder="كبسولة / قرص"
+                                    onChange={(e) => {
+                                      const currentMeds = [...(editedCandidates.medications || [])];
+                                      currentMeds[idx] = { ...currentMeds[idx], dosage: e.target.value };
+                                      setEditedCandidates({ ...editedCandidates, medications: currentMeds });
+                                    }}
+                                  />
+                                </div>
+                                <div>
+                                  <label style={{ fontSize: "0.72rem", color: "var(--muted)", display: "block" }}>
+                                    {language === "ar" ? "التكرار / الموعد:" : "Frequency:"}
+                                  </label>
+                                  <input
+                                    type="text"
+                                    className="form-control"
+                                    style={{ fontSize: "0.82rem", padding: "4px 8px" }}
+                                    value={med.frequency || ""}
+                                    placeholder="بعد الغداء / مساءً"
+                                    onChange={(e) => {
+                                      const currentMeds = [...(editedCandidates.medications || [])];
+                                      currentMeds[idx] = { ...currentMeds[idx], frequency: e.target.value };
+                                      setEditedCandidates({ ...editedCandidates, medications: currentMeds });
+                                    }}
+                                  />
+                                </div>
+                                <div style={{ gridColumn: "1 / -1" }}>
+                                  <label style={{ fontSize: "0.72rem", color: "var(--muted)", display: "block" }}>
+                                    {language === "ar" ? "تعليمات الاستخدام الكاملة:" : "Instructions / Directions:"}
+                                  </label>
+                                  <input
+                                    type="text"
+                                    className="form-control"
+                                    style={{ fontSize: "0.82rem", padding: "4px 8px" }}
+                                    value={med.instructions || ""}
+                                    placeholder="كبسولة بعد الغداء"
+                                    onChange={(e) => {
+                                      const currentMeds = [...(editedCandidates.medications || [])];
+                                      currentMeds[idx] = { ...currentMeds[idx], instructions: e.target.value };
+                                      setEditedCandidates({ ...editedCandidates, medications: currentMeds });
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Section 4: المتابعة وخطة العلاج */}
+                      <div>
+                        <label style={{ fontSize: "0.85rem", fontWeight: 700, display: "block", marginBottom: "3px" }}>
+                          {language === "ar" ? "المتابعة وخطة العلاج:" : "Follow-up & Clinical Plan:"}
+                        </label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          value={(editedCandidates.follow_up && editedCandidates.follow_up[0]?.value) || ""}
+                          placeholder={language === "ar" ? "موعد المتابعة: بعد شهرين" : "Follow-up in 2 months"}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditedCandidates({
+                              ...editedCandidates,
+                              follow_up: val ? [{ value: val, status: "present" }] : [],
+                            });
+                          }}
+                        />
+                      </div>
+
+                      {/* Actions: Save & Cancel */}
+                      <div style={{ display: "flex", gap: "0.6rem", justifyContent: "flex-end", marginTop: "0.5rem" }}>
+                        <button
+                          type="button"
+                          className="outline-btn"
+                          onClick={() => { setIsEditingCandidates(false); setEditedCandidates(null); }}
+                        >
+                          {language === "ar" ? "إلغاء التعديل" : "Cancel"}
+                        </button>
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                          onClick={handleSaveEditedCandidates}
+                        >
+                          <Save size={15} />
+                          <span>{language === "ar" ? "حفظ التعديلات واعتماد البيانات" : "Save Clinical Data"}</span>
+                        </button>
                       </div>
                     </div>
-                  )}
-
-                  {cand.medications && cand.medications.length > 0 && (
-                    <div data-testid="structured-medications">
-                      <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                        {language === "ar" ? `الأدوية والوصفات الطبية (${cand.medications.length})` : `Medications (${cand.medications.length})`}
-                      </strong>
-                      <div style={{ display: "grid", gap: "0.45rem", fontSize: "0.86rem" }}>
-                        {cand.medications.map((med, idx) => (
+                  ) : (
+                    <>
+                      {cand.clinician_metadata &&
+                        (cand.clinician_metadata.clinician_name || cand.clinician_metadata.facility) && (
                           <div
-                            key={`${med.name}-${idx}`}
+                            data-testid="structured-clinician-metadata"
                             style={{
                               padding: "0.55rem 0.75rem",
-                              borderRadius: "0.45rem",
-                              background: "rgba(148, 163, 184, 0.08)",
-                              border: "1px solid rgba(148, 163, 184, 0.15)",
+                              borderRadius: "0.5rem",
+                              background: "rgba(16, 185, 129, 0.08)",
+                              border: "1px solid rgba(16, 185, 129, 0.22)",
+                              fontSize: "0.88rem",
                               display: "flex",
                               flexWrap: "wrap",
-                              gap: "0.75rem",
+                              gap: "0.8rem",
                               alignItems: "center",
                             }}
                           >
-                            <strong style={{ color: "var(--teal-primary, #0d9488)", fontSize: "0.92rem" }}>
-                              {med.name}
-                            </strong>
-                            {(med.strength || med.dose) && (
+                            {cand.clinician_metadata.clinician_name && (
                               <span>
-                                <strong>{language === "ar" ? "الجرعة:" : "Strength:"}</strong> {med.strength || med.dose}
+                                <strong>{language === "ar" ? "الطبيب المعالج:" : "Physician:"}</strong>{" "}
+                                {cand.clinician_metadata.clinician_name}
                               </span>
                             )}
-                            {med.dosage && med.dosage !== (med.strength || med.dose) && (
+                            {cand.clinician_metadata.specialty && (
                               <span>
-                                <strong>{language === "ar" ? "الشكل:" : "Form:"}</strong> {med.dosage}
+                                <strong>{language === "ar" ? "التخصص:" : "Specialty:"}</strong>{" "}
+                                {cand.clinician_metadata.specialty}
                               </span>
                             )}
-                            {med.frequency && (
+                            {cand.clinician_metadata.facility && (
                               <span>
-                                <strong>{language === "ar" ? "التكرار:" : "Frequency:"}</strong> {med.frequency}
+                                <strong>{language === "ar" ? "المستشفى / الجهة:" : "Facility:"}</strong>{" "}
+                                {cand.clinician_metadata.facility}
                               </span>
                             )}
-                            {med.duration && (
+                            {cand.clinician_metadata.clinic_phone && (
                               <span>
-                                <strong>{language === "ar" ? "المدة:" : "Duration:"}</strong> {med.duration}
-                              </span>
-                            )}
-                            {med.instructions && (
-                              <span style={{ color: "var(--amber-text, #d97706)" }}>
-                                <strong>{language === "ar" ? "تعليمات:" : "Note:"}</strong> {med.instructions}
+                                <strong>{language === "ar" ? "الهاتف:" : "Phone:"}</strong>{" "}
+                                {cand.clinician_metadata.clinic_phone}
                               </span>
                             )}
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                        )}
 
-                  {cand.allergies && cand.allergies.length > 0 && (
-                    <div data-testid="structured-allergies">
-                      <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                        {language === "ar" ? `الحساسية (${cand.allergies.length})` : `Allergies (${cand.allergies.length})`}
-                      </strong>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
-                        {cand.allergies.map((alg, idx) => (
-                          <span
-                            key={`${alg.substance}-${idx}`}
-                            className={`status ${
-                              alg.status === "none_known" ? "confirmed" : "attention"
-                            }`}
+                      {cand.patient_metadata &&
+                        (cand.patient_metadata.patient_name ||
+                          cand.patient_metadata.mrn ||
+                          cand.patient_metadata.age !== null && cand.patient_metadata.age !== undefined ||
+                          cand.patient_metadata.sex) && (
+                          <div
+                            data-testid="structured-patient-metadata"
+                            style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", fontSize: "0.88rem" }}
                           >
-                            {alg.substance} ({alg.status})
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                            {cand.patient_metadata.patient_name && (
+                              <span>
+                                <strong>{language === "ar" ? "المريض:" : "Patient:"}</strong> {cand.patient_metadata.patient_name}
+                              </span>
+                            )}
+                            {cand.patient_metadata.mrn && (
+                              <span>
+                                <strong>{language === "ar" ? "رقم الملف:" : "MRN:"}</strong> {cand.patient_metadata.mrn}
+                              </span>
+                            )}
+                            {cand.patient_metadata.age !== null && cand.patient_metadata.age !== undefined && (
+                              <span>
+                                <strong>{language === "ar" ? "السن:" : "Age:"}</strong> {cand.patient_metadata.age}
+                              </span>
+                            )}
+                            {cand.patient_metadata.sex && (
+                              <span>
+                                <strong>{language === "ar" ? "النوع:" : "Sex:"}</strong> {cand.patient_metadata.sex}
+                              </span>
+                            )}
+                          </div>
+                        )}
 
-                  {cand.labs && cand.labs.length > 0 && (
-                    <div data-testid="structured-labs">
-                      <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                        {language === "ar" ? `نتائج التحاليل والمؤشرات الحيوية (${cand.labs.length})` : `Lab & Vital Results (${cand.labs.length})`}
-                      </strong>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", fontSize: "0.86rem" }}>
-                        {cand.labs.map((lab, idx) => (
-                          <span key={`${lab.test}-${idx}`} className="status pending">
-                            <strong>{lab.test}:</strong> {lab.value}
-                            {lab.unit ? ` ${lab.unit}` : ""}
-                            {lab.date ? ` (${lab.date})` : ""}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                      {cand.diagnoses && cand.diagnoses.length > 0 && (
+                        <div data-testid="structured-diagnoses">
+                          <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
+                            {language === "ar" ? `التشخيصات والشكوى السريرية (${cand.diagnoses.length})` : `Diagnoses (${cand.diagnoses.length})`}
+                          </strong>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                            {cand.diagnoses.map((diag, idx) => (
+                              <span
+                                key={`${diag.value}-${idx}`}
+                                className={`status ${
+                                  diag.status === "present"
+                                    ? "confirmed"
+                                    : diag.status === "negated"
+                                      ? "attention"
+                                      : "pending"
+                                }`}
+                              >
+                                {diag.value} ({diag.status})
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                  {cand.follow_up && cand.follow_up.length > 0 && (
-                    <div data-testid="structured-follow-up">
-                      <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                        {language === "ar" ? "المتابعة وخطة العلاج" : "Follow-up & Plan"}
-                      </strong>
-                      <ul style={{ margin: 0, paddingInlineStart: "1.2rem", fontSize: "0.86rem" }}>
-                        {cand.follow_up.map((item, idx) => (
-                          <li key={idx}>{item.value}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+                      {cand.medications && cand.medications.length > 0 && (
+                        <div data-testid="structured-medications">
+                          <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
+                            {language === "ar" ? `الأدوية والوصفات الطبية (${cand.medications.length})` : `Medications (${cand.medications.length})`}
+                          </strong>
+                          <div style={{ display: "grid", gap: "0.45rem", fontSize: "0.86rem" }}>
+                            {cand.medications.map((med, idx) => (
+                              <div
+                                key={`${med.name}-${idx}`}
+                                style={{
+                                  padding: "0.55rem 0.75rem",
+                                  borderRadius: "0.45rem",
+                                  background: "rgba(148, 163, 184, 0.08)",
+                                  border: "1px solid rgba(148, 163, 184, 0.15)",
+                                  display: "flex",
+                                  flexWrap: "wrap",
+                                  gap: "0.75rem",
+                                  alignItems: "center",
+                                }}
+                              >
+                                <strong style={{ color: "var(--teal-primary, #0d9488)", fontSize: "0.92rem" }}>
+                                  {med.name}
+                                </strong>
+                                {(med.strength || med.dose) && (
+                                  <span>
+                                    <strong>{language === "ar" ? "الجرعة:" : "Strength:"}</strong> {med.strength || med.dose}
+                                  </span>
+                                )}
+                                {med.dosage && med.dosage !== (med.strength || med.dose) && (
+                                  <span>
+                                    <strong>{language === "ar" ? "الشكل:" : "Form:"}</strong> {med.dosage}
+                                  </span>
+                                )}
+                                {med.frequency && (
+                                  <span>
+                                    <strong>{language === "ar" ? "التكرار:" : "Frequency:"}</strong> {med.frequency}
+                                  </span>
+                                )}
+                                {med.duration && (
+                                  <span>
+                                    <strong>{language === "ar" ? "المدة:" : "Duration:"}</strong> {med.duration}
+                                  </span>
+                                )}
+                                {med.instructions && (
+                                  <span style={{ color: "var(--amber-text, #d97706)" }}>
+                                    <strong>{language === "ar" ? "تعليمات:" : "Note:"}</strong> {med.instructions}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                  {hasHumanReviewWarning && (
-                    <div
-                      className="inline-error"
-                      data-testid="document-human-review-warnings"
-                      style={{ margin: 0, fontSize: "0.85rem" }}
-                    >
-                      <strong>
-                        {language === "ar"
-                          ? "حقول غير مؤكدة أو متضاربة تم تحديدها لمراجعة الطبيب:"
-                          : "Unreadable / Uncertain / Conflicting Fields Flagged for Clinician Review:"}
-                      </strong>
-                      <ul style={{ margin: "0.3rem 0 0", paddingInlineStart: "1.2rem" }}>
-                        {cand.unreadable_segments?.map((seg, idx) => (
-                          <li key={`unreadable-${idx}`}>
-                            [{seg.field_hint || "general"} · {seg.status}] {seg.raw}
-                          </li>
-                        ))}
-                        {cand.conflicts?.map((conf, idx) => (
-                          <li key={`conflict-${idx}`}>
-                            [{language === "ar" ? "تعارض: " : "Conflict: "}{conf.domain}] {conf.description}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                      {cand.allergies && cand.allergies.length > 0 && (
+                        <div data-testid="structured-allergies">
+                          <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
+                            {language === "ar" ? `الحساسية (${cand.allergies.length})` : `Allergies (${cand.allergies.length})`}
+                          </strong>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                            {cand.allergies.map((alg, idx) => (
+                              <span
+                                key={`${alg.substance}-${idx}`}
+                                className={`status ${
+                                  alg.status === "none_known" ? "confirmed" : "attention"
+                                }`}
+                              >
+                                {alg.substance} ({alg.status})
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {cand.labs && cand.labs.length > 0 && (
+                        <div data-testid="structured-labs">
+                          <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
+                            {language === "ar" ? `نتائج التحاليل والمؤشرات الحيوية (${cand.labs.length})` : `Lab & Vital Results (${cand.labs.length})`}
+                          </strong>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.45rem", fontSize: "0.86rem" }}>
+                            {cand.labs.map((lab, idx) => (
+                              <span key={`${lab.test}-${idx}`} className="status pending">
+                                <strong>{lab.test}:</strong> {lab.value}
+                                {lab.unit ? ` ${lab.unit}` : ""}
+                                {lab.date ? ` (${lab.date})` : ""}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {cand.follow_up && cand.follow_up.length > 0 && (
+                        <div data-testid="structured-follow-up">
+                          <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
+                            {language === "ar" ? "المتابعة وخطة العلاج" : "Follow-up & Plan"}
+                          </strong>
+                          <ul style={{ margin: 0, paddingInlineStart: "1.2rem", fontSize: "0.86rem" }}>
+                            {cand.follow_up.map((item, idx) => (
+                              <li key={idx}>{item.value}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {hasHumanReviewWarning && (
+                        <div
+                          className="inline-error"
+                          data-testid="document-human-review-warnings"
+                          style={{ margin: 0, fontSize: "0.85rem" }}
+                        >
+                          <strong>
+                            {language === "ar"
+                              ? "حقول غير مؤكدة أو متضاربة تم تحديدها لمراجعة الطبيب:"
+                              : "Unreadable / Uncertain / Conflicting Fields Flagged for Clinician Review:"}
+                          </strong>
+                          <ul style={{ margin: "0.3rem 0 0", paddingInlineStart: "1.2rem" }}>
+                            {cand.unreadable_segments?.map((seg, idx) => (
+                              <li key={`unreadable-${idx}`}>
+                                [{seg.field_hint || "general"} · {seg.status}] {seg.raw}
+                              </li>
+                            ))}
+                            {cand.conflicts?.map((conf, idx) => (
+                              <li key={`conflict-${idx}`}>
+                                [{language === "ar" ? "تعارض: " : "Conflict: "}{conf.domain}] {conf.description}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}

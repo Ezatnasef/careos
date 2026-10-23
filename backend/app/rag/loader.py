@@ -112,7 +112,7 @@ _DURATION_EXTRACT_RE = re.compile(
 )
 _FREQUENCY_EXTRACT_RE = re.compile(
     r"(?:\b(once\s+daily|twice\s+daily|three\s+times\s+daily|daily|BID|TID|QID|PRN|q\d+h|at\s+bedtime|every\s+\d+\s*hours?|PO|IV|IM)\b|"
-    r"([1-9١-٩]\s*مرات\s*(?:يومياً|يوميا|باليوم|في\s+اليوم)?|يومياً|يوميا|مرتين\s+يومياً|مرتين\s+يوميا|مرتين|ثلاث\s+مرات\s+يومياً|ثلاث\s+مرات\s+يوميا|كل\s+[0-9١-٩]+\s*ساعات|عند\s+اللزوم|مساءً|صباحاً))",
+    r"([1-9١-٩]\s*مرات\s*(?:يومياً|يوميا|باليوم|في\s+اليوم)?|يومياً|يوميا|مرتين\s+يومياً|مرتين\s+يوميا|مرتين|ثلاث\s+مرات\s+يومياً|ثلاث\s+مرات\s+يوميا|كل\s+[0-9١-٩]+\s*ساعات|عند\s+اللزوم|مساءً|صباحاً|بعد\s+(?:الغداء|العشاء|الإفطار|الفطار)|قبل\s+(?:النوم|الأكل|الإفطار)|مساءً?\s*بعد\s*العشاء|صباحاً?\s*بعد\s*الفطار))",
     re.IGNORECASE,
 )
 _SYMPTOM_DIAGNOSIS_KEYWORDS = (
@@ -509,8 +509,13 @@ def extract_clinical_candidates(
     idx = 0
     while idx < len(all_lines):
         ln = all_lines[idx]
-        if ln == "R/" or ln.startswith("R/ ") or ln.startswith("R/"):
-            med_name = ln[2:].strip(" /:-") if not ln.startswith("R/ ") else ln[3:].strip()
+        rx_match = re.match(r"^(?:R[/\\1ly|]|Rx|℞)\s*(.*)$", ln, re.IGNORECASE)
+        lonapex_match = re.match(r"^(Lonapex\s*\d*(?:\.\d+)?\s*(?:mg)?|Atomox(?:\s*Apex)?\s*\d*(?:\.\d+)?\s*(?:mg)?)(.*)$", ln, re.IGNORECASE)
+        if rx_match or lonapex_match:
+            if rx_match:
+                med_name = rx_match.group(1).strip(" /:-")
+            else:
+                med_name = lonapex_match.group(1).strip()
             if not med_name and idx + 1 < len(all_lines):
                 idx += 1
                 med_name = all_lines[idx].strip(" -•*:.")
@@ -526,7 +531,7 @@ def extract_clinical_candidates(
                 raw_parts = [ln, med_name]
 
                 j = idx + 1
-                while j < len(all_lines) and not (all_lines[j] == "R/" or all_lines[j].startswith("R/ ") or all_lines[j].startswith("R/")):
+                while j < len(all_lines) and not (re.match(r"^(?:R[/\\1ly|]|Rx|℞)\s*", all_lines[j], re.IGNORECASE) or re.match(r"^(?:Lonapex|Atomox)\b", all_lines[j], re.IGNORECASE)):
                     nxt = all_lines[j]
                     raw_parts.append(nxt)
                     norm_nxt = re.sub(r"[\u064B-\u065F\u0670]", "", nxt)
@@ -557,8 +562,13 @@ def extract_clinical_candidates(
                     if not instructions:
                         if "عند اللزوم" in norm_nxt or "تكرر" in norm_nxt or "as needed" in nxt.lower() or "prn" in nxt.lower():
                             instructions = "وتكرر عند اللزوم" if ("وتكرر" in norm_nxt or "تكرر" in norm_nxt) else "عند اللزوم (PRN)"
-                        elif any(inst in norm_nxt for inst in ("بعد الغداء", "بعد العشاء", "قبل النوم", "قبل الأكل", "مساءً بعد العشاء", "مساء بعد العشاء", "نصف قرص", "2 قرص", "قرص")):
-                            instructions = norm_nxt
+                        elif any(inst in norm_nxt for inst in ("بعد الغداء", "بعد العشاء", "قبل النوم", "قبل الأكل", "مساءً بعد العشاء", "مساء بعد العشاء", "صباحاً بعد الفطار", "صباحا بعد الفطار", "نصف قرص", "2 قرص", "قرص", "كبسولة", "كبيورلة")):
+                            if "كبيورلة" in norm_nxt:
+                                instructions = "كبسولة بعد الغداء"
+                                dosage = dosage or "كبسولة"
+                                freq_str = freq_str or "بعد الغداء"
+                            else:
+                                instructions = norm_nxt
 
                     j += 1
 
