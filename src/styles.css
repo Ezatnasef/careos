@@ -405,20 +405,23 @@
   flex-shrink: 0;
 }
 
-.force-mobile .landing-pill-google-text {
+.force-mobile .landing-pill-google-btn,
+.force-mobile .landing-pill-divider {
   display: none !important;
 }
 
-.force-mobile .landing-pill-google-btn {
-  padding: 0 8px !important;
-  height: 30px !important;
-  gap: 0 !important;
+.force-mobile .landing-auth-links {
+  height: 32px !important;
+  padding: 2px !important;
+  margin: 0 2px !important;
 }
 
 .force-mobile .landing-pill-signin-btn {
-  padding: 0 8px !important;
-  height: 30px !important;
-  font-size: 11px !important;
+  padding: 0 12px !important;
+  height: 28px !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  white-space: nowrap !important;
 }
 
 .force-mobile .landing-auth-link,
@@ -6429,6 +6432,28 @@ html {
 	}
 }
 
+@media (max-width: 768px) {
+	.landing-pill-google-btn,
+	.landing-pill-divider {
+		display: none !important;
+	}
+
+	.landing-auth-links {
+		height: 32px !important;
+		padding: 2px !important;
+		margin: 0 2px !important;
+	}
+
+	.landing-pill-signin-btn {
+		padding: 0 12px !important;
+		height: 28px !important;
+		font-size: 11.5px !important;
+		font-weight: 700 !important;
+		flex-shrink: 0;
+		white-space: nowrap !important;
+	}
+}
+
 @media (max-width: 640px) {
 	.landing-page {
 		overflow-x: hidden;
@@ -6489,23 +6514,24 @@ html {
 		margin-inline-end: 6px;
 	}
 
-	.landing-pill-google-text {
+	.landing-pill-google-btn,
+	.landing-pill-divider {
 		display: none !important;
 	}
 
-	.landing-pill-google-btn {
-		padding: 0 8px !important;
-		height: 30px !important;
-		gap: 0 !important;
-		flex-shrink: 0;
+	.landing-auth-links {
+		height: 32px !important;
+		padding: 2px !important;
+		margin: 0 2px !important;
 	}
 
 	.landing-pill-signin-btn {
-		padding: 0 8px !important;
-		height: 30px !important;
-		font-size: 11px !important;
+		padding: 0 12px !important;
+		height: 28px !important;
+		font-size: 11.5px !important;
+		font-weight: 700 !important;
 		flex-shrink: 0;
-		white-space: nowrap;
+		white-space: nowrap !important;
 	}
 
 	.landing-nav-actions {
