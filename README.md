@@ -1,6 +1,10 @@
 # CareOS — Healthcare Operations, Clinical OCR & Grounded Clinical RAG Platform
 
-CareOS is an enterprise-grade healthcare operations and clinical intelligence platform with full bilingual (**English & Arabic**) support. It combines multi-tenant hospital workflow management, role-based access control (RBAC), clinical document ingestion, bilingual OCR & structured candidate extraction, and a hallucination-resistant **Clinical RAG (Retrieval-Augmented Generation)** pipeline.
+[![GitHub Repository](https://img.shields.io/badge/GitHub-Ezatnasef%2Fcareos-blue?logo=github)](https://github.com/Ezatnasef/careos)
+[![Bilingual](https://img.shields.io/badge/Bilingual-English%20%7C%20العربية-teal)]()
+[![Voice](https://img.shields.io/badge/Egyptian%20Voice-Mohammed%20%26%20Mariam-purple)]()
+
+CareOS is an enterprise-grade healthcare operations and clinical intelligence platform with full bilingual (**English & Arabic**) support. It combines multi-tenant hospital workflow management, role-based access control (RBAC), clinical document ingestion, bilingual OCR & structured candidate extraction, an authentic Egyptian clinical voice assistant (**محمد & مريم**), and a hallucination-resistant **Clinical RAG (Retrieval-Augmented Generation)** pipeline.
 
 ---
 
@@ -73,6 +77,9 @@ newcareos-main/
     │       ├── llm.py           # Extractive synthesis + optional external LLM + citation verifier
     │       └── pipeline.py      # 3-mode RAG pipeline (guideline_only, patient_only, mixed)
     └── tests/                   # Backend automated test suites (pytest)
+└── voice-agent/                 # Standalone Voice Agent & Audio Streaming Microservice
+    ├── requirements.txt         # Voice agent specific dependencies
+    └── voice_agent/             # Autonomous booking, multilingual LLM, and real-time audio pipeline
 ```
 
 ---
@@ -317,12 +324,13 @@ Before zipping, copying, or pushing `newcareos-main` to share with another devel
 - **Soft Deletion & Instant Session Revocation**: Calling `DELETE /api/v1/team/users/{user_id}` marks the user as deleted (`deleted_at`), purges active sessions from `AuthSession`, and immediately revokes all bearer tokens (`401 Unauthorized`).
 - **Interactive Management UI**: Direct action buttons and confirmation dialogs built into `StaffManagement.tsx` and `TeamAudit.tsx`.
 
-### 16.2. Egyptian Colloquial Voice Assistant (VoiceTut-TTS)
-- **Cairo Colloquial Dialect (اللهجة المصرية الدارجة)**: All patient voice interactions are processed through `to_egyptian_colloquial_speech`, converting standard formal Arabic into authentic, natural Egyptian phrasing (`"أهلاً بحضرتك في كير أو إس"`, `"ألف سلامة عليك"`).
-- **Authentic VoiceTut-TTS Neural Speakers**: Speech generation is powered by `mohammedaly22/VoiceTut-TTS`, featuring authentic Egyptian clinical voices:
-  - **محمد (Mohammed)**: Calm, warm, and professional Egyptian male tone (`spk_06_male`).
-  - **مريم (Mariam)**: Gentle, clear, and reassuring Egyptian female tone (`spk_15_female`).
-- **Complete Elimination of Robotic Mechanical Voices**: Legacy robotic voices are completely purged from the platform in favor of authentic colloquial VoiceTut models (Mohammed & Mariam).
+### 16.2. Authentic Egyptian Clinical Voice Companion (محمد & مريم)
+- **Cairo Colloquial Dialect (اللهجة المصرية الدارجة)**: All patient voice interactions are processed through `to_egyptian_colloquial_speech`, converting formal classical Arabic into authentic, natural Egyptian phrasing (`"أهلاً بحضرتك يا فندم في كير أو إس"`, `"أنا هنا علشان أساعد حضرتك وأطمنك على التحاليل والمواعيد"`).
+- **Dual Authentic Egyptian Neural Speakers**:
+  - **محمد (Mohammed)**: Confident, warm, and professional Egyptian male tone (`spk_06_male` / Neural Egyptian Male).
+  - **مريم (Mariam)**: Gentle, clear, and reassuring Egyptian female tone (`spk_15_female` / Neural Egyptian Female).
+- **Natural Conversational Speed Calibration**: Audio playback tempo is optimized (`rate="+14%"`) to deliver a natural, energetic conversational rhythm, completely eliminating slow, sluggish, or dragging machine pauses.
+- **Complete Elimination of Robotic Mechanical Voices**: Legacy robotic voices and monotonic standard Arabic TTS are completely purged from all platform surfaces (Landing Page, Patient Portal Voice Assistant, Settings, and Voice Agent).
 
 ### 16.3. Telegram Automated Patient Follow-up
 - **Automated Delivery**: Trigger clinical reminders, test results, and post-visit follow-up questions via `POST /api/v1/integrations/telegram/send-followup`.
