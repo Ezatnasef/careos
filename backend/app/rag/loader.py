@@ -1126,8 +1126,9 @@ def extract_document_bytes(
             )
             return {
                 "ocr_status": "completed",
-                "extracted_text": combined_text,
+                "extracted_text": norm_info["normalized_text"] or combined_text,
                 "normalized_text": norm_info["normalized_text"] or combined_text,
+                "raw_text": combined_text,
                 "boilerplate_removed": norm_info["boilerplate_removed"],
                 "structured_candidates": candidates,
                 "ocr_applied": ocr_applied,

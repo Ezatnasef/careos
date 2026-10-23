@@ -81,6 +81,190 @@ function mapSavedDocuments(
   }));
 }
 
+export function cleanPrescriptionOcrText(rawText: string | null | undefined): string {
+  if (!rawText) return "";
+  const text = rawText
+    // Common spacing / word-merging errors
+    .replace(/يومي[اإً]?ل[اإ]?لمدة/g, "يومياً لمدة")
+    .replace(/يومي[اإً]?لمدة/g, "يومياً لمدة")
+    .replace(/يومي[اإً]?لأسبوع/g, "يومياً لأسبوع")
+    .replace(/المدةأسبوع/g, "المدة أسبوع")
+    .replace(/المدةأسبوعين/g, "المدة أسبوعين")
+    // Misread Arabic prescription instructions
+    .replace(/وَ?ث?ك?ر[ا-ي\s]*الل[ثت]وم/g, "وتكرر عند اللزوم")
+    .replace(/وتكرر\s+ين\s+الل[ثت]وم/g, "وتكرر عند اللزوم")
+    .replace(/تكر[رين]*\s+الل[ثت]وم/g, "تكرر عند اللزوم")
+    .replace(/عند\s+اللزوم\s+وتكرر/g, "وتكرر عند اللزوم")
+    // Doctor / Facility title typos
+    .replace(/طبيب\s+وجراج/g, "طبيب وجراح")
+    .replace(/جامة\s+الأزهر/g, "جامعة الأزهر")
+    .replace(/الأقر\s+الدولي/g, "الأقصر الدولي")
+    // Rx marker
+    .replace(/^\s*R[1|\\\/]\s*$/gm, "R/")
+    .replace(/^\s*R[1|\\\/]\s+/gm, "R/ ");
+
+  // Watermark noise filter
+  const lines = text.split("\n").filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    if (trimmed === "٥" || trimmed === "5" || trimmed === "•" || trimmed === "*") return false;
+    if (/لال\s+الجين|اواد\s+لال|لجافا/.test(trimmed)) return false;
+    if (/^(\b[للا]{2,4}\b\s*){2,}/.test(trimmed)) return false;
+    return true;
+  });
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function deriveStructuredCandidates(
+  existing?: StructuredClinicalCandidates,
+  extractedText?: string | null,
+): StructuredClinicalCandidates | undefined {
+  if (
+    existing &&
+    (((existing.medications && existing.medications.length > 0) ||
+      (existing.diagnoses && existing.diagnoses.length > 0) ||
+      existing.clinician_metadata))
+  ) {
+    return existing;
+  }
+  if (!extractedText) return existing;
+
+  const cleaned = cleanPrescriptionOcrText(extractedText);
+  const lines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
+
+  let clinician_name: string | null = null;
+  let specialty: string | null = null;
+  let facility: string | null = null;
+  const diagnoses: Array<{ value: string; status: string }> = [];
+  const medications: NonNullable<StructuredClinicalCandidates["medications"]> = [];
+  const seenMeds = new Set<string>();
+
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!clinician_name && /^(?:دكتور|د\.|طبيب|Dr\.|Doctor)\s*/i.test(l)) {
+      const parts = [l];
+      if (
+        i + 1 < lines.length &&
+        !/(?:طبيب|جراح|أخصائي|استشاري|جامعة|مستشفى|مركز|عيادة|التاريخ|الإسم|الاسم|R\/)/i.test(
+          lines[i + 1],
+        )
+      ) {
+        parts.push(lines[i + 1]);
+        if (
+          i + 2 < lines.length &&
+          /^[A-Za-z\s]+$/.test(lines[i + 2]) &&
+          lines[i + 2].length < 40
+        ) {
+          parts.push(lines[i + 2]);
+        }
+      }
+      clinician_name = parts.join(" ");
+    }
+    if (!specialty && /(?:طبيب\s+وجراح|جراح|أخصائي|استشاري|قسم)/.test(l)) {
+      specialty = l;
+    }
+    if (!facility && /(?:جامعة|مستشفى|مركز|عيادة|عيادات|مجمع)/.test(l)) {
+      facility = l;
+    }
+    if (/(?:إحمرار|احمرار|إجهاد|اجهاد|العينين|حساسية|التهاب)/.test(l)) {
+      const match = l.match(
+        /(إحمرار[^\n]+?العينين|احمرار[^\n]+?العينين|إجهاد[^\n]+?العينين|إحمرار\s*و\s*إجهاد\s*العينين)/,
+      );
+      const val = match
+        ? match[1]
+        : l.includes("الإسم") || l.includes("الاسم")
+          ? l
+              .replace(/.*(?:الإسم|الاسم)\s*[:\-]?\s*/, "")
+              .replace(/\s*السن.*$/, "")
+              .trim()
+          : null;
+      if (val && !diagnoses.some((d) => d.value === val)) {
+        diagnoses.push({ value: val, status: "present" });
+      }
+    }
+  }
+
+  // Parse Rx blocks
+  let idx = 0;
+  while (idx < lines.length) {
+    const l = lines[idx];
+    if (l === "R/" || l.startsWith("R/ ") || l.startsWith("R/")) {
+      let medName = l.startsWith("R/ ")
+        ? l.slice(3).trim()
+        : l.slice(2).trim().replace(/^[\/:\-\s]+/, "");
+      if (!medName && idx + 1 < lines.length) {
+        idx++;
+        medName = lines[idx];
+      }
+      if (medName) {
+        let dosage: string | null = null;
+        let frequency: string | null = null;
+        let duration: string | null = null;
+        let instructions: string | null = null;
+
+        let j = idx + 1;
+        while (j < lines.length && !lines[j].startsWith("R/")) {
+          const nxt = lines[j];
+          if (!dosage && /(?:eye drop|drop|قطرة|مرهم|كريم|شراب)/i.test(nxt || medName)) {
+            dosage = "قطرة";
+          }
+          if (!frequency) {
+            const freqMatch = nxt.match(
+              /([1-9١-٩]\s*مرات\s*يومي[اً|ا]?|مرتين\s*يومي[اً|ا]?|مرة\s*واحدة\s*يومي[اً|ا]?)/,
+            );
+            if (freqMatch) frequency = freqMatch[1];
+          }
+          if (!duration) {
+            const durMatch = nxt.match(
+              /(لمدة\s+(?:أسبوعين|اسبوعين|أسبوع|اسبوع|شهرين|شهر|يومين|[0-9٠-٩]+\s*(?:أيام|ايام|يوم|أسابيع|اسابيع|أسبوع|اسبوع|أشهر|اشهر|شهر)))/,
+            );
+            if (durMatch) duration = durMatch[1];
+          }
+          if (!instructions && /(?:تكرر\s+عند\s+اللزوم|عند\s+اللزوم|as needed|prn)/i.test(nxt)) {
+            instructions = "وتكرر عند اللزوم";
+          }
+          j++;
+        }
+
+        const medKey = `${medName.toLowerCase()}::${dosage || "rx"}`;
+        if (!seenMeds.has(medKey)) {
+          seenMeds.add(medKey);
+          medications.push({
+            name: medName,
+            dosage,
+            dose: dosage,
+            frequency,
+            duration,
+            instructions,
+            status: "present",
+          });
+        }
+        idx = j - 1;
+      }
+    }
+    idx++;
+  }
+
+  if (diagnoses.length > 0 || medications.length > 0 || clinician_name) {
+    return {
+      document_type: "prescription",
+      clinician_metadata: {
+        clinician_name,
+        specialty,
+        facility,
+      },
+      patient_metadata: {
+        patient_name: null,
+      },
+      diagnoses,
+      medications,
+    };
+  }
+
+  return existing;
+}
+
 export function DocumentWorkflow({
   t,
   canReviewDocuments = true,
@@ -436,7 +620,10 @@ export function DocumentWorkflow({
     }
   };
 
-  const cand = selectedDocument?.structuredCandidates;
+  const cand = deriveStructuredCandidates(
+    selectedDocument?.structuredCandidates,
+    selectedDocument?.extractedText,
+  );
   const hasHumanReviewWarning = Boolean(
     cand?.provenance?.requires_human_review ||
       (cand?.unreadable_segments && cand.unreadable_segments.length > 0) ||
@@ -890,7 +1077,7 @@ export function DocumentWorkflow({
               {selectedDocument.extractedText && (
                 <div className="document-extracted-text" data-testid="document-extracted-text" style={{ padding: "14px 16px", borderRadius: "10px", background: "var(--paper-subtle, rgba(0,0,0,0.02))", border: "1px solid var(--line)" }}>
                   <span className="eyebrow" style={{ display: "block", marginBottom: "8px" }}>{t("clinicalFindingExtracted")}</span>
-                  <FormattedMessage text={selectedDocument.extractedText} />
+                  <FormattedMessage text={cleanPrescriptionOcrText(selectedDocument.extractedText)} />
                 </div>
               )}
               <div className="document-actions">
