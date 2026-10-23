@@ -13,7 +13,12 @@ DEFAULT_DB_PATH = BACKEND_ROOT / "careos.db"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         enable_decoding=False,
-        env_file=(REPO_ROOT / ".env", BACKEND_ROOT / ".env"),
+        env_file=(
+            REPO_ROOT / ".env",
+            BACKEND_ROOT / ".env",
+            REPO_ROOT / "voice-agent" / ".env",
+            REPO_ROOT / "voice-agent" / "voice_agent" / ".env",
+        ),
         extra="ignore",
     )
     app_env: str = "development"
@@ -33,15 +38,18 @@ class Settings(BaseSettings):
     speech_to_text_model: str = "gpt-4o-mini-transcribe"
     speech_to_text_language: str = "ar-EG"
     speech_to_text_diarization: bool = True
-    text_to_speech_provider: str = "gtts"
+    text_to_speech_provider: str = "edge"
     text_to_speech_api_url: str = ""
     text_to_speech_api_key: str = ""
     text_to_speech_model_id: str = ""
     text_to_speech_default_speaker: str = "Mohamed"
-    ai_provider: str = "unconfigured"
-    ai_api_url: str = ""
+    huggingface_api_key: str = ""
+    ai_provider: str = "gemini"
+    ai_api_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     ai_api_key: str = ""
-    ai_model: str = ""
+    ai_model: str = "gemini-3.8-flash"
+    llm_api_key: str = ""
+    google_api_key: str = ""
     audio_retention_days: int = 30
     oidc_issuer_url: str = ""
     oidc_client_id: str = ""
@@ -51,6 +59,10 @@ class Settings(BaseSettings):
     audit_retention_days: int = 2555
     backup_bucket: str = ""
     backup_region: str = ""
+    medplum_base_url: str = "https://api.medplum.com/fhir/R4"
+    medplum_client_id: str = ""
+    medplum_client_secret: str = ""
+    medplum_project_id: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_tls: bool = True
@@ -66,6 +78,8 @@ class Settings(BaseSettings):
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "audio/webm",
+        "audio/mp4",
+        "audio/ogg",
         "audio/wav",
         "audio/mpeg",
         "image/png",
@@ -86,19 +100,21 @@ class Settings(BaseSettings):
     vector_top_k: int = 8
     rag_top_k: int = 8
     rag_relevance_threshold: float = 0.55
-    rag_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    rag_embedding_model: str = "intfloat/multilingual-e5-small"
     rag_allow_model_download: bool = False
     legacy_rag_db_path: str = ""
     openai_api_key: str = ""
     openai_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
-    openai_model: str = "gemini-2.5-flash"
+    openai_model: str = "gemini-3.8-flash"
     openai_timeout_seconds: float = 45.0
     gemini_api_key: str = ""
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.8-flash"
     sso_allowed_redirect_hosts: list[str] = ["localhost", "127.0.0.1", "[::1]", "careos.example.com"]
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     allowed_hosts: list[str] = ["localhost", "127.0.0.1", "[::1]", "testserver"]
+    telegram_bot_token: str | None = None
+    telegram_bot_username: str = "CareOS_HealthBot"
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -175,7 +191,18 @@ class Settings(BaseSettings):
 
     @property
     def GEMINI_API_KEY(self) -> str | None:
-        return self.gemini_api_key or self.ai_api_key or None
+        key = (
+            os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+            or os.environ.get("AI_API_KEY")
+            or os.environ.get("LLM_API_KEY")
+            or self.gemini_api_key
+            or self.google_api_key
+            or self.ai_api_key
+            or self.llm_api_key
+            or None
+        )
+        return key.strip() if key and key.strip() else None
 
     @property
     def GEMINI_BASE_URL(self) -> str:
@@ -206,4 +233,3 @@ class _SettingsProxy:
 
 
 settings: Settings = _SettingsProxy()  # type: ignore[assignment]
-

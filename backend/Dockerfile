@@ -7,6 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    fonts-noto-core \
     libgl1 \
     libglib2.0-0 \
     libgomp1 \

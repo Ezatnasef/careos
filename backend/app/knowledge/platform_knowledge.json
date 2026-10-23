@@ -88,10 +88,10 @@
       "how to use", "sign in", "login", "sign up", "register", "create account", "get started", "demo", "link",
       "كيف استخدم المنصة", "تسجيل الدخول", "دخول", "إنشاء حساب", "تسجيل جديد", "رابط المنصة", "تجربة"
     ],
-    "content": "How to Get Started with CareOS:\n\n• For Registered Patients & Staff: You can log into your account directly at the Sign In page: https://careos-pearl.vercel.app/signin\n• For New Patients: You can register or activate your portal account following your clinic's invitation or sign-up link.\n• For Clinics & Medical Centers: You can explore the platform features, view live workflows, and request an organization workspace at: https://careos-pearl.vercel.app/\n• Need Help? This assistant is available 24/7 to answer questions about platform services, features, and patient tools!\n\nروابط الوصول:\n- رابط تسجيل الدخول المباشر: https://careos-pearl.vercel.app/signin\n- رابط الموقع الرئيسي وبدء الاستخدام: https://careos-pearl.vercel.app/",
+    "content": "How to Get Started with CareOS:\n\n• For Registered Patients & Staff: You can log into your account directly using the Sign In button at the top of the page.\n• For New Patients: You can register or activate your portal account through your clinic's invitation or the patient portal.\n• For Clinics & Medical Centers: You can explore platform features, view live workflows, and request an organization workspace directly from the home page.\n• Need Help? This assistant is available 24/7 to answer questions about platform services, features, and patient tools!\n\nخطوات البدء السريع:\n• للمرضى والطاقم الطبي: يمكنك تسجيل الدخول مباشرة عبر زر (الدخول للمنظومة) في أعلى الصفحة.\n• للمرضى الجدد: يمكنك إنشاء حساب جديد أو تفعيل ملفك الطبي.\n• للمراكز الطبية والعيادات: يمكنك استكشاف مساحات العمل الحية وطلب إعداد منظومة مخصصة لمنشأتك.",
     "links": {
-      "signin": "https://careos-pearl.vercel.app/signin",
-      "signup": "https://careos-pearl.vercel.app/"
+      "signin": "/signin",
+      "signup": "/"
     }
   },
   {

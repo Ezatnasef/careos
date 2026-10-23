@@ -1,1 +1,1 @@
-export { getAuditEvents, getTeam } from "../api";
+export { getAuditEvents, getTeam, createTeamUser, deleteTeamUser } from "../api";

@@ -50,9 +50,29 @@ export function askGuestChat(
   });
 }
 
+export type TranscribeVoiceResponse = {
+  transcript: string;
+  provider: string;
+};
+
+export function transcribeGuestVoice(
+  audioBase64: string,
+  language: "ar-EG" | "en-US" = "ar-EG",
+): Promise<TranscribeVoiceResponse> {
+  return request<TranscribeVoiceResponse>("/assistant/guest-transcribe", {
+    method: "POST",
+    body: JSON.stringify({
+      audio_base64: audioBase64,
+      content_type: "audio/webm",
+      language,
+    }),
+  });
+}
+
 export function askGuestVoice(
   audioBase64: string,
   language: "ar-EG" | "en-US",
+  conversationHistory: GuestChatHistoryMessage[] = [],
 ): Promise<GuestVoiceResponse> {
   return request<GuestVoiceResponse>("/assistant/guest-voice", {
     method: "POST",
@@ -60,6 +80,7 @@ export function askGuestVoice(
       audio_base64: audioBase64,
       content_type: "audio/webm",
       language,
+      conversation_history: conversationHistory,
     }),
   });
 }
@@ -167,3 +188,65 @@ export function getClinicalRagStats(patientId?: string): Promise<ClinicalRagStat
   return request<ClinicalRagStatsResponse>(`/rag/stats${query}`);
 }
 
+export type OrchestratorResponse = {
+  answer: string;
+  intent: "booking" | "followup" | "unknown" | string;
+  status: "accepted" | "success" | "error";
+  active_agent?: string | null;
+  conversation_id?: string | null;
+  patient_id?: string | null;
+  orchestrator_state?: Record<string, unknown> | null;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+};
+
+export function askOrchestratorChat(
+  message: string,
+  options?: {
+    patientId?: string | null;
+    conversationId?: string | null;
+    orchestratorState?: Record<string, unknown> | null;
+  },
+): Promise<OrchestratorResponse> {
+  return request<OrchestratorResponse>("/assistant/orchestrator/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      message,
+      patient_id: options?.patientId,
+      conversation_id: options?.conversationId,
+      orchestrator_state: options?.orchestratorState,
+    }),
+  });
+}
+
+export type VoiceTurnResponse = {
+  session_id: string;
+  response_text: string;
+  thought?: string;
+  intent?: string | null;
+  audio_base64?: string | null;
+  audio_mime_type?: string | null;
+};
+
+export async function askVoiceTurn(
+  text: string,
+  sessionId?: string | null,
+  patientId = "demo-patient-001",
+): Promise<VoiceTurnResponse> {
+  const url = "/voice-api/v1/voice/turns";
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Patient-Id": patientId,
+    },
+    body: JSON.stringify({
+      text,
+      session_id: sessionId,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Voice receptionist returned HTTP ${res.status}`);
+  }
+  return res.json();
+}

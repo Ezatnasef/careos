@@ -306,3 +306,31 @@ Before zipping, copying, or pushing `newcareos-main` to share with another devel
   1. `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`
   2. `powershell -ExecutionPolicy Bypass -File scripts/check.ps1`
   3. `powershell -ExecutionPolicy Bypass -File scripts/start.ps1`
+
+---
+
+## 16. Recent Platform Capabilities & Enhancements
+
+### 16.1. IT Administrator Direct User Provisioning & Revocation
+- **Direct Account Creation with Immediate Password**: IT Administrators (`it_admin`, `admin`, `hospital_director`) can create team members directly via `POST /api/v1/team/users` with explicit credentials (`full_name`, `email`, `password`, `role`, `department`) without requiring email invitation tokens.
+- **Immediate Login**: Newly provisioned staff can immediately authenticate via `/api/v1/auth/login`.
+- **Soft Deletion & Instant Session Revocation**: Calling `DELETE /api/v1/team/users/{user_id}` marks the user as deleted (`deleted_at`), purges active sessions from `AuthSession`, and immediately revokes all bearer tokens (`401 Unauthorized`).
+- **Interactive Management UI**: Direct action buttons and confirmation dialogs built into `StaffManagement.tsx` and `TeamAudit.tsx`.
+
+### 16.2. Egyptian Colloquial Voice Assistant (VoiceTut-TTS)
+- **Cairo Colloquial Dialect (اللهجة المصرية الدارجة)**: All patient voice interactions are processed through `to_egyptian_colloquial_speech`, converting standard formal Arabic into authentic, natural Egyptian phrasing (`"أهلاً بحضرتك في كير أو إس"`, `"ألف سلامة عليك"`).
+- **Authentic VoiceTut-TTS Neural Speakers**: Speech generation is powered by `mohammedaly22/VoiceTut-TTS`, featuring authentic Egyptian clinical voices:
+  - **محمد (Mohammed)**: Calm, warm, and professional Egyptian male tone (`spk_06_male`).
+  - **مريم (Mariam)**: Gentle, clear, and reassuring Egyptian female tone (`spk_15_female`).
+- **Complete Elimination of Robotic Mechanical Voices**: Legacy robotic voices are completely purged from the platform in favor of authentic colloquial VoiceTut models (Mohammed & Mariam).
+
+### 16.3. Telegram Automated Patient Follow-up
+- **Automated Delivery**: Trigger clinical reminders, test results, and post-visit follow-up questions via `POST /api/v1/integrations/telegram/send-followup`.
+- **Deep-Link Bot Activation**: Direct bot link (`https://t.me/CareOS_HealthBot?start={PATIENT_ID}`) embedded inside the Patient Portal Messages tab.
+- **Webhook Handlers**: `POST /api/v1/integrations/telegram/webhook` to capture patient replies and map them back to clinical encounters.
+
+### 16.4. Modernized UI/UX Suites
+- **Department Details Modal (`DepartmentOverview.tsx`)**: 2x2 metric grid (Bed Capacity, On-duty Physicians, Nursing Staff, Daily Follow-ups), clinical supervisor details, and balanced action buttons.
+- **Account & Security Dashboard (`AccountPage.tsx`)**: Modern profile hero banner, status badge, workplace affiliation card, and security controls with prominent sign-out.
+- **Patient Portal Messages Tab (`PatientPortal.tsx`)**: Telegram follow-up card, bidirectional chat bubbles, and prescription viewing with QR codes.
+

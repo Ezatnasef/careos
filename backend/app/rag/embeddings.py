@@ -1,8 +1,7 @@
 """Embedding wrapper for CareOS Clinical RAG.
 
-Uses a local SentenceTransformer model (`all-MiniLM-L6-v2`, 384 dimensions)
-with lazy singleton initialization and offline cache preference so no external
-API key or network call is required when the model is cached locally.
+Uses the multilingual E5-small SentenceTransformer model (384 dimensions)
+with task prefixes for bilingual Arabic/English retrieval.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+MODEL_NAME = "intfloat/multilingual-e5-small"
 EMBEDDING_DIM = 384
 
 _model = None
@@ -66,7 +65,7 @@ def get_embedding_model():
 
 
 def embed_texts(texts: List[str], batch_size: int = 64) -> np.ndarray:
-    """Compute L2-normalized embeddings for a list of strings.
+    """Compute L2-normalized passage embeddings for document chunks.
 
     Returns
     -------
@@ -77,8 +76,14 @@ def embed_texts(texts: List[str], batch_size: int = 64) -> np.ndarray:
         return np.empty((0, EMBEDDING_DIM), dtype=np.float32)
 
     model = get_embedding_model()
+    model_name = getattr(get_settings(), "rag_embedding_model", MODEL_NAME).lower()
+    model_inputs = (
+        [f"passage: {text}" for text in texts]
+        if model_name.startswith("intfloat/multilingual-e5")
+        else texts
+    )
     embeddings = model.encode(
-        texts,
+        model_inputs,
         batch_size=batch_size,
         show_progress_bar=False,
         normalize_embeddings=True,
@@ -94,6 +99,19 @@ def embed_query(query: str) -> List[float]:
     """Compute a single 384-dim normalized embedding vector for a search query."""
     if not query or not query.strip():
         raise ValueError("Query text for embedding must not be empty")
-    vec = embed_texts([query.strip()])[0]
+    model_name = getattr(get_settings(), "rag_embedding_model", MODEL_NAME).lower()
+    query_text = (
+        f"query: {query.strip()}"
+        if model_name.startswith("intfloat/multilingual-e5")
+        else query.strip()
+    )
+    model = get_embedding_model()
+    embeddings = model.encode(
+        [query_text],
+        batch_size=1,
+        show_progress_bar=False,
+        normalize_embeddings=True,
+        convert_to_numpy=True,
+    )
+    vec = np.asarray(embeddings, dtype=np.float32)[0]
     return validate_embedding_vector(vec.tolist(), expected_dim=EMBEDDING_DIM)
-

@@ -13,6 +13,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "patient.write",
         "appointment.read",
         "appointment.write",
+        "appointments.view",
+        "appointments.create",
         "medical.summary",
         "clinical.note",
         "team.read",
@@ -36,6 +38,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "patient.write",
         "appointment.read",
         "appointment.write",
+        "appointments.view",
+        "appointments.create",
         "medical.summary",
         "clinical.note",
         "analytics.read",
@@ -49,6 +53,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "patient.read",
         "patient.write",
         "appointment.read",
+        "appointments.view",
         "clinical.note",
         "medical.summary",
         "patients.create",
@@ -60,6 +65,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "patient.read",
         "appointment.read",
         "appointment.write",
+        "appointments.view",
+        "appointments.create",
         "team.read",
     },
     "patient": {
@@ -98,33 +105,40 @@ ROLE_PERMISSIONS.update({
     },
     "doctor": ROLE_PERMISSIONS["doctor"] | {
         "dashboard.read", "patients.search", "patients.view", "patients.create", "patients.update", "appointments.view", "appointments.create", "appointments.update",
+        "followups.view", "followups.create", "followups.update",
         "clinical_notes.create", "clinical_notes.view", "clinical_notes.update", "clinical_notes.approve", "documents.create", "documents.download",
         "encounters.create", "encounters.view", "recordings.create", "recordings.view", "transcripts.create", "transcripts.view", "transcripts.update",
         "patient.read", "patient.write", "analytics.view", "clinical.note", "medical.summary",
     },
     "nurse": ROLE_PERMISSIONS["nurse"] | {
         "dashboard.read", "patients.search", "patients.view", "patients.create", "patients.update", "appointments.view", "appointments.create", "appointments.update",
-        "clinical_notes.create", "clinical_notes.view", "clinical_notes.update", "documents.create", "encounters.view", "recordings.view", "transcripts.view",
+        "followups.view", "followups.create", "followups.update",
+        "clinical_notes.create", "clinical_notes.view", "clinical_notes.update", "documents.create", "documents.download", "encounters.view", "recordings.view", "transcripts.view",
+        "encounters.create", "recordings.create", "transcripts.create",
         "patient.read", "patient.write", "clinical.note", "medical.summary",
     },
     "receptionist": ROLE_PERMISSIONS["receptionist"] | {
         "patients.search", "patients.view", "appointments.view", "appointments.create", "appointments.update",
     },
     "hospital_director": {
-        "dashboard.read", "users.view", "users.create", "users.update", "users.disable", "users.invite",
+        "dashboard.read", "users.view", "users.create", "users.update", "users.disable", "users.delete", "users.manage", "users.invite",
         "roles.view", "roles.assign", "roles.manage", "reports.view", "analytics.view", "audit_logs.view",
         "hospital.view", "hospital.settings.view", "hospital.settings.manage", "departments.view", "departments.manage",
         "patients.search", "patients.view", "patient.read",
     },
     "it_admin": {
-        "dashboard.read", "users.view", "users.create", "users.update", "users.disable", "users.invite",
-        "roles.view", "roles.assign", "permissions.view", "sso.view", "sso.manage", "security.view", "audit_logs.view",
+        "dashboard.read", "users.view", "users.create", "users.update", "users.disable", "users.delete", "users.manage", "users.invite",
+        "roles.view", "roles.assign", "roles.manage", "permissions.view", "sso.view", "sso.manage", "security.view", "audit_logs.view",
     },
     "administrative_staff": {
         "dashboard.read", "appointments.view", "appointments.create", "appointments.update",
         "patients.search", "patients.view", "patients.demographics.view", "checkin.create", "checkin.view",
         "departments.view", "reports.operational.view",
     },
+})
+
+ROLE_PERMISSIONS["admin"].update({
+    "users.view", "users.create", "users.update", "users.disable", "users.delete", "users.manage", "users.invite",
 })
 
 # Organization-level administrators manage the workspace, not clinical records.

@@ -7,3 +7,13 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B"]
+
+[tool.pyrefly]
+search-path = [
+    ".",
+    "../backend",
+    "../voice-agent",
+    "../voice-agent/voice_agent",
+    "C:/Users/Nasef/anaconda3/Lib/site-packages"
+]
+

@@ -18,7 +18,11 @@ def _normalize(text: str) -> str:
     return text.lower()
 
 
-def retrieve_platform_knowledge(query: str, top_k: int = 4) -> list[dict[str, Any]]:
+def retrieve_platform_knowledge(
+    query: str,
+    top_k: int = 4,
+    include_fallback: bool = True,
+) -> list[dict[str, Any]]:
     """Return the most relevant curated platform-information chunks."""
     normalized_query = _normalize(query)
     tokens = set(re.findall(r"[\w-]+", normalized_query))
@@ -43,6 +47,9 @@ def retrieve_platform_knowledge(query: str, top_k: int = 4) -> list[dict[str, An
     scored_chunks.sort(key=lambda item: item[0], reverse=True)
     if scored_chunks:
         return [chunk for _, chunk in scored_chunks[:top_k]]
+
+    if not include_fallback:
+        return []
 
     defaults = [
         chunk

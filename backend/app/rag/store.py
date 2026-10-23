@@ -32,17 +32,15 @@ logger = logging.getLogger(__name__)
 
 
 def _active_patient_document_clause():
-    """Defense-in-depth filter excluding chunks linked to soft-deleted, rejected, or pending PatientDocuments."""
-    inactive_doc_ids = select(PatientDocument.id).where(
-        or_(
-            PatientDocument.deleted_at.is_not(None),
-            PatientDocument.review_status != "approved",
-        )
+    """Require patient chunks to link to an approved document for the same tenant and patient."""
+    approved_document_ids = select(PatientDocument.id).where(
+        (PatientDocument.id == DocumentChunk.document_id)
+        & (PatientDocument.organization_id == DocumentChunk.organization_id)
+        & (PatientDocument.patient_id == DocumentChunk.patient_id)
+        & PatientDocument.deleted_at.is_(None)
+        & (PatientDocument.review_status == "approved")
     )
-    return or_(
-        DocumentChunk.document_id.is_(None),
-        ~DocumentChunk.document_id.in_(inactive_doc_ids),
-    )
+    return DocumentChunk.document_id.in_(approved_document_ids)
 
 
 def _coerce_embedding(raw: Any) -> Optional[List[float]]:
@@ -458,4 +456,3 @@ def list_sources(
         select(DocumentChunk.source).where(where_clause).distinct().order_by(DocumentChunk.source)
     ).scalars().all()
     return list(rows)
-

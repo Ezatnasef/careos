@@ -16,7 +16,7 @@ This assistant is designed to guide prospective users, patients, and healthcare 
 
 ## 🌟 Key Features
 
-* **Grounded Knowledge Base (Zero Hallucination):** Strictly answers based on verified CareOS platform capabilities and services.
+* **Knowledge-First RAG with LLM Fallback:** Answers from verified CareOS knowledge when relevant; if retrieval finds no match, a configured LLM may answer general non-clinical questions while refusing to invent CareOS-specific details.
 * **Dual-Audience Intelligence:**
   * **For Patients:** Details the Patient Portal, appointment tracking, accessing approved lab results & physician notes, and secure communication.
   * **For Healthcare Teams:** Explains ambient consultation recording, speech-to-text dictation, AI draft SOAP notes with doctor approval, and document OCR evidence chains.
@@ -95,6 +95,8 @@ PLATFORM_BASE_URL=https://careos-pearl.vercel.app
 PORT=8000
 HOST=127.0.0.1
 ```
+
+In the CareOS monorepo, if the assistant's `.env` does not override an LLM provider, it can use the Gemini key and model from `../backend/.env`. Retrieved knowledge is sent to the model when available; when retrieval finds no relevant entry, the model receives an explicit fallback instruction. CareOS-specific claims remain limited to verified knowledge.
 
 ### 5. Run Verification Diagnostics
 
@@ -177,3 +179,4 @@ Returns recommended starter chips for both English and Arabic users.
 ## 📄 License
 
 This project is licensed under the MIT License.
+=======

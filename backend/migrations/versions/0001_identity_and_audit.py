@@ -28,21 +28,16 @@ def upgrade() -> None:
     op.create_index("ix_auth_sessions_user_id", "auth_sessions", ["user_id"])
     op.create_index("ix_auth_sessions_token_jti", "auth_sessions", ["token_jti"], unique=True)
     if op.get_bind().dialect.name == "postgresql":
-        op.execute(sa.text("""
+        op.execute("""
             CREATE OR REPLACE FUNCTION prevent_audit_mutation() RETURNS trigger AS $$
             BEGIN
                 RAISE EXCEPTION 'audit_events are append-only';
             END;
-            $$ LANGUAGE plpgsql
-        """))
-        op.execute(sa.text(
-            "DROP TRIGGER IF EXISTS audit_events_append_only ON audit_events"
-        ))
-        op.execute(sa.text("""
+            $$ LANGUAGE plpgsql;
             CREATE TRIGGER audit_events_append_only
             BEFORE UPDATE OR DELETE ON audit_events
-            FOR EACH ROW EXECUTE FUNCTION prevent_audit_mutation()
-        """))
+            FOR EACH ROW EXECUTE FUNCTION prevent_audit_mutation();
+        """)
 
 
 def downgrade() -> None:

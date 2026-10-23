@@ -23,7 +23,7 @@ class PDFParser(BaseParser):
             raise FileNotFoundError(f"PDF file not found: {file_path}")
 
         try:
-            import fitz
+            import pymupdf as fitz
             doc = fitz.open(str(path))
             try:
                 page_count = len(doc)
@@ -73,13 +73,13 @@ class PDFParser(BaseParser):
 
         has_fitz = False
         try:
-            import fitz
+            import pymupdf as fitz
             has_fitz = True
         except ImportError:
             has_fitz = False
 
         if has_fitz:
-            import fitz
+            import pymupdf as fitz
             try:
                 doc = fitz.open(str(path))
             except Exception as e:
@@ -157,7 +157,7 @@ class PDFParser(BaseParser):
     ) -> Optional[Dict[str, Any]]:
         """Rasterize a single PDF page to a PIL Image and run OCR."""
         try:
-            import fitz
+            import pymupdf as fitz
             pixmap = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), alpha=False)
             img_bytes = pixmap.tobytes("png")
             pil_img = Image.open(io.BytesIO(img_bytes))
@@ -170,4 +170,3 @@ class PDFParser(BaseParser):
         except Exception as e:
             logger.warning(f"Scanned PDF page OCR skipped or failed: {e}")
             return None
-

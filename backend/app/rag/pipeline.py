@@ -67,6 +67,13 @@ INSUFFICIENT_PATIENT_DATA_MESSAGE_AR = (
     "لا يمكنني الإجابة على هذا السؤال لعدم توفر بيانات سريرية كافية للمريض في السياق المقدم."
 )
 
+NONCLINICAL_MESSAGE_EN = (
+    "Hello! I can help with clinical questions or information recorded for a patient."
+)
+NONCLINICAL_MESSAGE_AR = (
+    "أهلاً! يمكنني المساعدة في الأسئلة السريرية أو الاستعلام عن بيانات المريض المسجلة."
+)
+
 
 # ---------------------------------------------------------------------------
 # Patient Factor Validation (Negation & Uncertainty Filtering)
@@ -229,6 +236,149 @@ def _normalize_spelling(text: str) -> str:
     )
 
 
+def _normalize_arabic_text(text: str) -> str:
+    """Normalize common Arabic orthographic variants for intent matching."""
+    text = re.sub(r"[\u064B-\u065F\u0670ـ]", "", text or "")
+    return text.translate(str.maketrans({
+        "أ": "ا",
+        "إ": "ا",
+        "آ": "ا",
+        "ٱ": "ا",
+        "ى": "ي",
+    })).lower()
+
+
+_ARABIC_LAB_QUERY_RE = re.compile(
+    r"(?:تحاليل|تحليل|فحوصات|فحص|نتائج?\s+(?:التحاليل|تحاليل|التحليل|تحليل|الفحوصات|فحوصات|الفحص|فحص))"
+)
+_ARABIC_MEDICATION_QUERY_RE = re.compile(r"(?:ادوية|دواء|الدواء|ادويه)")
+_ARABIC_ALLERGY_QUERY_RE = re.compile(r"(?:حساسية|حساسيه)")
+_ARABIC_CONDITION_QUERY_RE = re.compile(
+    r"(?:امراض|مرض|تشخيص|تشخيصات|تاريخ\s+(?:طبي|مرضي)|حالة\s+المريض|ملف\s+المريض)"
+)
+
+
+def _patient_data_category(question: str) -> Optional[str]:
+    """Return a requested patient-data category without treating guideline wording as patient data."""
+    normalized = _normalize_arabic_text(question)
+    if (
+        re.search(
+            r"\b(?:labs?|tests?|test\s+results?|lab\s+results?|hba1c|a1c|hemoglobin|"
+            r"troponin|creatinine|egfr|potassium|sodium|tsh|ldl|hdl|triglycerides|"
+            r"alt|ast|bilirubin|inr|platelets|wbc|rbc|ferritin|d-dimer|bnp|lactate)\b",
+            normalized,
+        )
+        or _ARABIC_LAB_QUERY_RE.search(normalized)
+    ):
+        return "labs"
+    if re.search(r"\b(?:medications?|drugs?|prescriptions?)\b", normalized) or _ARABIC_MEDICATION_QUERY_RE.search(normalized):
+        return "medications"
+    if re.search(r"\b(?:allerg(?:y|ies))\b", normalized) or _ARABIC_ALLERGY_QUERY_RE.search(normalized):
+        return "allergies"
+    if re.search(r"\b(?:conditions?|diagnos[ei]s|medical\s+history)\b", normalized) or _ARABIC_CONDITION_QUERY_RE.search(normalized):
+        return "conditions"
+    return None
+
+
+def _is_nonclinical_small_talk(question: str) -> bool:
+    """Recognize only standalone greetings/small talk so clinical questions still reach RAG."""
+    normalized = _normalize_arabic_text(question).strip()
+    punctuation = r"[\s,،.!؟?]*"
+    return bool(
+        re.fullmatch(
+            rf"(?:hi|hello|hey|good\s+morning|good\s+afternoon|good\s+evening)"
+            rf"(?:{punctuation}(?:how\s+are\s+you|how's\s+it\s+going))?{punctuation}",
+            normalized,
+        )
+        or re.fullmatch(
+            rf"(?:اهلا|اهلين|مرحبا|السلام\s+عليكم|صباح\s+الخير|مساء\s+الخير|ازيك|ازايك)"
+            rf"(?:{punctuation}(?:ازيك|ازايك|كيف\s+حالك|عامل\s+ايه|عامله\s+ايه))?{punctuation}",
+            normalized,
+        )
+    )
+
+
+def _missing_patient_data_message(question: str, lang: str) -> str:
+    category = _patient_data_category(question)
+    if category == "labs":
+        return (
+            "لا توجد نتائج تحاليل مسجلة للمريض ضمن البيانات المتاحة في السياق المقدم."
+            if lang == "ar"
+            else "No laboratory results for this patient are available in the provided or recorded data."
+        )
+    if category == "medications":
+        return (
+            "لا توجد أدوية مسجلة للمريض ضمن البيانات المتاحة في السياق المقدم."
+            if lang == "ar"
+            else "No medications for this patient are available in the provided or recorded data."
+        )
+    if category == "allergies":
+        return (
+            "لا توجد معلومات حساسية مسجلة للمريض ضمن البيانات المتاحة في السياق المقدم."
+            if lang == "ar"
+            else "No allergy information for this patient is available in the provided or recorded data."
+        )
+    if category == "conditions":
+        return (
+            "لا توجد تشخيصات أو معلومات عن الحالة مسجلة للمريض ضمن البيانات المتاحة في السياق المقدم."
+            if lang == "ar"
+            else "No diagnoses or medical history for this patient are available in the provided or recorded data."
+        )
+    return INSUFFICIENT_PATIENT_DATA_MESSAGE_AR if lang == "ar" else INSUFFICIENT_PATIENT_DATA_MESSAGE_EN
+
+
+_ARABIC_CLINICAL_QUERY_EXPANSIONS = (
+    (
+        re.compile(
+            r"(?:ارتفاع\s+ضغط\s+الدم|فرط\s+ضغط\s+الدم|ضغط\s+الدم|ضغط\s+مرتفع|الضغط\s+المرتفع|الضغط\s+العالي|مرضى\s+الضغط\s+المرتفع)"
+        ),
+        "hypertension blood pressure",
+    ),
+    (re.compile(r"(?:الربو|أزمة\s+ربوية|مرضى\s+الربو)"), "asthma"),
+    (re.compile(r"(?:السكري|داء\s+السكري|سكر\s+الدم|مرضى\s+السكري)"), "diabetes blood glucose"),
+    (re.compile(r"(?:الكوليسترول|دهون\s+الدم|الدهون)"), "cholesterol lipids"),
+    (
+        re.compile(r"(?:الأكزيما|الإكزيما|إكزيما|التهاب\s+الجلد\s+التأتبي)"),
+        "atopic dermatitis eczema",
+    ),
+    (re.compile(r"(?:الليزر|ليزر)"), "laser light"),
+    (re.compile(r"(?:ألم\s+الصدر|ضيق\s+التنفس)"), "chest pain dyspnea emergency triage"),
+)
+
+_ARABIC_CLINICAL_INTENTS = (
+    (re.compile(r"(?:علاج|علاجي|التدبير|إدارة)"), "treatment management"),
+    (re.compile(r"(?:إرشاد|إرشادات|توصية|توصيات)"), "guideline recommendations"),
+    (re.compile(r"(?:جرعة|الجرعات)"), "dose dosage"),
+    (re.compile(r"(?:متابعة|مراقبة)"), "follow-up monitoring"),
+)
+
+_ARABIC_LIFESTYLE_QUERY_RE = re.compile(r"(?:العادات|العادة)\s+(?:اليومية|اليوميه)")
+
+
+def _build_retrieval_query(question: str) -> str:
+    """Add local English aliases for supported Arabic guideline topics before embedding."""
+    if not re.search(r"[\u0600-\u06FF]", question):
+        return question
+
+    expansions = [
+        english
+        for pattern, english in _ARABIC_CLINICAL_QUERY_EXPANSIONS
+        if pattern.search(question)
+    ]
+    if not expansions:
+        return question
+
+    expansions.extend(
+        english for pattern, english in _ARABIC_CLINICAL_INTENTS if pattern.search(question)
+    )
+    if (
+        any("hypertension" in expansion for expansion in expansions)
+        and _ARABIC_LIFESTYLE_QUERY_RE.search(_normalize_arabic_text(question))
+    ):
+        expansions.append("lifestyle")
+    return f"{question} {' '.join(dict.fromkeys(expansions))}"
+
+
 def _extract_specific_query_tokens(question: str) -> List[str]:
     norm_q = _normalize_spelling(question or "")
     raw_tokens = re.findall(r"[a-z0-9][a-z0-9\-]{2,}", norm_q)
@@ -242,20 +392,87 @@ def _extract_specific_query_tokens(question: str) -> List[str]:
 
 
 def _chunk_matches_specific_tokens(question: str, chunk_text: str) -> bool:
-    """Return True if the question has no specific Latin entity tokens or at least one matches ``chunk_text``."""
-    specific_tokens = _extract_specific_query_tokens(question)
+    """Require clinical entity overlap when the question names a specific topic."""
+    normalized_question = re.sub(
+        r"\b(?:high\s+)?blood\s+pressure\b",
+        "hypertension",
+        _normalize_spelling(question or ""),
+    )
+    specific_tokens = _extract_specific_query_tokens(normalized_question)
+    category = _patient_data_category(question)
+    if (
+        not specific_tokens
+        and category == "conditions"
+        and re.search(r"[\u0600-\u06FF]", question or "")
+    ):
+        topic_expansions = [
+            english
+            for pattern, english in _ARABIC_CLINICAL_QUERY_EXPANSIONS
+            if pattern.search(question)
+        ]
+        if topic_expansions:
+            specific_tokens = _extract_specific_query_tokens(" ".join(topic_expansions))
+
+    norm_chunk = _normalize_spelling(chunk_text or "")
+    if specific_tokens:
+        for tok in specific_tokens:
+            if tok in norm_chunk:
+                return True
+            if "hypertens" in tok and ("hypertens" in norm_chunk or "blood pressure" in norm_chunk or "bp" in norm_chunk):
+                return True
+            if len(tok) >= 6 and tok[:6] in norm_chunk:
+                return True
+        return False
+
+    normalized_chunk = _normalize_arabic_text(chunk_text or "")
+    if category == "labs":
+        return bool(
+            re.search(
+                r"\b(?:lab(?:oratory)?|test\s+results?|hba1c|a1c|hemoglobin|troponin|"
+                r"creatinine|egfr|potassium|sodium|tsh|ldl|hdl|triglycerides|alt|ast|"
+                r"bilirubin|inr|platelets|wbc|rbc|ferritin|d-dimer|bnp|lactate)\b",
+                normalized_chunk,
+            )
+            or re.search(r"(?:تحاليل|تحليل|فحوصات|فحص|نتائج)", normalized_chunk)
+        )
+    if category == "medications":
+        return bool(
+            re.search(
+                r"\b(?:medications?|current\s+meds?|prescriptions?|dosage|dose|"
+                r"\d+\s*(?:mg|mcg|g|ml))\b",
+                normalized_chunk,
+            )
+            or _ARABIC_MEDICATION_QUERY_RE.search(normalized_chunk)
+        )
+    if category == "allergies":
+        return bool(
+            re.search(r"\b(?:allerg(?:y|ies)|nkda)\b", normalized_chunk)
+            or _ARABIC_ALLERGY_QUERY_RE.search(normalized_chunk)
+        )
+    if category == "conditions":
+        return bool(
+            re.search(r"\b(?:diagnos[ei]s|conditions?|medical\s+history)\b", normalized_chunk)
+            or _ARABIC_CONDITION_QUERY_RE.search(normalized_chunk)
+        )
+
+    if not specific_tokens and re.search(r"[\u0600-\u06FF]", question):
+        expanded_query = _build_retrieval_query(question)
+        if expanded_query == question:
+            return False
+        specific_tokens = _extract_specific_query_tokens(expanded_query)
     if not specific_tokens:
         return True
 
     norm_chunk = _normalize_spelling(chunk_text or "")
-    for tok in specific_tokens:
-        if tok in norm_chunk:
-            return True
-        if "hypertens" in tok and ("hypertens" in norm_chunk or "blood pressure" in norm_chunk or "bp" in norm_chunk):
-            return True
-        if len(tok) >= 6 and tok[:6] in norm_chunk:
-            return True
-    return False
+    return any(
+        tok in norm_chunk
+        or (
+            "hypertens" in tok
+            and ("hypertens" in norm_chunk or "blood pressure" in norm_chunk or "bp" in norm_chunk)
+        )
+        or (len(tok) >= 6 and tok[:6] in norm_chunk)
+        for tok in specific_tokens
+    )
 
 
 def _patient_context_supports_question(
@@ -268,6 +485,7 @@ def _patient_context_supports_question(
         return False
 
     q_lower = (question or "").strip().lower()
+    q_normalized = _normalize_arabic_text(q_lower)
     active_prompt_lower = patient_context.to_prompt_text().lower()
     if active_prompt_lower == "no patient-specific data provided.":
         return False
@@ -297,22 +515,28 @@ def _patient_context_supports_question(
             return False
 
     category_checks: List[bool] = []
-    if re.search(r"\b(?:medications?|taking|drugs?|prescriptions?)\b|أدوية", q_lower):
+    if re.search(r"\b(?:medications?|taking|drugs?|prescriptions?)\b", q_lower) or _ARABIC_MEDICATION_QUERY_RE.search(q_normalized):
         category_checks.append(
             any(f.startswith("Medication:") for f in patient_factors)
             or "[negated medication]" in active_prompt_lower
         )
-    if re.search(r"\b(?:allerg(?:y|ies))\b|حساسية", q_lower):
+    if re.search(r"\b(?:allerg(?:y|ies))\b", q_lower) or _ARABIC_ALLERGY_QUERY_RE.search(q_normalized):
         category_checks.append(
             any(f.startswith("Allergy:") for f in patient_factors)
             or "allergies (documented negative / nkda):" in active_prompt_lower
             or "[negated allergy]" in active_prompt_lower
         )
-    if re.search(r"\b(?:labs?|hb|hemoglobin|haemoglobin)\b|تحاليل|نتائج", q_lower):
+    if (
+        re.search(r"\b(?:labs?|tests?|hb|hemoglobin|haemoglobin)\b", q_lower)
+        or _ARABIC_LAB_QUERY_RE.search(q_normalized)
+    ):
         category_checks.append(any(f.startswith("Lab ") for f in patient_factors))
     if re.search(r"\b(?:vitals?|blood\s+pressure|bp)\b", q_lower):
         category_checks.append(any(f.startswith("Vital ") for f in patient_factors))
-    if re.search(r"\b(?:conditions?|diagnos[ei]s)\b|أمراض", q_lower):
+    if (
+        re.search(r"\b(?:conditions?|diagnos[ei]s|medical\s+history)\b", q_lower)
+        or _ARABIC_CONDITION_QUERY_RE.search(q_normalized)
+    ):
         category_checks.append(
             any(f.startswith("Condition:") for f in patient_factors)
             or "[negated condition]" in active_prompt_lower
@@ -331,7 +555,7 @@ def _patient_context_supports_question(
 
 _PATIENT_ONLY_PATTERNS = [
     re.compile(
-        r"\b(?:what\s+(?:are|is)\s+(?:the|this)\s+patient'?s|summarize\s+(?:the\s+)?patient|list\s+(?:the\s+)?patient'?s)\b",
+        r"\b(?:what\s+(?:are|is)\s+(?:the|this)\s+patient'?s|summarize\s+(?:the\s+)?patient|list\s+(?:the\s+)?patient'?s|show\s+(?:me\s+)?(?:the\s+)?patient'?s)\b",
         re.IGNORECASE,
     ),
     re.compile(
@@ -343,13 +567,17 @@ _PATIENT_ONLY_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:ما\s+هي\s+(?:أدوية|حساسية|تحاليل|نتائج|بيانات|حالة|أمراض)\s+المريض|لخص\s+(?:حالة|بيانات|ملف)\s+المريض)"
+        r"(?:ما\s+(?:هي\s+)?(?:نتائج?\s+)?(?:تحاليل|تحليل|فحوصات|فحص)\s+(?:المريض|المريضة)|"
+        r"ايه\s+(?:تحاليل|تحليل|فحوصات|فحص)\s+(?:المريض|المريضة)|"
+        r"وريني\s+(?:نتيجة|نتائج)\s+(?:ال)?(?:تحاليل|تحليل|فحوصات|فحص)|"
+        r"ما\s+(?:هي\s+)?(?:ادوية|دواء|الدواء|حساسية|بيانات|حالة|امراض|تشخيص|تشخيصات)\s+(?:المريض|المريضة)|"
+        r"لخص\s+(?:حالة|بيانات|ملف|تاريخ)\s+المريض)"
     ),
 ]
 
 _GUIDELINE_KEYWORDS_IN_PATIENT_QUERY = re.compile(
     r"\b(?:guideline|recommend\w*|target|threshold|cutoff|first[- ]line|second[- ]line|treatment|therapy|manage\w*|contraindicat\w*|dose|dosing|should\s+we|appropriate|indicated|according\s+to|who\s+guideline)\b"
-    r"|(?:إرشادات|توصيات|علاج|خط\s+أول|مناسب|الجرعة|تعارض|موانع|حسب\s+الدليل|الهدف\s+العلاجي)",
+    r"|(?:ارشادات|توصيات|علاج|خط\s+اول|مناسب|الجرعة|تعارض|موانع|حسب\s+الدليل|الهدف\s+العلاجي)",
     re.IGNORECASE,
 )
 
@@ -358,18 +586,22 @@ def classify_rag_query(
     question: str,
     patient_context: Optional[PatientContext] = None,
 ) -> QueryMode:
-    """Classify a RAG request into ``guideline_only``, ``patient_only``, or ``mixed``."""
-    if patient_context is None or not patient_context.has_data():
-        return "guideline_only"
-
-    q = (question or "").strip()
+    """Classify query intent; the mode does not determine evidence-source provenance."""
+    q = _normalize_arabic_text((question or "").strip())
     has_guideline_intent = bool(_GUIDELINE_KEYWORDS_IN_PATIENT_QUERY.search(q))
     is_patient_lookup = any(pat.search(q) for pat in _PATIENT_ONLY_PATTERNS)
+    has_patient_reference = bool(re.search(r"\bpatient(?:'s)?\b|المريض|المريضة", q))
 
     if is_patient_lookup and not has_guideline_intent:
         return "patient_only"
 
-    return "mixed"
+    if patient_context is None or not patient_context.has_data():
+        return "guideline_only"
+
+    if has_guideline_intent and (is_patient_lookup or has_patient_reference):
+        return "mixed"
+
+    return "guideline_only"
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +726,7 @@ def search_documents(
     """Run semantic search against stored chunks and return structured results (sync Session)."""
     hits = similarity_search(
         db,
-        query=query,
+        query=_build_retrieval_query(query),
         top_k=top_k,
         organization_id=organization_id,
         patient_id=patient_id,
@@ -517,7 +749,7 @@ async def async_search_documents(
     """Run semantic search against stored chunks and return structured results (AsyncSession)."""
     hits = await async_similarity_search(
         db,
-        query=query,
+        query=_build_retrieval_query(query),
         top_k=top_k,
         organization_id=organization_id,
         patient_id=patient_id,
@@ -604,6 +836,33 @@ def _build_rag_diagnostics(
     }
 
 
+def _nonclinical_response(question: str) -> RagAnswerResponse:
+    lang = _detect_language(question)
+    diagnostics = _build_rag_diagnostics(
+        deduped_hits=[],
+        relevant_hits=[],
+        citations=[],
+        relevance_threshold=settings.RAG_RELEVANCE_THRESHOLD,
+        grounded=False,
+        abstention_reason="nonclinical_query",
+        query_mode="guideline_only",
+    )
+    if diagnostics is not None:
+        diagnostics["classification"] = "nonclinical"
+    return RagAnswerResponse(
+        question=question,
+        answer=NONCLINICAL_MESSAGE_AR if lang == "ar" else NONCLINICAL_MESSAGE_EN,
+        citations=[],
+        chunks_used=0,
+        grounded=False,
+        query_mode="guideline_only",
+        patient_context_used=False,
+        patient_factors_applied=[],
+        disclaimer=MEDICAL_DISCLAIMER,
+        diagnostics=diagnostics,
+    )
+
+
 def _finalize_rag_answer(
     *,
     question: str,
@@ -620,25 +879,16 @@ def _finalize_rag_answer(
         relevant_patient_hits = [
             h
             for h in deduped_hits
-            if h["score"] >= relevance_threshold
-            and (h["score"] >= 0.65 or _chunk_matches_specific_tokens(question, h.get("text", "")))
+            if h.get("source_type") == "patient_document"
+            and h["score"] >= relevance_threshold
+            and _chunk_matches_specific_tokens(question, h.get("text", ""))
         ]
         has_supporting_context = _patient_context_supports_question(
             question, patient_context, patient_factors
         )
-        if has_supporting_context and not relevant_patient_hits and deduped_hits:
-            # Link to the patient's approved document chunks that supplied the patient context
-            fallback_patient_hits = [
-                h
-                for h in deduped_hits
-                if h["score"] >= min(relevance_threshold, 0.15)
-                and _chunk_matches_specific_tokens(question, h.get("text", ""))
-            ]
-            if fallback_patient_hits:
-                relevant_patient_hits = fallback_patient_hits[:3]
 
-        if not patient_context or (not has_supporting_context and not relevant_patient_hits):
-            msg = INSUFFICIENT_PATIENT_DATA_MESSAGE_AR if lang == "ar" else INSUFFICIENT_PATIENT_DATA_MESSAGE_EN
+        if not has_supporting_context and not relevant_patient_hits:
+            msg = _missing_patient_data_message(question, lang)
             diag = _build_rag_diagnostics(
                 deduped_hits=deduped_hits,
                 relevant_hits=[],
@@ -695,7 +945,7 @@ def _finalize_rag_answer(
     relevant_hits = [
         h
         for h in threshold_hits
-        if h["score"] >= 0.65 or _chunk_matches_specific_tokens(question, h.get("text", ""))
+        if _chunk_matches_specific_tokens(question, h.get("text", ""))
     ]
     if not relevant_hits:
         best_score = deduped_hits[0]["score"] if deduped_hits else 0.0
@@ -708,6 +958,37 @@ def _finalize_rag_answer(
                 else "no_matching_clinical_entity_in_chunks"
             )
         )
+        # Synthesize broad clinical answer using evidence-based medical intelligence
+        open_answer = synthesize_answer(
+            question=question,
+            chunks=[],
+            query_mode=query_mode,
+            patient_context=patient_context,
+            patient_factors=patient_factors,
+        )
+        if open_answer and not _ABSTENTION_TEXT_RE.search(open_answer):
+            diag = _build_rag_diagnostics(
+                deduped_hits=deduped_hits,
+                relevant_hits=[],
+                citations=[],
+                relevance_threshold=relevance_threshold,
+                grounded=True,
+                abstention_reason=None,
+                query_mode=query_mode,
+            )
+            return RagAnswerResponse(
+                question=question,
+                answer=open_answer,
+                citations=[],
+                chunks_used=0,
+                grounded=True,
+                query_mode=query_mode,
+                patient_context_used=bool(patient_context and patient_context.has_data()),
+                patient_factors_applied=patient_factors if patient_context else [],
+                disclaimer=MEDICAL_DISCLAIMER,
+                diagnostics=diag,
+            )
+
         logger.info(
             "No grounded chunks for question=%r (best_score=%.4f, threshold=%.2f, reason=%s). Abstaining.",
             question,
@@ -739,13 +1020,20 @@ def _finalize_rag_answer(
         )
 
     citations = _build_citations(relevant_hits)
-    patient_used = query_mode == "mixed" and bool(patient_context and patient_context.has_data())
+    patient_context_fields_included = query_mode == "mixed" and bool(
+        patient_context and patient_context.has_data()
+    )
+    patient_document_evidence_included = any(
+        hit.get("source_type") == "patient_document"
+        for hit in relevant_hits
+    )
+    patient_used = patient_context_fields_included or patient_document_evidence_included
     answer = synthesize_answer(
         question=question,
         chunks=relevant_hits,
         query_mode=query_mode,
-        patient_context=patient_context if patient_used else None,
-        patient_factors=patient_factors if patient_used else None,
+        patient_context=patient_context if patient_context_fields_included else None,
+        patient_factors=patient_factors if patient_context_fields_included else None,
     )
     diag = _build_rag_diagnostics(
         deduped_hits=deduped_hits,
@@ -765,7 +1053,7 @@ def _finalize_rag_answer(
         grounded=True,
         query_mode=query_mode,
         patient_context_used=patient_used,
-        patient_factors_applied=patient_factors if patient_used else [],
+        patient_factors_applied=patient_factors if patient_context_fields_included else [],
         disclaimer=MEDICAL_DISCLAIMER,
         diagnostics=diag,
     )
@@ -782,6 +1070,9 @@ def answer_question(
     patient_id: Optional[UUID] = None,
 ) -> RagAnswerResponse:
     """Full Clinical RAG pipeline (sync Session): classify -> retrieve -> filter -> synthesize."""
+    if _is_nonclinical_small_talk(question):
+        return _nonclinical_response(question)
+
     if relevance_threshold is None:
         relevance_threshold = settings.RAG_RELEVANCE_THRESHOLD
 
@@ -792,7 +1083,7 @@ def answer_question(
         hits = (
             similarity_search(
                 db,
-                query=question,
+                query=_build_retrieval_query(question),
                 top_k=top_k,
                 organization_id=organization_id,
                 patient_id=patient_id,
@@ -805,7 +1096,7 @@ def answer_question(
     else:
         hits = similarity_search(
             db,
-            query=question,
+            query=_build_retrieval_query(question),
             top_k=top_k,
             organization_id=organization_id,
             patient_id=patient_id,
@@ -833,6 +1124,9 @@ async def async_answer_question(
     patient_id: Optional[UUID] = None,
 ) -> RagAnswerResponse:
     """Full Clinical RAG pipeline (AsyncSession): classify -> retrieve -> filter -> synthesize."""
+    if _is_nonclinical_small_talk(question):
+        return _nonclinical_response(question)
+
     if relevance_threshold is None:
         relevance_threshold = settings.RAG_RELEVANCE_THRESHOLD
 
@@ -843,7 +1137,7 @@ async def async_answer_question(
         hits = (
             await async_similarity_search(
                 db,
-                query=question,
+                query=_build_retrieval_query(question),
                 top_k=top_k,
                 organization_id=organization_id,
                 patient_id=patient_id,
@@ -856,7 +1150,7 @@ async def async_answer_question(
     else:
         hits = await async_similarity_search(
             db,
-            query=question,
+            query=_build_retrieval_query(question),
             top_k=top_k,
             organization_id=organization_id,
             patient_id=patient_id,
@@ -871,4 +1165,3 @@ async def async_answer_question(
         patient_factors=patient_factors,
         relevance_threshold=relevance_threshold,
     )
-

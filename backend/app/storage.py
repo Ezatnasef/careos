@@ -42,7 +42,12 @@ class StorageService:
 
     def save_document(self, *, organization_id: str, patient_id: str, filename: str, content: bytes | str, content_type: str = "application/octet-stream") -> tuple[str, str]:
         safe_filename = self._safe_filename(filename)
-        if content_type not in self.settings.allowed_upload_content_types:
+        media_type = content_type.partition(";")[0].strip().lower()
+        allowed_media_types = {
+            allowed_type.partition(";")[0].strip().lower()
+            for allowed_type in self.settings.allowed_upload_content_types
+        }
+        if media_type not in allowed_media_types:
             raise ValueError("Unsupported upload content type")
         if self.settings.storage_backend.lower() == "s3":
             self._validate_storage_target(storage_backend=self.settings.storage_backend, bucket=self.settings.s3_bucket)
@@ -68,7 +73,7 @@ class StorageService:
                 Bucket=self.settings.s3_bucket,
                 Key=key,
                 Body=payload,
-                ContentType=content_type,
+                ContentType=media_type,
             )
             url = f"https://{self.settings.s3_bucket}.s3.{self.settings.s3_region}.amazonaws.com/{key}"
             return key, url

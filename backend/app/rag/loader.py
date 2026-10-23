@@ -990,7 +990,7 @@ def get_ocr_status_info() -> Dict[str, Any]:
     has_docx = False
     has_pillow = False
     try:
-        import fitz  # noqa: F401
+        import pymupdf as fitz  # noqa: F401
         has_fitz = True
     except ImportError:
         pass
@@ -1036,4 +1036,3 @@ def get_ocr_status_info() -> Dict[str, Any]:
             },
         },
     }
-

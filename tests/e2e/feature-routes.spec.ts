@@ -1,6 +1,6 @@
 import { expect, test, type Page, type APIRequestContext } from '@playwright/test'
 
-async function openWorkspace(page: Page, request: APIRequestContext, role = 'doctor') {
+async function openWorkspace(page: Page, request: APIRequestContext, role = 'admin') {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
   const ownerEmail = `owner-${suffix}@example.org`
   const email = role === 'admin' ? ownerEmail : `member-${role}-${suffix}@example.org`
@@ -58,6 +58,180 @@ test('feature routes render after workspace navigation', async ({ page, request 
     }, route)
     await expect(page.locator('.breadcrumb strong')).toContainText(heading)
   }
+})
+
+test('integration hub content follows the selected language', async ({ page, request }) => {
+  await openWorkspace(page, request)
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '#app/integrations')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
+
+  await expect(page.getByRole('heading', { name: 'Integration hub' })).toBeVisible()
+  await expect(page.getByText('Clinical drafting', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Switch to Arabic' }).click()
+
+  await expect(page.locator('.app-shell')).toHaveAttribute('dir', 'rtl')
+  await expect(page.getByRole('heading', { name: 'مركز التكاملات' })).toBeVisible()
+  await expect(page.getByText('صياغة الملاحظات السريرية', { exact: true })).toBeVisible()
+  await expect(page.getByText('الأسرار والاعتماد', { exact: true })).toBeVisible()
+})
+
+test('patient QR opens the secure, patient-filtered record route', async ({ page }) => {
+  await page.goto('/#app')
+  await page.getByRole('button', { name: 'Switch to English' }).click()
+  await page.getByRole('button', { name: 'Login as Doctor', exact: true }).click()
+  await expect(page.locator('.app-shell')).toBeVisible()
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '#app/patients')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
+
+  const qrButton = page.getByRole('button', { name: /Show patient QR/ }).first()
+  await expect(qrButton).toBeVisible()
+  await qrButton.click()
+  const dialog = page.getByRole('dialog')
+  const recordLink = dialog.getByRole('link', { name: 'Open secure patient record' })
+  await expect(dialog.locator('#patient-qr-code svg')).toBeVisible()
+  const recordUrl = await recordLink.getAttribute('href')
+  expect(recordUrl).toMatch(/#app\/patients\?code=/)
+  if (!recordUrl) throw new Error('The secure patient record link is missing.')
+
+  await page.goto(recordUrl)
+  await expect(page.locator('.patient-table-row')).toHaveCount(1)
+})
+
+test('care team reply appears in the active message thread', async ({ page }) => {
+  await page.goto('/#app')
+  await page.getByRole('button', { name: 'Switch to English' }).click()
+  await page.getByRole('button', { name: 'Login as Doctor', exact: true }).click()
+  await expect(page.locator('.app-shell')).toBeVisible()
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '#app/messages')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
+
+  await page.getByRole('button', { name: 'New message' }).click()
+  const dialog = page.getByRole('dialog')
+  const patientSelect = dialog.locator('select')
+  const patientOption = patientSelect.locator('option').filter({ hasText: 'Mariam Hassan' }).first()
+  await expect(patientOption).toBeAttached()
+  const patientId = await patientOption.getAttribute('value')
+  if (!patientId) throw new Error('The patient option is missing its ID.')
+  await patientSelect.selectOption(patientId)
+  await dialog.getByLabel('Subject').fill(`Reply verification ${Date.now()}`)
+  await dialog.getByLabel('Type a message').fill('Please reply to this message.')
+  await dialog.getByRole('button', { name: 'Send message' }).click()
+
+  const reply = `Care team response ${Date.now()}`
+  await page.getByRole('textbox', { name: 'Reply to this patient' }).fill(reply)
+  await page.getByRole('button', { name: 'Reply', exact: true }).click()
+  await expect(page.locator('.message-view')).toContainText(reply)
+})
+
+test('patient portal can reply without retyping the subject', async ({ page }) => {
+  await page.goto('/#app')
+  await page.getByRole('button', { name: 'Switch to English' }).click()
+  await page.getByRole('button', { name: 'Login as Patient', exact: true }).click()
+  await expect(page.locator('.app-shell')).toBeVisible()
+  await page.getByRole('button', { name: 'Messages', exact: true }).click()
+
+  const reply = `Portal reply ${Date.now()}`
+  await page.getByRole('textbox', { name: 'Type a message' }).fill(reply)
+  await page.getByRole('button', { name: 'Reply', exact: true }).click()
+  await expect(page.locator('.portal-section')).toContainText(reply)
+})
+
+test('staff can manage patient messages from the inbox', async ({ page }) => {
+  await page.goto('/#app')
+  await page.getByRole('button', { name: 'Switch to English' }).click()
+  await page.getByRole('button', { name: 'Login as Doctor', exact: true }).click()
+  await expect(page.locator('.app-shell')).toBeVisible()
+  await page.evaluate(() => {
+    window.history.pushState({}, '', '#app/messages')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
+  await page.getByRole('button', { name: 'New message' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  const patientSelect = dialog.locator('select')
+  const patientOption = patientSelect.locator('option').filter({ hasText: 'Mariam Hassan' }).first()
+  await expect(patientOption).toBeAttached()
+  const patientId = await patientOption.getAttribute('value')
+  const patientName = (await patientOption.textContent())?.split('·')[0].trim()
+  if (!patientId || !patientName) throw new Error('The selected patient option is missing its identity.')
+  await patientSelect.selectOption(patientId)
+  await dialog.getByLabel('Subject').fill('Follow-up from your care team')
+  const messageBody = `Please contact your care team. ${Date.now()}`
+  await dialog.getByLabel('Type a message').fill(messageBody)
+  await dialog.getByRole('button', { name: 'Send message' }).click()
+
+  await expect(dialog).toHaveCount(0)
+  await expect(page.locator('.thread-list')).toContainText(patientName)
+  await expect(page.locator('.message-view')).toContainText(messageBody)
+  await expect(page.locator('.message-view')).toContainText(`To: ${patientName}`)
+  await expect(page.locator('.message-view')).not.toContainText('Unknown patient')
+
+  const replyBody = `A second follow-up ${Date.now()}`
+  await page.getByPlaceholder('Write a secure message...').fill(replyBody)
+  await page.getByRole('button', { name: 'Reply' }).click()
+  await expect(page.locator('.message-view')).toContainText(replyBody)
+
+  page.once('dialog', (dialog) => dialog.accept())
+  const deleteResponse = page.waitForResponse((response) => {
+    const path = new URL(response.url()).pathname
+    return response.request().method() === 'DELETE' &&
+      path.startsWith('/api/v1/messages/') &&
+      !path.includes('/patient/')
+  })
+  await page.getByRole('button', { name: 'Delete message' }).last().click()
+  const deleteResult = await deleteResponse
+  expect(
+    deleteResult.ok(),
+    `${deleteResult.url()}: ${await deleteResult.text()}`,
+  ).toBeTruthy()
+  await expect(page.locator('.message-view')).not.toContainText(replyBody)
+  await expect(page.locator('.message-view')).toContainText(messageBody)
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Delete conversation' }).click()
+  await expect(page.locator('.thread-list')).not.toContainText(patientName)
+
+  await page.getByRole('button', { name: 'Switch to Arabic' }).click()
+  await page.getByRole('button', { name: 'رسالة جديدة' }).click()
+  const arabicDialog = page.getByRole('dialog')
+  await expect(arabicDialog.getByRole('heading', { name: 'رسالة جديدة لمريض' })).toBeVisible()
+  await arabicDialog.getByRole('button', { name: 'إغلاق' }).click()
+})
+
+test('chatbot can clear its conversation and reset its context', async ({ page, request }) => {
+  await openWorkspace(page, request)
+  await page.route('**/api/v1/assistant/orchestrator/chat', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        answer: 'Mock chatbot response.',
+        intent: 'unknown',
+        status: 'idle',
+        active_agent: null,
+        conversation_id: null,
+        patient_id: null,
+        orchestrator_state: { turn: 1 },
+      }),
+    }),
+  )
+  await page.getByRole('button', { name: 'Open general chat' }).click()
+  const chat = page.getByRole('dialog', { name: 'General chat' })
+  await chat.getByRole('textbox', { name: 'Message the assistant' }).fill('Test chatbot history')
+  await chat.getByRole('button', { name: 'Send message' }).click()
+  await expect(chat).toContainText('Mock chatbot response.')
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await chat.getByRole('button', { name: 'Clear conversation' }).click()
+  await expect(chat).toContainText('Ask a general question.')
+  await expect(chat).not.toContainText('Test chatbot history')
+  await expect(chat).not.toContainText('Mock chatbot response.')
 })
 
 test('feature controls are interactive', async ({ page, request }) => {
@@ -121,14 +295,6 @@ test('feature controls are interactive', async ({ page, request }) => {
     window.history.pushState({}, '', '#app/settings')
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
-})
-
-test('workspace settings controls are interactive', async ({ page, request }) => {
-  await openWorkspace(page, request, 'admin')
-  await page.evaluate(() => {
-    window.history.pushState({}, '', '#app/settings')
-    window.dispatchEvent(new PopStateEvent('popstate'))
-  })
   const settingsTabs = page.locator('.settings-nav button')
   await settingsTabs.filter({ hasText: 'Preferences' }).click()
   await expect(page.locator('.settings-form .panel-heading h2')).toHaveText('Preferences')
@@ -158,18 +324,20 @@ test('general chat is available to non-clinical staff without patient context', 
 
 test('patient code is visible and can find the patient record', async ({ page, request }) => {
   const login = await request.post('/api/v1/auth/demo-login', {
-    data: { role: 'doctor', username: 'doctor.demo', password: 'Doctor@123' },
+    data: { role: 'admin', username: 'admin.demo', password: 'Admin@123' },
   })
   expect(login.ok()).toBeTruthy()
   const token = (await login.json()).access_token as string
-  await page.addInitScript((accessToken) => localStorage.setItem('careos-access-token', accessToken), token)
+  await page.goto('/#app')
+  await page.evaluate((accessToken) => localStorage.setItem('careos-access-token', accessToken), token)
+  await page.reload()
   await page.goto('/#app/patients')
 
   const patientCode = page.locator('.patient-code').first()
   await expect(patientCode).toBeVisible()
   const code = (await patientCode.textContent())?.trim() ?? ''
   expect(code).toMatch(/^CARE-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/)
-  await page.locator('.patient-qr-preview').first().click()
+  await page.locator('.patient-qr-button').first().click()
   await expect(page.locator('#patient-qr-code svg')).toBeVisible()
   await page.locator('.patient-qr-modal .patient-modal-actions .outline-btn').click()
   await page.getByPlaceholder(/Search by name or patient ID|البحث بالاسم أو رقم المريض/).fill(code)
@@ -204,16 +372,20 @@ test('local demo personas expose staff and patient sessions', async ({ request }
   expect((await patient.json()).portal_access_token).toBeTruthy()
 })
 
-test('demo patient opens the patient portal with its own record', async ({ page, request }) => {
-  const response = await request.post('/api/v1/auth/demo-login', { data: { role: 'patient', username: 'patient.demo', password: 'Patient@123' } })
-  expect(response.ok()).toBeTruthy()
-  const token = (await response.json()).portal_access_token as string
-  const account = await request.get('/api/v1/patient-portal/me', {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  expect(account.ok(), await account.text()).toBeTruthy()
-  await page.addInitScript((portalToken) => localStorage.setItem('careos-portal-token', portalToken), token)
+test('patient demo login opens the patient portal from the login card', async ({ page }) => {
   await page.goto('/#app')
+  const loginResponse = page.waitForResponse((response) =>
+    response.url().includes('/auth/demo-login'),
+  )
+  await page.getByRole('button', { name: /تسجيل الدخول بصفة مريض|Sign in as Patient/i }).click()
+  const response = await loginResponse
+  expect(response.ok(), await response.text()).toBeTruthy()
+  const loginPayload = await response.json()
+  expect(loginPayload.portal_access_token).toBeTruthy()
+
+  await expect(page.locator('.portal-patient-id code')).toBeVisible()
+  const portalToken = await page.evaluate(() => localStorage.getItem('careos-portal-token'))
+  expect(portalToken, 'patient login should preserve the portal access token').toBeTruthy()
   await expect(page.getByRole('heading', { name: 'Mariam Hassan' })).toBeVisible()
   await expect(page.locator('.portal-patient-id code')).toHaveText(/^CARE-[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/)
   const portalTabs = page.locator('.portal-tabs button')
@@ -222,6 +394,13 @@ test('demo patient opens the patient portal with its own record', async ({ page,
   await expect(page.locator('.portal-section')).toBeVisible()
   await portalTabs.nth(2).click()
   await expect(page.locator('.portal-section form')).toBeVisible()
+  await expect(page.locator('.message-routing')).toContainText('Mariam Hassan')
+  await expect(page.locator('.message-routing')).toContainText(/فريق الرعاية|Care team/)
+  await page.getByLabel('Message subject').fill('Appointment question')
+  await page.getByLabel('Message body').fill('Can you confirm the appointment time?')
+  await page.locator('.portal-compose button[type="submit"], .portal-compose button').click()
+  await expect(page.locator('.message-bubble').last()).toContainText('Mariam Hassan')
+  await expect(page.locator('.message-bubble').last()).toContainText(/فريق الرعاية|Care team/)
   await portalTabs.nth(3).click()
   await expect(page.locator('.portal-section')).toBeVisible()
   const sidebar = page.getByRole('complementary')
@@ -243,17 +422,17 @@ test('staff users are redirected from the patient-only portal', async ({ page, r
   await expect(page.getByText('Authentication required')).toHaveCount(0)
 })
 
-test('clinical assistant reports when no references are indexed', async ({ page }) => {
+test('clinical assistant clearly reports patient-data search is not enabled in the MVP', async ({ page }) => {
   await page.goto('/#app')
   await page.getByRole('button', { name: 'Switch to English' }).click()
   await page.getByRole('button', { name: 'Sign in to your workspace' }).last().click()
-  await page.locator('.demo-account-card').filter({ hasText: 'doctor.demo' }).getByRole('button').click()
+  await page.getByRole('button', { name: 'Login as Doctor', exact: true }).click()
   await expect(page.locator('.app-shell')).toBeVisible()
   await page.evaluate(() => {
     window.history.pushState({}, '', '#app/assistant')
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
-  await expect(page.locator('.assistant-answer')).toContainText(/No clinical documents or guidelines are indexed yet/)
+  await expect(page.locator('.assistant-answer')).toContainText(/not enabled in this MVP|غير متاح في نسخة MVP/i)
 })
 
 test('operations dashboard excludes clinical and admin-only controls', async ({ page, request }) => {

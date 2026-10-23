@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-import fitz
+import pymupdf as fitz
 import pytest
 from docx import Document as DocxDocument
 from fastapi.testclient import TestClient
@@ -1703,6 +1703,5 @@ def test_structured_ocr_evaluation_suite_arabic_and_english() -> None:
         total_fields_matched += 2
 
     assert total_fields_checked == total_fields_matched
-
 
 

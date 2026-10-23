@@ -3,11 +3,14 @@ import inspect
 import os
 import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 os.environ.setdefault("APP_ENV", "test")
-test_database = Path(tempfile.gettempdir()) / f"careos-pytest-{os.getpid()}.db"
+test_database_directory = Path(__file__).resolve().parents[1] / ".e2e-databases"
+test_database_directory.mkdir(parents=True, exist_ok=True)
+test_database_name = f"careos-pytest-{os.getpid()}-{uuid4().hex}.db"
 test_storage = Path(tempfile.gettempdir()) / f"careos-pytest-storage-{os.getpid()}"
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{test_database.as_posix()}"
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///./.e2e-databases/{test_database_name}"
 os.environ.setdefault("STORAGE_LOCAL_ROOT", str(test_storage))
 os.environ.setdefault("OIDC_ISSUER_URL", "https://issuer.example.com")
 os.environ.setdefault("OIDC_CLIENT_ID", "careos-test-client")

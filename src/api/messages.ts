@@ -1,1 +1,7 @@
-export { createMessage, getMessages, markMessageRead } from "../api";
+export {
+  createMessage,
+  deleteMessage,
+  deletePatientMessages,
+  getMessages,
+  markMessageRead,
+} from "../api";

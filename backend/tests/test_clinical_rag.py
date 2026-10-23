@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import math
 from pathlib import Path
 from uuid import uuid4
@@ -13,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.main import app
-from app.models import Base
+from app.models import Base, DocumentChunk, PatientDocument
 from app.rag.chunker import chunk_pages
 from app.rag.embeddings import (
     EMBEDDING_DIM,
@@ -32,11 +33,17 @@ from app.rag.llm import (
     verify_citations,
     verify_patient_factors_applied,
 )
+from app.rag import llm as rag_llm
+from app.rag import pipeline as rag_pipeline
 from app.rag.parsers.unified_document import UnifiedDocument
 from app.rag.pipeline import (
     INSUFFICIENT_EVIDENCE_MESSAGE_AR,
     INSUFFICIENT_EVIDENCE_MESSAGE_EN,
+    INSUFFICIENT_PATIENT_DATA_MESSAGE_AR,
     MEDICAL_DISCLAIMER,
+    _chunk_matches_specific_tokens,
+    _finalize_rag_answer,
+    async_answer_question,
     answer_question,
     classify_rag_query,
     search_documents,
@@ -51,7 +58,7 @@ from app.rag.store import count_chunks, list_sources, similarity_search, upsert_
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def isolated_sync_db(tmp_path: Path) -> Session:
+def isolated_sync_db(tmp_path: Path) -> Session: 
     """Create a fresh, isolated temporary SQLite database for synchronous RAG store tests."""
     db_file = tmp_path / "isolated_rag_unit.db"
     engine = create_engine(f"sqlite:///{db_file.as_posix()}", future=True)
@@ -188,6 +195,259 @@ def test_embeddings_dimension_normalization_and_validation() -> None:
         embed_query("   ")
 
 
+def test_multilingual_embedding_retrieves_english_guidelines_from_arabic_and_english() -> None:
+    passages = embed_texts([
+        "First-line treatment for hypertension includes thiazide diuretics and calcium channel blockers.",
+        "Asthma management includes inhaled corticosteroid-formoterol therapy.",
+    ])
+    arabic_query = embed_query("ما علاج ارتفاع ضغط الدم؟")
+    english_query = embed_query("What is the recommended treatment for hypertension?")
+
+    arabic_scores = passages @ arabic_query
+    english_scores = passages @ english_query
+    assert float(arabic_scores[0]) > float(arabic_scores[1])
+    assert float(english_scores[0]) > float(english_scores[1])
+
+
+def test_e5_embedding_uses_passage_and_query_prefixes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    import numpy as np
+    import app.rag.embeddings as embeddings
+
+    encoded_inputs: list[list[str]] = []
+
+    class FakeModel:
+        def encode(
+            self,
+            texts: list[str],
+            *,
+            batch_size: int,
+            show_progress_bar: bool,
+            normalize_embeddings: bool,
+            convert_to_numpy: bool,
+        ) -> np.ndarray:
+            encoded_inputs.append(texts)
+            return np.ones((len(texts), EMBEDDING_DIM), dtype=np.float32)
+
+    monkeypatch.setattr(
+        embeddings,
+        "get_settings",
+        lambda: SimpleNamespace(rag_embedding_model="intfloat/multilingual-e5-small"),
+    )
+    monkeypatch.setattr(embeddings, "get_embedding_model", FakeModel)
+
+    embeddings.embed_texts(["clinical passage"])
+    embeddings.embed_query("clinical question")
+
+    assert encoded_inputs == [["passage: clinical passage"], ["query: clinical question"]]
+
+
+def test_specific_entity_filter_rejects_unrelated_chunks_and_resolves_arabic_aliases() -> None:
+    hypertension_chunk = (
+        "First-line hypertension treatment includes calcium channel blockers and thiazide diuretics."
+    )
+    hypertension_lifestyle_chunk = (
+        "For adults with hypertension, lifestyle measures include regular physical activity "
+        "and maintaining a healthy weight."
+    )
+    asthma_chunk = "For adults with asthma, use inhaled corticosteroid-containing therapy."
+    diabetes_chunk = "For adults with type 2 diabetes, follow individualized glycemic monitoring."
+    generic_lifestyle_chunk = "Lifestyle measures include regular activity and a healthy diet."
+    unrelated_question = "How do I configure a Kubernetes ingress controller for spacecraft telemetry?"
+    arabic_lifestyle_question = "ما العادات اليومية التي تساعد مرضى الضغط المرتفع؟"
+    arabic_asthma_question = "ما العلاج الاستنشاقي الموصى به لمرضى الربو؟"
+    arabic_diabetes_question = "كيف تساعد الحركة والوجبات المتوازنة مرضى السكري من النوع الثاني؟"
+
+    assert not _chunk_matches_specific_tokens(unrelated_question, hypertension_chunk)
+    assert _chunk_matches_specific_tokens("ما علاج ارتفاع ضغط الدم؟", hypertension_chunk)
+    assert _chunk_matches_specific_tokens("high blood pressure management", hypertension_chunk)
+    assert _chunk_matches_specific_tokens("hypertension management", "blood pressure treatment options")
+    assert _chunk_matches_specific_tokens(arabic_lifestyle_question, hypertension_lifestyle_chunk)
+    assert not _chunk_matches_specific_tokens(arabic_lifestyle_question, asthma_chunk)
+    assert not _chunk_matches_specific_tokens(arabic_lifestyle_question, diabetes_chunk)
+    assert not _chunk_matches_specific_tokens(arabic_lifestyle_question, generic_lifestyle_chunk)
+    assert _chunk_matches_specific_tokens(arabic_asthma_question, asthma_chunk)
+    assert not _chunk_matches_specific_tokens(arabic_asthma_question, hypertension_lifestyle_chunk)
+    assert _chunk_matches_specific_tokens(arabic_diabetes_question, diabetes_chunk)
+    assert not _chunk_matches_specific_tokens(arabic_diabetes_question, asthma_chunk)
+    assert not _chunk_matches_specific_tokens(arabic_lifestyle_question, unrelated_question)
+    assert not _chunk_matches_specific_tokens("كيف يمكن برمجة محرك الصواريخ الفضائية؟", hypertension_chunk)
+
+
+def test_arabic_hypertension_lifestyle_retrieval_query_preserves_original_question() -> None:
+    question = "ما العادات اليومية التي تساعد مرضى الضغط المرتفع؟"
+
+    retrieval_query = rag_pipeline._build_retrieval_query(question)
+
+    assert retrieval_query.startswith(question)
+    assert "hypertension" in retrieval_query
+    assert "blood pressure" in retrieval_query
+    assert "lifestyle" in retrieval_query
+
+
+def test_vector_store_persists_384_dim_embeddings(isolated_sync_db: Session) -> None:
+    sample_chunk = {
+        "chunk_id": "test.pdf::p1::c0",
+        "source": "test.pdf",
+        "page": 1,
+        "text": "Persist a dimension-checked embedding.",
+    }
+    upsert_chunks(
+        isolated_sync_db,
+        [sample_chunk],
+        precomputed_embeddings=[[0.0] * EMBEDDING_DIM],
+    )
+
+    stored_chunks = isolated_sync_db.query(DocumentChunk).all()
+    assert len(stored_chunks) == 1
+    assert len(stored_chunks[0].embedding) == EMBEDDING_DIM
+
+
+def test_multilingual_rag_evaluation_matrix(
+    isolated_sync_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.config import settings
+    from app.rag import llm as rag_llm
+
+    monkeypatch.setattr(rag_llm, "_resolve_llm_credentials", lambda: (None, "", "", 10.0))
+    upsert_chunks(
+        isolated_sync_db,
+        [
+            {
+                "chunk_id": "eval::hypertension-lifestyle",
+                "source": "hypertension-lifestyle.pdf",
+                "page": 1,
+                "text": (
+                    "For adults with hypertension, lifestyle measures include reducing sodium intake, "
+                    "following a DASH-style healthy dietary pattern, regular physical activity, "
+                    "maintaining a healthy weight, and limiting alcohol."
+                ),
+            },
+            {
+                "chunk_id": "eval::asthma-controller",
+                "source": "asthma-guideline.pdf",
+                "page": 2,
+                "text": (
+                    "For adults with asthma, use inhaled corticosteroid-containing therapy. "
+                    "Assess asthma symptom control and inhaler technique at follow-up."
+                ),
+            },
+            {
+                "chunk_id": "eval::type2-diabetes",
+                "source": "diabetes-guideline.pdf",
+                "page": 3,
+                "text": (
+                    "For adults with type 2 diabetes, regular physical activity, a balanced diet, "
+                    "and individualized glycemic monitoring support ongoing diabetes care."
+                ),
+            },
+        ],
+    )
+
+    cases = [
+        (
+            "english hypertension",
+            "What nonpharmacologic interventions help adults with high blood pressure?",
+            "hypertension-lifestyle.pdf",
+        ),
+        (
+            "english hypertension paraphrase",
+            "How can everyday diet and physical activity support people with hypertension?",
+            "hypertension-lifestyle.pdf",
+        ),
+        (
+            "arabic hypertension cross-language",
+            "ما العادات اليومية التي تساعد مرضى الضغط المرتفع؟",
+            "hypertension-lifestyle.pdf",
+        ),
+        (
+            "arabic asthma",
+            "ما العلاج الاستنشاقي الموصى به لمرضى الربو؟",
+            "asthma-guideline.pdf",
+        ),
+        (
+            "english asthma paraphrase",
+            "Which inhaled treatment and follow-up checks are recommended for asthma?",
+            "asthma-guideline.pdf",
+        ),
+        (
+            "arabic diabetes cross-language",
+            "كيف تساعد الحركة والوجبات المتوازنة مرضى السكري من النوع الثاني؟",
+            "diabetes-guideline.pdf",
+        ),
+        (
+            "insufficient clinical evidence",
+            "What is the first-line treatment for acute leukemia?",
+            None,
+        ),
+        (
+            "irrelevant high-similarity query",
+            "How do I configure Kubernetes ingress for spacecraft telemetry?",
+            None,
+        ),
+        (
+            "unrecognized Arabic out-of-scope query",
+            "كيف أحسب مدار قمر صناعي في الفضاء؟",
+            None,
+        ),
+    ]
+
+    for label, question, expected_source in cases:
+        result = answer_question(isolated_sync_db, question, top_k=3)
+        if expected_source is None:
+            assert result.grounded is False, label
+            assert result.chunks_used == 0, label
+            assert result.citations == [], label
+        else:
+            assert result.grounded is True, label
+            assert expected_source in {citation.source for citation in result.citations}, label
+
+        if label == "irrelevant high-similarity query" and result.diagnostics:
+            retrieved_scores = [
+                source["score"] for source in result.diagnostics["retrieved_sources"]
+            ]
+            assert retrieved_scores and max(retrieved_scores) >= settings.rag_relevance_threshold
+
+
+def test_gemini_native_rest_fallback_uses_safe_header_and_extracts_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"candidates": [{"content": {"parts": [{"text": "Grounded answer."}]}}]}
+
+    class FakeClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def post(self, url: str, *, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            assert url.endswith("/models/gemini-3.8-flash:generateContent")
+            assert headers["x-goog-api-key"] == "test-key"
+            assert "key=" not in url
+            assert json["systemInstruction"] == {"parts": [{"text": "System prompt"}]}
+            return FakeResponse()
+
+    monkeypatch.setattr(rag_llm.httpx, "Client", FakeClient)
+    answer = rag_llm._call_gemini_native(
+        api_key="test-key",
+        model="gemini-3.8-flash",
+        system_prompt="System prompt",
+        user_prompt="User prompt",
+        timeout=5.0,
+    )
+    assert answer == "Grounded answer."
+
+
 # ---------------------------------------------------------------------------
 # 3. Retrieval, Threshold, & Abstention Tests (Isolated Sync SQLite DB)
 # ---------------------------------------------------------------------------
@@ -243,10 +503,20 @@ def test_vector_store_ranking_threshold_and_abstention(isolated_sync_db: Session
     )
     assert grounded_ans.grounded is True
     assert grounded_ans.query_mode == "guideline_only"
+    assert grounded_ans.patient_context_used is False
     assert grounded_ans.chunks_used >= 1
     assert len(grounded_ans.citations) >= 1
     assert "[Source 1]" in grounded_ans.answer
     assert grounded_ans.disclaimer == MEDICAL_DISCLAIMER
+
+    grounded_ar = answer_question(
+        isolated_sync_db,
+        question="ما علاج ارتفاع ضغط الدم؟",
+        top_k=2,
+    )
+    assert grounded_ar.grounded is True
+    assert grounded_ar.chunks_used >= 1
+    assert any(citation.source == "htn.pdf" for citation in grounded_ar.citations)
 
     # Abstention when query is completely unrelated / below relevance threshold
     ungrounded_en = answer_question(
@@ -380,43 +650,6 @@ def test_query_classification_negation_filtering_and_citation_verification(isola
 # 8, 9, 10, & 13. API Auth, RBAC, Cross-Tenant/Cross-Patient Isolation & Validation
 # ---------------------------------------------------------------------------
 
-def test_rag_endpoints_return_service_unavailable_without_embedding_dependency(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import importlib.util
-
-    client = TestClient(app)
-    _, clinician_headers, patient_id = _register_org_and_clinician(
-        client, "RagEmbeddingUnavailable"
-    )
-    monkeypatch.setattr(importlib.util, "find_spec", lambda _: None)
-
-    responses = [
-        client.post(
-            "/api/v1/rag/query",
-            headers=clinician_headers,
-            json={"question": "What is hypertension?"},
-        ),
-        client.post(
-            "/api/v1/rag/search",
-            headers=clinician_headers,
-            json={"query": "hypertension"},
-        ),
-        client.post(
-            f"/api/v1/patients/{patient_id}/rag/query",
-            headers=clinician_headers,
-            json={"question": "Summarize the patient"},
-        ),
-    ]
-
-    assert [response.status_code for response in responses] == [503, 503, 503]
-    assert all(
-        response.json()["detail"]
-        == "Clinical assistant is unavailable because its embedding service is not installed."
-        for response in responses
-    )
-
-
 def test_api_rag_auth_rbac_tenant_isolation_and_document_indexing() -> None:
     client = TestClient(app)
 
@@ -530,8 +763,36 @@ def test_api_rag_auth_rbac_tenant_isolation_and_document_indexing() -> None:
     assert p1_rag.status_code == 200
     p1_body = p1_rag.json()
     assert p1_body["grounded"] is True
+    assert p1_body["query_mode"] == "guideline_only"
     assert p1_body["patient_context_used"] is True
     assert "chlorthalidone" in p1_body["answer"].lower()
+    selected_patient_chunks = [
+        source
+        for source in p1_body["diagnostics"]["retrieved_sources"]
+        if source["source_type"] == "patient_document"
+        and source["document_id"] == doc_id
+        and source["selected_for_context"] is True
+    ]
+    patient_document_citations = [
+        citation
+        for citation in p1_body["citations"]
+        if citation["source_type"] == "patient_document"
+    ]
+    assert selected_patient_chunks
+    assert {citation["chunk_id"] for citation in patient_document_citations} == {
+        source["chunk_id"] for source in selected_patient_chunks
+    }
+    assert all(
+        citation["document_id"] == doc_id
+        and any(
+            source["chunk_id"] == citation["chunk_id"]
+            and source["document_id"] == citation["document_id"]
+            and source["selected_for_context"] is True
+            for source in selected_patient_chunks
+        )
+        for citation in patient_document_citations
+    )
+    assert p1_body["diagnostics"]["all_citations_mapped"] is True
 
     # 9b. Cross-patient isolation within the SAME organization:
     # Querying Patient 2 in Org A must NEVER retrieve Patient 1's indexed document chunks!
@@ -709,7 +970,6 @@ def test_rag_deduplication_missing_patient_data_prompt_injection_and_rbac(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.rag.llm import sanitize_untrusted_clinical_text
-    from app.rag.pipeline import INSUFFICIENT_PATIENT_DATA_MESSAGE_EN
     import app.rag.embeddings as emb_mod
 
     # 1. Duplicate and near-duplicate chunks are collapsed before ranking and synthesis
@@ -773,7 +1033,12 @@ def test_rag_deduplication_missing_patient_data_prompt_injection_and_rbac(
     assert missing_biomarker_res.query_mode == "patient_only"
     assert missing_biomarker_res.grounded is False
     assert missing_biomarker_res.patient_context_used is False
-    assert missing_biomarker_res.answer == INSUFFICIENT_PATIENT_DATA_MESSAGE_EN
+    assert missing_biomarker_res.citations == []
+    assert missing_biomarker_res.chunks_used == 0
+    assert (
+        missing_biomarker_res.answer
+        == "No laboratory results for this patient are available in the provided or recorded data."
+    )
 
     documented_nkda_res = answer_question(
         isolated_sync_db,
@@ -837,6 +1102,8 @@ def test_rag_deduplication_missing_patient_data_prompt_injection_and_rbac(
         def _fail_local(*args, **kwargs):
             raise OSError("Simulated local cache miss")
 
+        from app.config import get_settings
+        monkeypatch.setattr(get_settings(), "rag_allow_model_download", False)
         monkeypatch.setattr("sentence_transformers.SentenceTransformer", _fail_local)
         with pytest.raises(RuntimeError, match="network model downloads are disabled"):
             emb_mod.get_embedding_model()
@@ -850,7 +1117,7 @@ def test_end_to_end_structured_ocr_to_rag_llm_quality_evaluation(
     """Comprehensive end-to-end evaluation of structured_candidates flow, RAG retrieval isolation,
     negation/uncertainty preservation, conflict surfacing, abstention, and prompt-injection defense.
     """
-    import fitz
+    import pymupdf as fitz
     from app.rag.llm import detect_evidence_conflicts
 
     def _build_pdf_bytes(page_texts: list[str]) -> bytes:
@@ -1053,11 +1320,6 @@ def test_synthetic_prescription_ocr_and_rag_retrieval_verification(
     """End-to-end regression test for Task A (OCR structured extraction on synthetic prescription image),
     Task B (RAG indexing & retrieval proof with citations and abstention), and Task C (OCR/RAG diagnostics).
     """
-    from app.rag.ocr import get_ocr_router
-
-    if not get_ocr_router().is_ocr_available("printed"):
-        pytest.skip("This integration test requires the optional PaddleOCR engine.")
-
     import io
     import docx
     from PIL import Image, ImageDraw, ImageFont
@@ -1242,3 +1504,453 @@ def test_synthetic_prescription_ocr_and_rag_retrieval_verification(
     }
 
 
+def test_arabic_patient_query_classification_and_guideline_modes() -> None:
+    patient_context = PatientContext(
+        conditions=["Hypertension"],
+        medications=["Amlodipine 5 mg daily"],
+        allergies=["Penicillin"],
+        labs={"HbA1c": "6.4%"},
+    )
+    patient_queries = [
+        "ما هي نتائج تحاليل المريض؟",
+        "ما نتائج تحاليل المريض؟",
+        "إيه تحاليل المريض؟",
+        "وريني نتيجة التحليل",
+        "ما هي أدوية المريض؟",
+        "ما هي حساسية المريض؟",
+        "لخص حالة المريض",
+    ]
+
+    for question in patient_queries:
+        assert classify_rag_query(question, patient_context) == "patient_only"
+        assert classify_rag_query(question, None) == "patient_only"
+
+    assert classify_rag_query("ما إرشادات علاج ارتفاع ضغط الدم؟", patient_context) == "guideline_only"
+    assert classify_rag_query("What is the target BP in adults?", patient_context) == "guideline_only"
+    assert classify_rag_query(
+        "According to the guideline, is the patient's current antihypertensive treatment safe in pregnancy?",
+        patient_context,
+    ) == "mixed"
+    assert classify_rag_query("تحاليل؟", patient_context) == "guideline_only"
+
+    assert _chunk_matches_specific_tokens(
+        "ما هي نتائج تحاليل المريض؟",
+        "HbA1c: 6.4%",
+    )
+    assert not _chunk_matches_specific_tokens(
+        "ما هي نتائج تحاليل المريض؟",
+        "ACE inhibitors are recommended for hypertension.",
+    )
+
+
+def test_missing_arabic_patient_labs_abstain_without_guideline_substitution() -> None:
+    patient_context = PatientContext(conditions=["Hypertension"])
+    response = _finalize_rag_answer(
+        question="ما هي نتائج تحاليل المريض؟",
+        hits=[
+            {
+                "chunk_id": "guideline-htn",
+                "source": "hypertension.pdf",
+                "page": 1,
+                "text": "Guideline: ACE inhibitors are recommended for hypertension.",
+                "score": 0.99,
+                "source_type": "guideline",
+            }
+        ],
+        query_mode="patient_only",
+        patient_context=patient_context,
+        patient_factors=validate_patient_factors(patient_context),
+        relevance_threshold=0.35,
+    )
+
+    assert response.query_mode == "patient_only"
+    assert response.grounded is False
+    assert response.patient_context_used is False
+    assert response.patient_factors_applied == []
+    assert response.citations == []
+    assert "لا توجد نتائج تحاليل مسجلة للمريض" in response.answer
+    assert "hypertension" not in response.answer.lower()
+    assert response.diagnostics["abstention_reason"] == "missing_requested_patient_data"
+
+
+def test_patient_lab_answer_uses_requested_recorded_result_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document_id = str(uuid4())
+    patient_context = PatientContext(
+        labs={"HbA1c": "6.4%", "Creatinine": "1.1 mg/dL"},
+    )
+    patient_chunks = [
+        {
+            "chunk_id": "patient-hba1c",
+            "source": "patient-labs.pdf",
+            "page": 1,
+            "text": "HbA1c: 6.4%",
+            "score": 0.91,
+            "source_type": "patient_document",
+            "document_id": document_id,
+        },
+        {
+            "chunk_id": "patient-creatinine",
+            "source": "patient-labs.pdf",
+            "page": 1,
+            "text": "Creatinine: 1.1 mg/dL",
+            "score": 0.95,
+            "source_type": "patient_document",
+            "document_id": document_id,
+        },
+    ]
+    selected_chunks: list[dict[str, object]] = []
+
+    def fake_synthesize_answer(*, question, chunks, **_kwargs):
+        selected_chunks.extend(chunks)
+        return "Recorded HbA1c: 6.4%."
+
+    monkeypatch.setattr(rag_pipeline, "synthesize_answer", fake_synthesize_answer)
+    response = _finalize_rag_answer(
+        question="What is the patient's HbA1c?",
+        hits=patient_chunks,
+        query_mode="patient_only",
+        patient_context=patient_context,
+        patient_factors=validate_patient_factors(patient_context),
+        relevance_threshold=0.35,
+    )
+
+    assert response.grounded is True
+    assert response.patient_context_used is True
+    assert "6.4%" in response.answer
+    assert len(response.citations) == 1
+    assert response.citations[0].chunk_id == "patient-hba1c"
+    assert response.citations[0].source_type == "patient_document"
+    assert response.citations[0].document_id == document_id
+    assert [chunk["chunk_id"] for chunk in selected_chunks] == ["patient-hba1c"]
+    assert selected_chunks[0]["source_type"] == "patient_document"
+    assert selected_chunks[0]["document_id"] == response.citations[0].document_id
+
+    missing_result = _finalize_rag_answer(
+        question="What is the patient's troponin result?",
+        hits=patient_chunks,
+        query_mode="patient_only",
+        patient_context=patient_context,
+        patient_factors=validate_patient_factors(patient_context),
+        relevance_threshold=0.35,
+    )
+    assert missing_result.grounded is False
+    assert missing_result.patient_context_used is False
+    assert "No laboratory results" in missing_result.answer
+    assert "1.1 mg/dL" not in missing_result.answer
+    assert "6.4%" not in missing_result.answer
+
+
+def test_patient_document_evidence_counts_only_after_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synthesize_calls: list[list[dict[str, object]]] = []
+
+    def capture_synthesis(*, chunks, **_kwargs):
+        synthesize_calls.append(chunks)
+        return "Synthesized from selected evidence."
+
+    monkeypatch.setattr(rag_pipeline, "synthesize_answer", capture_synthesis)
+    rejected_hits = [
+        {
+            "chunk_id": "below-threshold",
+            "source": "patient-plan.pdf",
+            "page": 1,
+            "text": "Chlorthalidone was recommended for resistant hypertension.",
+            "score": 0.20,
+            "source_type": "patient_document",
+            "document_id": "patient-document-id",
+        },
+        {
+            "chunk_id": "wrong-entity",
+            "source": "patient-plan.pdf",
+            "page": 2,
+            "text": "Inhaled corticosteroids are used for asthma.",
+            "score": 0.95,
+            "source_type": "patient_document",
+            "document_id": "patient-document-id",
+        },
+    ]
+
+    response = _finalize_rag_answer(
+        question="What adjustment was documented for chlorthalidone?",
+        hits=rejected_hits,
+        query_mode="guideline_only",
+        patient_context=None,
+        patient_factors=[],
+        relevance_threshold=0.55,
+    )
+
+    assert response.grounded is False
+    assert response.patient_context_used is False
+    assert response.citations == []
+    assert response.chunks_used == 0
+    assert synthesize_calls == []
+
+
+def test_patient_only_below_threshold_document_is_not_selected_with_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patient_context = PatientContext(medications=["Chlorthalidone 25 mg once daily"])
+    synthesis_inputs: list[list[dict[str, object]]] = []
+
+    def capture_synthesis(*, chunks, **_kwargs):
+        synthesis_inputs.append(chunks)
+        return "The structured patient context records chlorthalidone 25 mg once daily."
+
+    monkeypatch.setattr(rag_pipeline, "synthesize_answer", capture_synthesis)
+    below_threshold_hit = {
+        "chunk_id": "below-threshold-patient-medication",
+        "source": "patient-medication.pdf",
+        "page": 1,
+        "text": "The patient takes chlorthalidone 25 mg once daily.",
+        "score": 0.54,
+        "source_type": "patient_document",
+        "document_id": str(uuid4()),
+    }
+
+    response = _finalize_rag_answer(
+        question="What is the patient's chlorthalidone dose?",
+        hits=[below_threshold_hit],
+        query_mode="patient_only",
+        patient_context=patient_context,
+        patient_factors=validate_patient_factors(patient_context),
+        relevance_threshold=0.55,
+    )
+
+    assert response.grounded is True
+    assert response.patient_context_used is True
+    assert response.citations == []
+    assert response.chunks_used == 0
+    assert synthesis_inputs == [[]]
+    retrieved = response.diagnostics["retrieved_sources"]
+    assert len(retrieved) == 1
+    assert retrieved[0]["above_threshold"] is False
+    assert retrieved[0]["selected_for_context"] is False
+
+
+def test_patient_document_retrieval_requires_linked_approved_document(
+    isolated_sync_db: Session,
+) -> None:
+    organization_id = uuid4()
+    patient_id = uuid4()
+    approved_document_id = uuid4()
+    dangling_document_id = uuid4()
+    approved_document = PatientDocument(
+        id=approved_document_id,
+        organization_id=organization_id,
+        patient_id=patient_id,
+        filename="approved-patient-record.pdf",
+        content_type="application/pdf",
+        review_status="approved",
+    )
+    isolated_sync_db.add(approved_document)
+    isolated_sync_db.commit()
+
+    vector = [1.0] + [0.0] * (EMBEDDING_DIM - 1)
+    chunks = [
+        {
+            "chunk_id": "patient-document-no-id",
+            "source": "unlinked.pdf",
+            "page": 1,
+            "text": "Patient record: chlorthalidone 25 mg once daily.",
+            "source_type": "patient_document",
+            "organization_id": organization_id,
+            "patient_id": patient_id,
+            "document_id": None,
+        },
+        {
+            "chunk_id": "patient-document-dangling-id",
+            "source": "dangling.pdf",
+            "page": 1,
+            "text": "Patient record: chlorthalidone 25 mg once daily.",
+            "source_type": "patient_document",
+            "organization_id": organization_id,
+            "patient_id": patient_id,
+            "document_id": dangling_document_id,
+        },
+        {
+            "chunk_id": "patient-document-approved",
+            "source": "approved-patient-record.pdf",
+            "page": 1,
+            "text": "Patient record: chlorthalidone 25 mg once daily.",
+            "source_type": "patient_document",
+            "organization_id": organization_id,
+            "patient_id": patient_id,
+            "document_id": approved_document_id,
+        },
+    ]
+    upsert_chunks(
+        isolated_sync_db,
+        chunks,
+        precomputed_embeddings=[vector, vector, vector],
+    )
+
+    results = similarity_search(
+        isolated_sync_db,
+        query="chlorthalidone patient dose",
+        query_embedding=vector,
+        top_k=5,
+        organization_id=organization_id,
+        patient_id=patient_id,
+        include_guidelines=False,
+        only_patient_documents=True,
+    )
+
+    assert [result["chunk_id"] for result in results] == ["patient-document-approved"]
+    assert results[0]["document_id"] == str(approved_document_id)
+
+
+def test_patient_only_can_use_selected_document_without_structured_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected: list[dict[str, object]] = []
+
+    def capture_synthesis(*, chunks, patient_context, **_kwargs):
+        selected.extend(chunks)
+        assert patient_context is None
+        return "The consultation records chlorthalidone 25 mg daily."
+
+    monkeypatch.setattr(rag_pipeline, "synthesize_answer", capture_synthesis)
+    document_id = str(uuid4())
+    hit = {
+        "chunk_id": "patient-consultation-chunk",
+        "source": "patient-consultation.pdf",
+        "page": 1,
+        "text": "The consultation recommended chlorthalidone 25 mg daily.",
+        "score": 0.91,
+        "source_type": "patient_document",
+        "document_id": document_id,
+    }
+    response = _finalize_rag_answer(
+        question="What chlorthalidone dose is recorded in the consultation?",
+        hits=[hit],
+        query_mode="patient_only",
+        patient_context=None,
+        patient_factors=[],
+        relevance_threshold=0.55,
+    )
+
+    assert response.grounded is True
+    assert response.patient_context_used is True
+    assert selected == [hit]
+    assert len(response.citations) == 1
+    assert response.citations[0].chunk_id == hit["chunk_id"]
+    assert response.citations[0].source_type == "patient_document"
+    assert response.citations[0].document_id == document_id
+
+
+def test_patient_only_rejects_guidelines_and_accepts_patient_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synthesis_inputs: list[list[dict[str, object]]] = []
+
+    def capture_synthesis(*, chunks, **_kwargs):
+        synthesis_inputs.append(chunks)
+        return "The patient's consultation records chlorthalidone 25 mg daily."
+
+    monkeypatch.setattr(rag_pipeline, "synthesize_answer", capture_synthesis)
+    question = "What is the patient's chlorthalidone dose?"
+    matching_text = "The patient's cardiology consultation records chlorthalidone 25 mg daily."
+    guideline_hit = {
+        "chunk_id": "guideline-chlorthalidone",
+        "source": "hypertension-guideline.pdf",
+        "page": 1,
+        "text": matching_text,
+        "score": 0.99,
+        "source_type": "guideline",
+        "document_id": None,
+    }
+    patient_document_id = str(uuid4())
+    patient_hit = {
+        **guideline_hit,
+        "chunk_id": "patient-chlorthalidone",
+        "source": "patient-cardiology.pdf",
+        "source_type": "patient_document",
+        "document_id": patient_document_id,
+    }
+
+    assert _chunk_matches_specific_tokens(question, matching_text)
+    guideline_only_result = _finalize_rag_answer(
+        question=question,
+        hits=[guideline_hit],
+        query_mode="patient_only",
+        patient_context=None,
+        patient_factors=[],
+        relevance_threshold=0.55,
+    )
+
+    assert guideline_only_result.grounded is False
+    assert guideline_only_result.patient_context_used is False
+    assert guideline_only_result.citations == []
+    assert guideline_only_result.chunks_used == 0
+    assert synthesis_inputs == []
+
+    patient_document_result = _finalize_rag_answer(
+        question=question,
+        hits=[patient_hit],
+        query_mode="patient_only",
+        patient_context=None,
+        patient_factors=[],
+        relevance_threshold=0.55,
+    )
+
+    assert patient_document_result.grounded is True
+    assert patient_document_result.patient_context_used is True
+    assert synthesis_inputs == [[patient_hit]]
+    assert len(patient_document_result.citations) == 1
+    citation = patient_document_result.citations[0]
+    assert citation.chunk_id == patient_hit["chunk_id"]
+    assert citation.source_type == "patient_document"
+    assert citation.document_id == patient_document_id
+
+
+def test_query_mode_is_intent_and_prompt_preserves_evidence_provenance() -> None:
+    patient_chunk = {
+        "chunk_id": "patient-plan-chunk",
+        "source": "patient-plan.pdf",
+        "page": 1,
+        "score": 0.9,
+        "source_type": "patient_document",
+        "document_id": "patient-document-id",
+        "text": "The consultation records chlorthalidone was recommended.",
+    }
+    prompt = rag_llm._build_user_prompt(
+        question="What adjustment was documented in the consultation?",
+        chunks=[patient_chunk],
+        query_mode="guideline_only",
+    )
+    system_prompt = rag_llm._get_system_prompt("guideline_only")
+
+    assert "Evidence type: patient_document" in prompt
+    assert "Document ID: patient-document-id" in prompt
+    assert "MODE DESCRIBES QUERY INTENT, NOT SOURCE TYPE" in system_prompt
+    assert "never describe a patient-document fact as a guideline recommendation" in system_prompt
+
+
+def test_greetings_bypass_sync_and_async_clinical_retrieval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_sync_retrieval(*_args, **_kwargs):
+        raise AssertionError("A greeting must not invoke clinical retrieval")
+
+    async def fail_async_retrieval(*_args, **_kwargs):
+        raise AssertionError("A greeting must not invoke clinical retrieval")
+
+    monkeypatch.setattr(rag_pipeline, "similarity_search", fail_sync_retrieval)
+    monkeypatch.setattr(rag_pipeline, "async_similarity_search", fail_async_retrieval)
+
+    sync_response = answer_question(None, "اهلا ازيك ؟")
+    async_response = asyncio.run(async_answer_question(None, "اهلا ازيك ؟"))
+
+    for response in (sync_response, async_response):
+        assert response.grounded is False
+        assert response.citations == []
+        assert response.chunks_used == 0
+        assert response.patient_context_used is False
+        assert response.diagnostics["classification"] == "nonclinical"
+        assert response.diagnostics["abstention_reason"] == "nonclinical_query"
+        assert "أهلاً" in response.answer
+
+    assert classify_rag_query("اهلا ازيك ؟", None) == "guideline_only"

@@ -25,7 +25,12 @@ class CareOSRAGEngine:
             print(f"Warning: Failed to load knowledge base: {e}")
             return []
 
-    def retrieve(self, query: str, top_k: int = 4) -> List[Dict[str, Any]]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 4,
+        include_fallback: bool = True,
+    ) -> List[Dict[str, Any]]:
         if not self.chunks:
             return []
 
@@ -85,15 +90,20 @@ class CareOSRAGEngine:
         scored_chunks.sort(key=lambda x: x[0], reverse=True)
 
         # Fallback: if no specific match, always provide core overview + patient services
-        if not scored_chunks:
+        if not scored_chunks and include_fallback:
             defaults = [c for c in self.chunks if c.get("category") in ["overview", "patient_services", "navigation"]]
             return defaults[:top_k]
 
         return [c for _, c in scored_chunks[:top_k]]
 
-    def build_system_prompt(self, user_query: str) -> str:
-        relevant_chunks = self.retrieve(user_query, top_k=4)
-        
+    def build_system_prompt(
+        self,
+        user_query: str,
+        relevant_chunks: List[Dict[str, Any]] | None = None,
+    ) -> str:
+        if relevant_chunks is None:
+            relevant_chunks = self.retrieve(user_query, top_k=4, include_fallback=False)
+
         context_blocks = []
         for i, chunk in enumerate(relevant_chunks, 1):
             context_blocks.append(
@@ -101,6 +111,16 @@ class CareOSRAGEngine:
             )
 
         context_text = "\n\n---\n\n".join(context_blocks)
+        grounding_instruction = (
+            "Answer strictly from the verified knowledge below. Do not invent CareOS features or policies."
+            if relevant_chunks
+            else (
+                "No relevant verified CareOS knowledge was found for this question. For general, "
+                "non-clinical questions, answer using general knowledge and be clear about uncertainty. "
+                "For CareOS-specific details, say they are not available in the verified knowledge base "
+                "instead of guessing or inventing features."
+            )
+        )
 
         system_prompt = f"""You are the official CareOS Platform Assistant.
 CareOS (https://careos-pearl.vercel.app/) is an intelligent clinical operating workspace that unifies clinical workflows, patient records, appointments, and ambient AI assistance.
@@ -118,11 +138,11 @@ CRITICAL INSTRUCTIONS:
    - Only if the user explicitly asks how to log in or register:
      - Sign In: [Sign In to CareOS]({SIGNIN_URL})
      - Create Account: [CareOS Platform]({SIGNUP_URL})
-4. Grounding: Answer based strictly on the verified CareOS Platform Knowledge Base below. Do NOT hallucinate features CareOS doesn't have.
-5. Medical Safety Guardrail: If the user asks for immediate medical diagnosis or has an emergency, clearly state that you are a platform assistant, not a doctor or emergency service, and urge them to seek urgent medical care.
+4. Grounding: {grounding_instruction}
+5. Medical Safety Guardrail: Do not provide clinical diagnoses, emergency triage, or prescription changes. If the user describes an emergency, clearly state that you are a platform assistant, not a doctor or emergency service, and urge them to seek urgent medical care.
 6. Tone: Highly professional, empathetic, concise, welcoming, and clear. Format responses with clean bullet points and bold headers.
 
---- CAREOS VERIFIED KNOWLEDGE BASE ---
+--- VERIFIED CAREOS KNOWLEDGE BASE ---
 {context_text}
 --------------------------------------
 """

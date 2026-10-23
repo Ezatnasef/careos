@@ -25,12 +25,13 @@ type SidebarProps = {
   language: Language;
   doctorName: string;
   role: Role;
+  permissions?: string[];
   t: Translator;
 };
 
-export function Sidebar({ view, setView, mobileNav, setMobileNav, language, doctorName, role, t }: SidebarProps) {
-  const visibleViews = (roleNavMap[role] ?? roleNavMap.doctor).filter((item) =>
-    canAccessView(role, item),
+export function Sidebar({ view, setView, mobileNav, setMobileNav, language, doctorName, role, permissions, t }: SidebarProps) {
+  const visibleViews = (roleNavMap[role] ?? roleNavMap.receptionist).filter((item) =>
+    canAccessView(role, item, permissions),
   );
   const routeView = viewFromLocation();
   const displayedView = role === "patient" && view === "portal" && (routeView === "appointments" || routeView === "messages") ? routeView : view;

@@ -1,0 +1,6 @@
+search-path = [
+    "backend",
+    "voice-agent",
+    "voice-agent/voice_agent",
+    "C:/Users/Nasef/anaconda3/Lib/site-packages"
+]

@@ -1,2 +1,7 @@
-export { createClinicalNote, generateClinicalSummary } from "../api";
+export {
+  createClinicalNote,
+  generateClinicalSummary,
+  signClinicalNote,
+  updateClinicalNote,
+} from "../api";
 export type { ApiNote } from "../api";

@@ -255,11 +255,14 @@ class RagAnswerResponse(BaseModel):
     )
     query_mode: Literal["guideline_only", "patient_only", "mixed"] = Field(
         default="guideline_only",
-        description="Which reasoning mode was used: guideline_only, patient_only, or mixed",
+        description=(
+            "Query-intent mode: guideline_only, patient_only, or mixed. "
+            "This does not determine retrieved evidence provenance."
+        ),
     )
     patient_context_used: bool = Field(
         default=False,
-        description="True if patient-specific context was provided and incorporated into the answer",
+        description="True if patient-specific context fields or document evidence were included in synthesis",
     )
     patient_factors_applied: List[str] = Field(
         default_factory=list,
@@ -291,4 +294,3 @@ class GuidelineImportResponse(BaseModel):
     chunks_read: int
     chunks_imported: int
     sources: List[str]
-

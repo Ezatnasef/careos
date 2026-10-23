@@ -24,10 +24,23 @@ function Test-PythonExecutable([string]$PythonExe) {
     return ($proc.ExitCode -eq 0)
 }
 
+$NodeCandidates = @(
+    (Join-Path $env:LOCALAPPDATA "hermes\tools\node-26.7.0-win32-x64"),
+    "C:\Program Files\nodejs",
+    "C:\Program Files (x86)\nodejs"
+)
+foreach ($nCandidate in $NodeCandidates) {
+    if ((Test-Path (Join-Path $nCandidate "node.exe")) -and ($env:PATH -notlike "*$nCandidate*")) {
+        $env:PATH = "$nCandidate;$env:PATH"
+        break
+    }
+}
+
 $VenvPython = $null
 foreach ($candidate in @(
+    (Join-Path $RepoRoot ".venv-1\Scripts\python.exe"),
     (Join-Path $RepoRoot ".venv\Scripts\python.exe"),
-    (Join-Path $RepoRoot ".venv-1\Scripts\python.exe")
+    (Join-Path $RepoRoot ".venv-2\Scripts\python.exe")
 )) {
     if (Test-PythonExecutable $candidate) {
         $VenvPython = $candidate
@@ -83,6 +96,7 @@ import sys
 import tempfile
 
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+os.environ["RAG_ALLOW_MODEL_DOWNLOAD"] = "True"
 temp_db = Path(tempfile.gettempdir()) / "careos_check_isolated.db"
 if temp_db.exists():
     temp_db.unlink()

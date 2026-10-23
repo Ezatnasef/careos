@@ -27,6 +27,8 @@ env/
 backend/.env
 backend/.env.*
 !backend/.env.example
+voice-agent/.env
+voice-agent/.env.*
 
 # Local Databases & Runtime Storage
 *.db
@@ -38,6 +40,7 @@ backend/.env.*
 storage/
 backend/storage/
 .local-smoke-test/
+.*backup*
 
 # Model Caches & Local Verification Scratch Outputs
 models/

@@ -37,6 +37,7 @@ class ChatResponse(BaseModel):
     sources: List[Dict[str, Any]]
     model: str
     configured: bool
+    active_model: Optional[str] = None
 
 @app.get("/")
 async def api_root():
@@ -54,12 +55,16 @@ async def api_root():
 
 @app.get("/api/health")
 async def health_check():
+    configured = llm_client.is_configured()
+    configured_model = llm_client.model
     return {
         "status": "healthy",
         "service": "CareOS Platform Assistant",
-        "model": llm_client.model,
+        "model": configured_model,
+        "configured_model": configured_model,
+        "active_model": llm_client.active_model,
         "base_url": llm_client.base_url,
-        "configured": llm_client.is_configured(),
+        "configured": configured,
         "total_knowledge_chunks": len(rag_engine.chunks)
     }
 
@@ -89,7 +94,7 @@ async def chat_endpoint(request: ChatRequest):
     last_query = next((m["content"] for m in reversed(raw_messages) if m["role"] == "user"), "")
 
     # Retrieve relevant sources
-    relevant_chunks = rag_engine.retrieve(last_query, top_k=3)
+    relevant_chunks = rag_engine.retrieve(last_query, top_k=3, include_fallback=False)
     sources = [
         {
             "id": c.get("id"),
@@ -104,12 +109,14 @@ async def chat_endpoint(request: ChatRequest):
     reply = await llm_client.generate_response(
         messages=raw_messages,
         temperature=request.temperature or 0.3,
-        max_tokens=request.max_tokens or 1000
+        max_tokens=request.max_tokens or 1000,
+        knowledge_chunks=relevant_chunks,
     )
 
     return ChatResponse(
         reply=reply,
         sources=sources,
-        model=llm_client.model,
-        configured=llm_client.is_configured()
+        model=llm_client.active_model or llm_client.model,
+        configured=llm_client.is_configured(),
+        active_model=llm_client.active_model,
     )

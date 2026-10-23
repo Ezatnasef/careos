@@ -19,7 +19,7 @@ export async function request<T>(path: string, options: RequestInit = {}, tokenK
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    if (response.status === 401 && token) clearSession();
+    if (response.status === 401) clearSession();
     throw new ApiError(response.status, body.detail || "Request failed");
   }
   if (response.status === 204) return undefined as T;
@@ -31,14 +31,9 @@ export function portalRequest<T>(path: string, options: RequestInit = {}): Promi
 }
 
 export function clearSession(): void {
-  const hadSession = Boolean(
-    localStorage.getItem("careos-access-token") ||
-      localStorage.getItem("careos-portal-token") ||
-      localStorage.getItem("careos-demo-mode"),
-  );
   localStorage.removeItem("careos-access-token");
   localStorage.removeItem("careos-portal-token");
   localStorage.removeItem("careos-demo-mode");
   localStorage.removeItem("careos-demo-user");
-  if (hadSession) window.dispatchEvent(new Event("careos:session-expired"));
+  window.dispatchEvent(new Event("careos:session-expired"));
 }

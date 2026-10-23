@@ -61,7 +61,17 @@ async def enqueue_email(session: AsyncSession, *, recipient: str, subject: str, 
 
 
 async def process_email_jobs(session: AsyncSession, limit: int = 20) -> int:
-    jobs = (await session.scalars(select(EmailDeliveryJob).where(EmailDeliveryJob.status == "queued", EmailDeliveryJob.available_at <= datetime.now(timezone.utc)).order_by(EmailDeliveryJob.created_at).limit(limit))).all()
+    query = select(EmailDeliveryJob).where(
+        EmailDeliveryJob.status == "queued",
+        EmailDeliveryJob.available_at <= datetime.now(timezone.utc),
+    ).order_by(EmailDeliveryJob.created_at).limit(limit)
+    try:
+        bind = session.get_bind()
+        if bind and getattr(bind.dialect, "name", "") == "postgresql":
+            query = query.with_for_update(skip_locked=True)
+    except Exception:
+        pass
+    jobs = (await session.scalars(query)).all()
     processed = 0
     for job in jobs:
         job.status = "sending"

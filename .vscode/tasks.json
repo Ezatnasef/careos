@@ -1,37 +1,137 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Run CareOS Backend",
-      "type": "process",
-      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
-      "args": [
-        "-m",
-        "uvicorn",
-        "app.main:app",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "8000"
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}/backend",
-        "env": {
-          "DATABASE_URL": "sqlite+aiosqlite:///./careos-local.db"
-        }
-      },
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
-      "label": "Run CareOS Frontend",
-      "type": "shell",
-      "command": "npm run dev -- --host 127.0.0.1 --port 5173",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "isBackground": true,
-      "problemMatcher": []
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run CareOS Backend",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv-2/Scripts/python.exe",
+			"args": [
+				"-m",
+				"uvicorn",
+				"app.main:app",
+				"--host",
+				"127.0.0.1",
+				"--port",
+				"8003",
+				"--reload"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/backend",
+				"env": {
+					"DATABASE_URL": "sqlite+aiosqlite:///./careos.db",
+					"PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK": "True",
+					"RAG_ALLOW_MODEL_DOWNLOAD": "true",
+					"RAG_EMBEDDING_MODEL": "intfloat/multilingual-e5-small",
+					"AI_MODEL": "gemini-3.8-flash",
+					"GEMINI_MODEL": "gemini-3.8-flash",
+					"HF_HOME": "F:/careos-model-cache"
+				}
+			},
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Reindex CareOS RAG Embeddings",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv-2/Scripts/python.exe",
+			"args": ["-m", "scripts.reindex_rag_embeddings"],
+			"options": {
+				"cwd": "${workspaceFolder}/backend",
+				"env": {
+					"DATABASE_URL": "sqlite+aiosqlite:///./careos.db",
+					"RAG_ALLOW_MODEL_DOWNLOAD": "true",
+					"RAG_EMBEDDING_MODEL": "intfloat/multilingual-e5-small",
+					"HF_HOME": "F:/careos-model-cache"
+				}
+			},
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Test CareOS Bilingual RAG",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv-2/Scripts/python.exe",
+			"args": [
+				"-m",
+				"pytest",
+				"tests/test_clinical_rag.py",
+				"-q",
+				"-k",
+				"multilingual_embedding or e5_embedding_uses or specific_entity_filter or vector_store_persists_384_dim_embeddings or multilingual_rag_evaluation_matrix or gemini_native_rest or vector_store_ranking or rag_deduplication_missing_patient_data_prompt_injection_and_rbac"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/backend",
+				"env": {
+					"APP_ENV": "test",
+					"AI_PROVIDER": "mock",
+					"RAG_EMBEDDING_MODEL": "intfloat/multilingual-e5-small",
+					"RAG_ALLOW_MODEL_DOWNLOAD": "false",
+					"HF_HOME": "F:/careos-model-cache"
+				}
+			},
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Run CareOS Frontend",
+			"type": "shell",
+			"command": "npm run dev -- --host 127.0.0.1 --port 5173",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Run CareOS Voice Agent",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv-2/Scripts/python.exe",
+			"args": [
+				"-m",
+				"voice_agent.app.server"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/voice-agent",
+				"env": {
+					"PYTHONPATH": "${workspaceFolder}/voice-agent",
+					"VOICE_AGENT_HOST": "127.0.0.1",
+					"VOICE_AGENT_PORT": "8765",
+					"DEMO_PATIENT_ID": "demo-patient-001"
+				}
+			},
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Run CareOS Platform Assistant",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv-2/Scripts/python.exe",
+			"args": [
+				"run.py"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}/platform-assistant-main",
+				"env": {
+					"HOST": "127.0.0.1",
+					"PORT": "8001",
+					"GEMINI_MODEL": "gemini-3.8-flash"
+				}
+			},
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "CareOS frontend build",
+			"type": "shell",
+			"command": "npm.cmd",
+			"args": [
+				"run",
+				"build"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		}
+	]
 }

@@ -51,6 +51,7 @@ export type ApiPatient = {
   id: string; patient_code: string; medical_record_number: string; given_name: string; family_name: string;
   department?: string; project?: string;
   date_of_birth: string; gender: string; condition: string; care_status: string;
+  email?: string; phone?: string;
 };
 export type PatientRegistrationInput = {
   medical_record_number?: string;
@@ -70,23 +71,26 @@ export type PatientRegistrationInput = {
   emergency_contact?: string;
 };
 export type SystemStatus = { app: string; environment: string; deployment: string; metrics_enabled: boolean; sso_ready: boolean; providers?: Record<string, { configured: boolean; provider?: string; backend?: string }> };
-export type ApiAppointment = { id: string; patient_id: string; starts_at: string; reason: string; status: string; reminder_status: string };
+export type ApiAppointment = { id: string; patient_id: string; patient_name?: string; patient_code?: string; clinician_name?: string | null; starts_at: string; duration_minutes?: number; reason: string; status: string; reminder_status: string };
 export type ApiNote = { id: string; patient_id: string; encounter_id?: string | null; body: string; ai_draft: string | null; status: string; signed_at: string | null };
 export type ApiEncounter = { id: string; organization_id: string; patient_id: string; clinician_id: string; encounter_type: string; status: string; started_at: string; ended_at: string | null };
-export type ApiTranscript = { id: string; encounter_id: string; audio_file_id: string; provider: string; language: string; dialect: string; transcript_text: string | null; status: string; job_status?: string | null; confidence: number | null; error_code: string | null; created_at: string; completed_at: string | null };
+export type ApiTranscript = { id: string; encounter_id: string; audio_file_id: string; provider: string; language: string; dialect: string; transcript_text: string | null; status: string; job_status?: string | null; job_wait_seconds?: number | null; worker_status?: "active" | "unresponsive" | "unknown"; confidence: number | null; error_code: string | null; created_at: string; completed_at: string | null };
 export type ApiMessage = {
   id: string;
   patient_id: string;
+  patient_name?: string | null;
   subject: string;
   body: string;
   sender_type: string;
+  sender_name?: string | null;
   direction: string;
+  recipient_name?: string | null;
   read: boolean;
   created_at: string;
 };
 export type PortalPatientResponse = {
   patient: ApiPatient;
-  messages: Array<{ id: string; subject: string; body: string; direction: string; sender_type: string; read: boolean; created_at: string }>;
+  messages: ApiMessage[];
   documents: Array<{ id: string; filename: string; ocr_status: string; extracted_text?: string | null; created_at: string }>;
   latest_status: string;
 };
@@ -95,6 +99,27 @@ export type PortalOverview = {
   appointments: ApiAppointment[];
   messages: ApiMessage[];
   documents: Array<{ id: string; filename: string; ocr_status: string; created_at: string; download_url?: string | null }>;
+  prescriptions?: PrescriptionRecord[];
+};
+export type PortalClinician = { id: string; full_name: string };
+export type PortalClinicianDirectory = {
+  timezone: string;
+  clinicians: PortalClinician[];
+};
+export type PortalAvailabilitySlot = {
+  date: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  starts_at: string;
+};
+export type ClinicianSchedule = {
+  id: string;
+  clinician_id: string;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+  slot_duration_minutes: number;
 };
 export type StructuredClinicalCandidates = {
   document_type: string;
@@ -209,8 +234,17 @@ export type PatientDetailResponse = ApiPatient & {
   }>;
 };
 export type AnalyticsResponse = {
-  overview: { patients: number; appointments: number; follow_up_due: number; today_count: number };
-  department_breakdown: Array<{ department: string; count: number }>;
+  overview: {
+    patients: number;
+    appointments: number;
+    follow_up_due: number;
+    today_count: number;
+    rag_latency_ms?: number;
+    review_rate_pct?: number;
+    ocr_documents?: number;
+    citation_coverage_pct?: number;
+  };
+  department_breakdown: Array<{ department: string; count: number; percentage?: number }>;
   alerts: Array<{ type: string; count: number; message: string }>;
 };
 export type ReportsResponse = Array<{ id: string; name: string; category: string; generated_at: string; metrics: Record<string, string | number> }>;
@@ -398,10 +432,13 @@ export async function demoLogin(role: string, username: string, password: string
   try {
     const result = await request<DemoAuthResponse>("/auth/demo-login", { method: "POST", body: JSON.stringify({ role, username, password }) });
     if (result.portal_access_token) {
-      storePortalToken(result.portal_access_token);
+      localStorage.setItem("careos-portal-token", result.portal_access_token);
+      localStorage.removeItem("careos-access-token");
     } else if (result.access_token) {
-      storeStaffToken(result.access_token);
+      localStorage.setItem("careos-access-token", result.access_token);
+      localStorage.removeItem("careos-portal-token");
     }
+    localStorage.setItem(DEMO_MODE_KEY, "false");
     return result;
   } catch (error) {
     if (!isDemoRequestFailure(error)) {
@@ -457,29 +494,13 @@ export async function exchangeHospitalSso(code: string, state: string, provider 
 export async function getCurrentUser(): Promise<AuthUser> {
   if (localStorage.getItem(DEMO_MODE_KEY) === "true") {
     const user = getDemoUser();
-    if (user && localStorage.getItem("careos-access-token") !== "demo-staff-token") {
-      return user;
-    }
+    const token = localStorage.getItem("careos-access-token");
+    if (user && token !== "demo-staff-token") return user;
     if (user) {
       const account = getDemoAccountByRole(user.role);
-      try {
-        const restored = await demoLogin(
-          account.role,
-          account.username,
-          account.password,
-        );
-        if (
-          restored.access_token &&
-          restored.access_token !== "demo-staff-token" &&
-          "organization_id" in restored.user
-        ) {
-          return restored.user;
-        }
-        return user;
-      } catch (error) {
-        if (isDemoRequestFailure(error)) return user;
-        throw error;
-      }
+      const restored = await demoLogin(account.role, account.username, account.password);
+      if ("organization_id" in restored.user) return restored.user;
+      throw new Error("A patient demo account cannot restore a staff session.");
     }
   }
 
@@ -528,11 +549,35 @@ export async function portalLogin(email: string, password: string): Promise<Port
   return result;
 }
 
+export async function portalSignUp(payload: {
+  full_name: string;
+  email: string;
+  password: string;
+  phone: string;
+  national_id?: string;
+  date_of_birth?: string;
+  gender?: string;
+  blood_type?: string;
+  emergency_contact?: string;
+  chronic_conditions?: string;
+  allergies?: string;
+  current_medications?: string;
+  address?: string;
+}): Promise<PortalAuthResponse> {
+  const result = await request<PortalAuthResponse>("/patient-portal/signup", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  storePortalToken(result.access_token);
+  return result;
+}
+
 export function getPortalAccount(): Promise<PortalAuthResponse["user"]> {
   if (localStorage.getItem(DEMO_MODE_KEY) === "true") {
     const user = getDemoUser();
     if (user) {
-      if (localStorage.getItem("careos-portal-token") !== "demo-portal-token") {
+      const token = localStorage.getItem("careos-portal-token");
+      if (token !== "demo-portal-token") {
         return Promise.resolve({ id: user.id, patient_id: user.id, email: user.email, full_name: user.full_name, role: user.role });
       }
       const account = getDemoAccountByRole("patient");
@@ -542,16 +587,8 @@ export function getPortalAccount(): Promise<PortalAuthResponse["user"]> {
             restored.portal_access_token &&
             restored.portal_access_token !== "demo-portal-token" &&
             "patient_id" in restored.user
-          ) {
-            return restored.user;
-          }
-          return {
-            id: user.id,
-            patient_id: user.id,
-            email: user.email,
-            full_name: user.full_name,
-            role: user.role,
-          };
+          ) return restored.user;
+          return { id: user.id, patient_id: user.id, email: user.email, full_name: user.full_name, role: user.role };
         },
       );
     }
@@ -571,13 +608,63 @@ export function getPortalOverview(): Promise<PortalOverview> {
   return portalRequest<PortalOverview>("/patient-portal/overview");
 }
 
+export function getPortalClinicians(): Promise<PortalClinicianDirectory> {
+  return portalRequest<PortalClinicianDirectory>("/patient-portal/clinicians");
+}
+
+export function getPortalAvailability(
+  clinicianId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<PortalAvailabilitySlot[]> {
+  const params = new URLSearchParams({ from_date: fromDate, to_date: toDate });
+  return portalRequest<PortalAvailabilitySlot[]>(
+    `/patient-portal/clinicians/${clinicianId}/availability?${params.toString()}`,
+  );
+}
+
+export function bookPortalAppointment(payload: {
+  clinician_id: string;
+  starts_at: string;
+  reason: string;
+}): Promise<ApiAppointment> {
+  return portalRequest<ApiAppointment>("/patient-portal/appointments", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function cancelPortalAppointment(
+  appointmentId: string,
+): Promise<ApiAppointment> {
+  return portalRequest<ApiAppointment>(
+    `/patient-portal/appointments/${appointmentId}/cancel`,
+    { method: "POST" },
+  );
+}
+
 export function sendPortalMessage(payload: { subject: string; body: string }): Promise<ApiMessage> {
   return portalRequest<ApiMessage>("/patient-portal/messages", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function deletePortalMessage(messageId: string): Promise<{ id: string; deleted: boolean; deleted_at: string }> {
+  return portalRequest<{ id: string; deleted: boolean; deleted_at: string }>(
+    `/patient-portal/messages/${messageId}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function downloadPortalDocument(documentId: string): Promise<Blob> {
   const response = await fetch(`${import.meta.env.VITE_API_URL || "/api/v1"}/patient-portal/documents/${documentId}/download`, { headers: { Authorization: `Bearer ${localStorage.getItem("careos-portal-token") || ""}` } });
   if (!response.ok) throw new Error("Could not download document");
+  return response.blob();
+}
+
+export async function exportPortalMessagesPdf(): Promise<Blob> {
+  const response = await fetch(`${import.meta.env.VITE_API_URL || "/api/v1"}/patient-portal/messages/export-pdf`, {
+    headers: { Authorization: `Bearer ${localStorage.getItem("careos-portal-token") || ""}` },
+  });
+  if (!response.ok) throw new Error("Could not export messages PDF");
   return response.blob();
 }
 
@@ -591,8 +678,57 @@ export async function uploadPortalDocument(file: File): Promise<{ id: string; fi
   return portalRequest<{ id: string; filename: string; download_url: string }>("/patient-portal/documents", { method: "POST", body: JSON.stringify({ filename: file.name, content, content_type: file.type || "application/octet-stream" }) });
 }
 
+export async function getPortalPrescriptions(): Promise<PrescriptionRecord[]> {
+  return portalRequest<PrescriptionRecord[]>("/patient-portal/prescriptions");
+}
+
 export async function getTeam(): Promise<AuthUser[]> {
   return request<AuthUser[]>("/team");
+}
+
+export type CreateUserInput = {
+  full_name: string;
+  email: string;
+  password: string;
+  role: string;
+  department?: string;
+  project?: string;
+};
+
+export async function createTeamUser(data: CreateUserInput): Promise<AuthUser> {
+  return request<AuthUser>("/team/users", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteTeamUser(userId: string): Promise<{ deleted: boolean; id: string }> {
+  return request<{ deleted: boolean; id: string }>(`/team/users/${userId}`, {
+    method: "DELETE",
+  });
+}
+
+export function getClinicianSchedules(clinicianId: string): Promise<ClinicianSchedule[]> {
+  return request<ClinicianSchedule[]>(`/clinicians/${clinicianId}/schedules`);
+}
+
+export function createClinicianSchedule(
+  clinicianId: string,
+  schedule: Omit<ClinicianSchedule, "id" | "clinician_id">,
+): Promise<ClinicianSchedule> {
+  return request<ClinicianSchedule>(`/clinicians/${clinicianId}/schedules`, {
+    method: "POST",
+    body: JSON.stringify(schedule),
+  });
+}
+
+export function deleteClinicianSchedule(
+  clinicianId: string,
+  scheduleId: string,
+): Promise<void> {
+  return request<void>(`/clinicians/${clinicianId}/schedules/${scheduleId}`, {
+    method: "DELETE",
+  });
 }
 
 export async function getDashboard(): Promise<DashboardContract> {
@@ -624,10 +760,12 @@ export async function getMessages(): Promise<ApiMessage[]> {
   return request<ApiMessage[]>("/messages");
 }
 
-export async function createMessage(payload: { patient_id: string; subject: string; body: string; sender_type?: string; direction?: string }): Promise<ApiMessage> {
+export async function createMessage(payload: { patient_id: string; subject: string; body: string }): Promise<ApiMessage> {
   return request<ApiMessage>("/messages", { method: "POST", body: JSON.stringify(payload) });
 }
 export const markMessageRead = (id: string) => request<{ read: boolean }>(`/messages/${id}/read`, { method: "PATCH" });
+export const deleteMessage = (id: string) => request<{ id: string; deleted: boolean; deleted_at: string }>(`/messages/${id}`, { method: "DELETE" });
+export const deletePatientMessages = (patientId: string) => request<{ patient_id: string; deleted_count: number; deleted_at: string }>(`/messages/patient/${patientId}`, { method: "DELETE" });
 
 export async function getPortalPatient(patientId: string): Promise<PortalPatientResponse> {
   return request<PortalPatientResponse>(`/portal/patients/${patientId}`);
@@ -670,12 +808,12 @@ export const getPatientById = (id: string) => request<PatientDetailResponse>(`/p
 export const createEncounter = (patientId: string, encounterType = "consultation") => request<ApiEncounter>("/encounters", { method: "POST", body: JSON.stringify({ patient_id: patientId, encounter_type: encounterType }) });
 export const getEncounter = (id: string) => request<ApiEncounter>(`/encounters/${id}`);
 export const getLatestPatientEncounter = (patientId: string) => request<ApiEncounter>(`/patients/${patientId}/encounters/latest`);
-export async function uploadEncounterRecording(encounterId: string, blob: Blob, filename = "consultation.webm"): Promise<{ id: string; encounter_id: string; patient_id: string; transcript_id: string; transcript_status: string }> {
+export async function uploadEncounterRecording(encounterId: string, blob: Blob, filename = "consultation.webm", language: "ar-EG" | "en-US" = "ar-EG"): Promise<{ id: string; encounter_id: string; patient_id: string; transcript_id: string; transcript_status: string }> {
   const content = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1] || ""); reader.onerror = () => reject(new Error("Could not read recording")); reader.readAsDataURL(blob); });
-  return request(`/encounters/${encounterId}/recordings`, { method: "POST", body: JSON.stringify({ content, filename, content_type: blob.type || "audio/webm" }) });
+  return request(`/encounters/${encounterId}/recordings`, { method: "POST", body: JSON.stringify({ content, filename, content_type: blob.type || "audio/webm", language }) });
 }
 export const getTranscript = (id: string) => request<ApiTranscript>(`/transcripts/${id}`);
-export const transcribeRecording = (id: string) => request<{ id: string; status: string; transcript_text: string; confidence: number | null; provider: string }>(`/recordings/${id}/transcribe`, { method: "POST" });
+export const transcribeRecording = (id: string) => request<{ id: string; status: string; job_status?: string | null; job_wait_seconds?: number | null; worker_status?: "active" | "unresponsive" | "unknown"; transcript_text: string | null; confidence: number | null; provider: string }>(`/recordings/${id}/transcribe`, { method: "POST" });
 export const reviewTranscript = (id: string, transcriptText: string) => request<{ id: string; version: number; transcript_text: string; status: string }>(`/transcripts/${id}/review`, { method: "PATCH", body: JSON.stringify({ transcript_text: transcriptText }) });
 export const createPatient = (patient: PatientRegistrationInput) => request<ApiPatient>("/patients", { method: "POST", body: JSON.stringify({ ...patient, department: patient.department ?? "", project: patient.project ?? "" }) });
 export const getAppointments = (filters: { status?: string; fromAt?: string; toAt?: string; page?: number; pageSize?: number } = {}) => {
@@ -686,6 +824,37 @@ export const getAppointments = (filters: { status?: string; fromAt?: string; toA
   return request<ApiAppointment[]>(`/appointments?${params.toString()}`);
 };
 export const createAppointment = (appointment: { patient_id: string; starts_at: string; reason: string; status?: string }) => request<ApiAppointment>("/appointments", { method: "POST", body: JSON.stringify(appointment) });
+export type WalkInPayload = {
+  given_name: string;
+  family_name?: string;
+  phone: string;
+  clinician_id?: string | null;
+  reason?: string;
+  starts_at?: string | null;
+  duration_minutes?: number;
+  gender?: string;
+  date_of_birth?: string | null;
+  condition?: string;
+};
+export type WalkInResponse = {
+  appointment: ApiAppointment;
+  patient: {
+    id: string;
+    medical_record_number: string;
+    patient_code: string;
+    given_name: string;
+    family_name: string;
+    phone: string;
+  };
+  confirmation_code: string;
+  queue_number: string;
+  is_new_patient: boolean;
+};
+export const createWalkInAppointment = (payload: WalkInPayload) =>
+  request<WalkInResponse>("/appointments/walk-in", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 export const updateAppointmentStatus = (id: string, status: string) => request<ApiAppointment>(`/appointments/${id}/status?status=${encodeURIComponent(status)}`, { method: "PATCH" });
 export const rescheduleAppointment = (id: string, startsAt: string, reason?: string) => request<ApiAppointment>(`/appointments/${id}`, { method: "PATCH", body: JSON.stringify({ starts_at: startsAt, ...(reason ? { reason } : {}) }) });
 export const createClinicalNote = (note: { patient_id: string; encounter_id?: string; body: string; ai_draft?: string | null }) => request<ApiNote>("/clinical-notes", { method: "POST", body: JSON.stringify(note) });
@@ -693,6 +862,11 @@ export const updateClinicalNote = (id: string, note: { body: string; ai_draft?: 
 export const getClinicalNoteVersions = (id: string) => request<Array<{ id: string; version: number; body: string; ai_draft: string | null; status: string; author_id: string; created_at: string }>>(`/clinical-notes/${id}/versions`);
 export const generateClinicalSummary = (id: string) => request<ApiNote & { provider: string; summary?: string }>(`/clinical-notes/${id}/summary`, { method: "POST" });
 export const signClinicalNote = (id: string) => request<ApiNote>(`/clinical-notes/${id}/sign`, { method: "POST" });
+export const generateClinicalNoteDocument = (id: string) =>
+  request<{ id: string; filename: string; review_status: string; download_url: string }>(
+    `/clinical-notes/${id}/document`,
+    { method: "POST" },
+  );
 export async function uploadPatientDocument(
   patientId: string,
   file: File,
@@ -758,3 +932,190 @@ export async function downloadPatientDocument(patientId: string, documentId: str
   }
   return response.blob();
 }
+
+export type PatientPortalAccountInfo = {
+  has_account: boolean;
+  patient_id: string;
+  email: string | null;
+  is_active: boolean;
+  created_at: string | null;
+};
+
+export type ProvisionPortalAccountResponse = {
+  status: "created" | "updated";
+  patient_id: string;
+  email: string;
+  temporary_password?: string;
+  is_new: boolean;
+};
+
+export async function getPatientPortalAccount(patientId: string): Promise<PatientPortalAccountInfo> {
+  return request<PatientPortalAccountInfo>(`/patients/${patientId}/portal-account`);
+}
+
+export async function provisionPatientPortalAccount(
+  patientId: string,
+  payload: { email: string; full_name?: string; temporary_password?: string },
+): Promise<ProvisionPortalAccountResponse> {
+  return request<ProvisionPortalAccountResponse>(`/patients/${patientId}/portal-account`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function inviteTeamMember(email: string, role: string): Promise<{ status: string }> {
+  return request<{ status: string }>("/team/invites", {
+    method: "POST",
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export type VitalSignsRecord = {
+  id: string;
+  patient_id: string;
+  recorded_by_id?: string | null;
+  systolic_bp?: number | null;
+  diastolic_bp?: number | null;
+  heart_rate?: number | null;
+  respiratory_rate?: number | null;
+  oxygen_saturation?: number | null;
+  temperature_celsius?: number | null;
+  bmi?: number | null;
+  consciousness_level: string;
+  on_supplemental_oxygen: boolean;
+  news2_score: number;
+  clinical_risk: "low" | "medium" | "high";
+  notes?: string;
+  recorded_at: string;
+};
+
+export type RecordVitalsInput = {
+  systolic_bp?: number;
+  diastolic_bp?: number;
+  heart_rate?: number;
+  respiratory_rate?: number;
+  oxygen_saturation?: number;
+  temperature_celsius?: number;
+  bmi?: number;
+  consciousness_level?: string;
+  on_supplemental_oxygen?: boolean;
+  notes?: string;
+};
+
+export type PrescriptionRecord = {
+  id: string;
+  patient_id: string;
+  clinician_id: string;
+  medication_name: string;
+  rxnorm_code?: string | null;
+  dosage: string;
+  route: string;
+  frequency: string;
+  duration_days: number;
+  instructions: string;
+  status: string;
+  allergy_warning?: string | null;
+  created_at: string;
+};
+
+export type CreatePrescriptionInput = {
+  medication_name: string;
+  dosage: string;
+  route?: string;
+  frequency: string;
+  duration_days?: number;
+  instructions?: string;
+  rxnorm_code?: string;
+  override_allergy_warning?: boolean;
+};
+
+export type BreakGlassInput = {
+  reason: string;
+  justification: string;
+};
+
+export type BreakGlassResponse = {
+  status: "granted";
+  patient_id: string;
+  actor_id: string;
+  expires_at: string;
+  reason: string;
+};
+
+export type LabResultRecord = {
+  id: string;
+  patient_id: string;
+  order_id?: string | null;
+  test_name: string;
+  loinc_code?: string | null;
+  result_value: string;
+  unit: string;
+  reference_range: string;
+  is_panic_critical: boolean;
+  interpretation: string;
+  verified_by_id?: string | null;
+  created_at: string;
+};
+
+export type RecordLabInput = {
+  test_name: string;
+  result_value: string;
+  unit?: string;
+  reference_range?: string;
+  loinc_code?: string;
+  is_panic_critical?: boolean;
+  interpretation?: string;
+};
+
+export async function getPatientVitals(patientId: string): Promise<VitalSignsRecord[]> {
+  return request<VitalSignsRecord[]>(`/patients/${patientId}/vitals`);
+}
+
+export async function recordPatientVitals(
+  patientId: string,
+  payload: RecordVitalsInput,
+): Promise<{ id: string; patient_id: string; news2_score: number; clinical_risk: string; recorded_at: string }> {
+  return request(`/patients/${patientId}/vitals`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getPatientPrescriptions(patientId: string): Promise<PrescriptionRecord[]> {
+  return request<PrescriptionRecord[]>(`/patients/${patientId}/prescriptions`);
+}
+
+export async function createPatientPrescription(
+  patientId: string,
+  payload: CreatePrescriptionInput,
+): Promise<PrescriptionRecord> {
+  return request<PrescriptionRecord>(`/patients/${patientId}/prescriptions`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function activateBreakGlassAccess(
+  patientId: string,
+  payload: BreakGlassInput,
+): Promise<BreakGlassResponse> {
+  return request<BreakGlassResponse>(`/patients/${patientId}/break-glass`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getPatientLabs(patientId: string): Promise<LabResultRecord[]> {
+  return request<LabResultRecord[]>(`/patients/${patientId}/labs`);
+}
+
+export async function recordPatientLab(
+  patientId: string,
+  payload: RecordLabInput,
+): Promise<LabResultRecord> {
+  return request<LabResultRecord>(`/patients/${patientId}/labs`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
