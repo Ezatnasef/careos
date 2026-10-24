@@ -199,7 +199,7 @@ export function Landing({
     [],
   );
 
-  const speakReplyWithGemini = async (text: string | null, messageId?: number) => {
+  const speakReplyWithTTS = async (text: string | null, messageId?: number) => {
     if (!text?.trim()) return;
     stopVoicePlayback();
     setVoicePlaybackError("");
@@ -212,38 +212,19 @@ export function Landing({
       let payload: TTSResponsePayload | null = null;
       let ok = false;
 
-      // Authentic Egyptian VoiceTut neural voices (Mohammed or Mariam)
-      const voiceName = isArabic ? preferredVoice : "en-US-GuyNeural";
-      const endpoints = [
-        "/api/v1/assistant/tts",
-        "/api/v1/voice/tts",
-        "http://127.0.0.1:8003/api/v1/assistant/tts",
-        "http://127.0.0.1:8003/api/v1/voice/tts",
-      ];
+      const response = await fetch("/api/v1/assistant/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          language: isArabic ? "ar-EG" : "en-US",
+          voice: preferredVoice,
+        }),
+      });
+      payload = (await response.json().catch(() => null)) as TTSResponsePayload | null;
+      ok = response.ok && Boolean(payload?.audio_base64);
 
-      for (const endpoint of endpoints) {
-        try {
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              text,
-              language: isArabic ? "ar-EG" : "en-US",
-              voice: voiceName,
-            }),
-          });
-          const parsed = (await response.json().catch(() => null)) as TTSResponsePayload | null;
-          if (response.ok && parsed?.audio_base64) {
-            payload = parsed;
-            ok = true;
-            break;
-          }
-        } catch {
-          // Continue to next endpoint
-        }
-      }
-
-      // Play authentic Egyptian neural voice (Mohammed or Mariam):
+      // Play the selected neural voice returned by CareOS.
       if (ok && payload?.audio_base64) {
         const mimeType = payload.audio_mime_type || "audio/mpeg";
         const binary = atob(payload.audio_base64);
@@ -270,6 +251,11 @@ export function Landing({
         };
         audio.onerror = () => {
           cleanup();
+          setVoicePlaybackError(
+            isArabic
+              ? "تعذّر تشغيل الصوت مؤقتًا. سيظل الرد متاحًا كنص."
+              : "Speech is temporarily unavailable. The reply remains available as text.",
+          );
         };
         try {
           await audio.play();
@@ -314,7 +300,7 @@ export function Landing({
         ...messages,
         { id: chatMessageId.current, role: "assistant", text: response.answer },
       ]);
-      void speakReplyWithGemini(response.answer);
+      void speakReplyWithTTS(response.answer);
       return response;
     } catch (error) {
       setChatError(error instanceof Error ? error.message : t("generalChatError"));
@@ -1311,7 +1297,7 @@ export function Landing({
                                     if (playingMessageId === message.id) {
                                       stopVoicePlayback();
                                     } else {
-                                      void speakReplyWithGemini(message.text, message.id);
+                                      void speakReplyWithTTS(message.text, message.id);
                                     }
                                   }}
                                   disabled={isVoiceTtsLoading && playingMessageId !== message.id}

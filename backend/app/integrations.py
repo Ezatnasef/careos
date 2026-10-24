@@ -5,6 +5,8 @@ the browser or required for the demo environment.
 """
 from dataclasses import dataclass
 from typing import Any
+import asyncio
+from io import BytesIO
 import json
 import logging
 import re
@@ -13,7 +15,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 
@@ -989,95 +991,6 @@ def to_egyptian_colloquial_speech(text: str) -> str:
     return res.strip()
 
 
-class EdgeTTSProvider(TextToSpeechProvider):
-    name = "edge"
-    audio_content_type = "audio/mpeg"
-
-    async def synthesize(
-        self,
-        text: str,
-        *,
-        speaker: str = "Mohamed",
-        language: str = "ar-EG",
-        **kwargs: object,
-    ) -> bytes:
-        try:
-            import edge_tts
-        except ImportError as exc:
-            raise RuntimeError("edge-tts is not installed") from exc
-
-        is_arabic = language.lower().startswith("ar") or any("\u0600" <= char <= "\u06ff" for char in (text or ""))
-        if is_arabic:
-            spoken_text = to_egyptian_colloquial_speech(text)
-            spk_lower = str(speaker or "").lower()
-            is_female = any(name in spk_lower for name in ("mariam", "female", "مريم", "مريومة", "نسائي"))
-            voice = "ar-EG-SalmaNeural" if is_female else "ar-EG-ShakirNeural"
-            rate = "+14%"
-        else:
-            spoken_text = text
-            voice = "en-US-GuyNeural"
-            rate = "+6%"
-
-        temp_path: str | None = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
-                temp_path = temp_file.name
-            communicate = edge_tts.Communicate(text=spoken_text, voice=voice, rate=rate)
-            await communicate.save(temp_path)
-            with open(temp_path, "rb") as f:
-                payload = f.read()
-            if not payload:
-                raise RuntimeError("edge-tts returned empty audio")
-            self.audio_content_type = "audio/mpeg"
-            return payload
-        finally:
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
-
-class GTTSTTSProvider(TextToSpeechProvider):
-    name = "gtts"
-    audio_content_type = "audio/mpeg"
-
-    async def synthesize(
-        self,
-        text: str,
-        *,
-        speaker: str = "Mohamed",
-        language: str = "ar-EG",
-        **kwargs: object,
-    ) -> bytes:
-        try:
-            from gtts import gTTS
-        except ImportError as exc:
-            raise RuntimeError("gTTS is not installed") from exc
-
-        language_code = "ar" if language.lower().startswith("ar") else "en"
-        temp_path: str | None = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
-                temp_path = temp_file.name
-            tts = gTTS(text=text, lang=language_code, slow=False)
-            tts.save(temp_path)
-            with open(temp_path, "rb") as f:
-                payload = f.read()
-            if not payload:
-                raise RuntimeError("gTTS returned empty audio")
-            self.audio_content_type = "audio/mpeg"
-            return payload
-        except Exception as exc:
-            raise RuntimeError("gTTS TTS synthesis failed") from exc
-        finally:
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
-
-
-
 class VoiceTutTTSProvider(TextToSpeechProvider):
     name = "voicetut"
     audio_content_type = "audio/wav"
@@ -1085,111 +998,162 @@ class VoiceTutTTSProvider(TextToSpeechProvider):
     def __init__(self, api_url: str | None = None) -> None:
         self.api_url = (api_url or get_settings().text_to_speech_api_url).rstrip("/")
 
+    def _synthesize_sync(
+        self,
+        text: str,
+        language: str,
+        speaker_id: str,
+        api_key: str | None,
+    ) -> bytes:
+        from gradio_client import Client
+
+        client = Client(
+            self.api_url,
+            hf_token=api_key or None,
+            verbose=False,
+            analytics_enabled=False,
+            httpx_kwargs={"timeout": 120.0},
+        )
+        try:
+            result = client.predict(
+                text,
+                "en" if language.lower().startswith("en") else "arz",
+                "speaker",
+                speaker_id,
+                None,
+                "",
+                32,
+                2.0,
+                1.0,
+                True,
+                api_name="/synthesize",
+            )
+            audio_output = result[0] if isinstance(result, (list, tuple)) else result
+            if isinstance(audio_output, dict):
+                audio_output = audio_output.get("path")
+            elif not isinstance(audio_output, (str, os.PathLike)):
+                audio_output = getattr(audio_output, "path", None)
+            if not isinstance(audio_output, (str, os.PathLike)):
+                raise RuntimeError("VoiceTut did not return an audio file")
+            audio_bytes = Path(audio_output).read_bytes()
+            if audio_bytes[:4] == b"RIFF" or audio_bytes[:2] in (b"ID", b"\xff\xfb"):
+                self.audio_content_type = "audio/wav" if audio_bytes[:4] == b"RIFF" else "audio/mpeg"
+                return audio_bytes
+            raise RuntimeError("VoiceTut returned an unsupported audio format")
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
+
     async def synthesize(
         self,
         text: str,
         *,
         speaker: str = "Mohamed",
         language: str = "ar-EG",
-        anonymous_retry: bool = False,
         **kwargs: object,
     ) -> bytes:
         if not self.api_url:
             raise RuntimeError("VoiceTut API URL is not configured")
 
         settings = get_settings()
-        api_key = None if anonymous_retry else (settings.text_to_speech_api_key or getattr(settings, "huggingface_api_key", None))
-
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-        is_mock_test_url = "example" in self.api_url
-        if is_mock_test_url:
-            spk = speaker or "Mohamed"
-            call_url = f"{self.api_url}/gradio_api/call/run_b_oneshot"
-            payload = {"data": [spk, text, "العربية (Egyptian)", 32, 2.5, 0.95, True]}
-        else:
-            spk = speaker or getattr(settings, "text_to_speech_default_speaker", "Mohammed") or "Mohammed"
-            spk_lower = str(spk).lower()
-            if any(name in spk_lower for name in ("mariam", "female", "مريم", "مريومة", "نسائي")):
-                spk_id = "spk_15_female"
-            else:
-                spk_id = "spk_06_male"
-            gradio5_lang = "en" if language.lower().startswith("en") else "arz"
-            call_url = f"{self.api_url}/gradio_api/call/synthesize"
-            payload = {
-                "data": [
-                    text,
-                    gradio5_lang,
-                    "preset",
-                    spk_id,
-                    None,
-                    None,
-                    16,
-                    2.0,
-                    1.0,
-                    True,
-                ]
-            }
-
-        timeout = 180 if is_mock_test_url else 20.0
+        api_key = settings.text_to_speech_api_key or getattr(settings, "huggingface_api_key", None)
+        speaker_name = (speaker or settings.text_to_speech_default_speaker or "Mohammed").lower()
+        speaker_id = (
+            "spk_15_female"
+            if any(name in speaker_name for name in ("mariam", "female", "مريم", "مريومة", "نسائي"))
+            else "spk_06_male"
+        )
+        from gradio_client.exceptions import AppError
 
         try:
-            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-                if is_mock_test_url:
-                    await client.get(self.api_url)
-                submitted = await client.post(call_url, json=payload)
-                event_id = submitted.json().get("event_id")
-                if not event_id:
-                    raise RuntimeError("VoiceTut queue join failed")
+            return await asyncio.to_thread(
+                self._synthesize_sync,
+                text,
+                language,
+                speaker_id,
+                api_key,
+            )
+        except (AppError, httpx.HTTPError, OSError, RuntimeError, TypeError, ValueError) as error:
+            error_text = str(error).lower()
+            if "zerogpu" in error_text and ("exceeded" in error_text or "quota" in error_text):
+                logger.warning("voicetut_tts.quota_exceeded")
+                raise RuntimeError("VoiceTut ZeroGPU quota exceeded") from None
+            logger.warning("voicetut_tts.failed error_type=%s", type(error).__name__)
+            raise RuntimeError("VoiceTut TTS synthesis failed") from error
 
-                event_response = await client.get(f"{call_url}/{event_id}")
-                event_text = event_response.text
-                if "event: error" in event_text:
-                    err_msg = "null"
-                    for line in event_text.splitlines():
-                        if line.startswith("data:"):
-                            err_msg = line[5:].strip()
-                            break
-                    raise RuntimeError(f"VoiceTut API failed to synthesize audio: {err_msg}")
 
-                audio_url = None
-                for line in event_text.splitlines():
-                    if line.startswith("data:"):
-                        try:
-                            event_data = json.loads(line[5:].strip())
-                            if isinstance(event_data, list) and len(event_data) > 0:
-                                first = event_data[0]
-                                if isinstance(first, dict):
-                                    audio_url = first.get("url") or first.get("path")
-                                elif isinstance(first, str):
-                                    audio_url = first
-                                if audio_url:
-                                    break
-                        except Exception:
-                            pass
+class EdgeTTSProvider(TextToSpeechProvider):
+    name = "edge_tts"
+    audio_content_type = "audio/mpeg"
 
-                if not audio_url:
-                    raise RuntimeError("VoiceTut did not return audio data")
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        speaker: str = "Mohammed",
+        language: str = "ar-EG",
+        **kwargs: object,
+    ) -> bytes:
+        import edge_tts
 
-                if not audio_url.startswith("http"):
-                    audio_url = urljoin(f"{self.api_url}/gradio_api/file=", audio_url)
+        speaker_name = speaker.lower()
+        is_female = any(name in speaker_name for name in ("mariam", "female", "مريم", "مريومة", "نسائي"))
+        if language.lower().startswith("en"):
+            voice = "en-US-JennyNeural" if is_female else "en-US-GuyNeural"
+        else:
+            voice = "ar-EG-SalmaNeural" if is_female else "ar-EG-ShakirNeural"
 
-                audio_response = await client.get(audio_url)
-                if audio_response.content[:4] == b"RIFF":
-                    self.audio_content_type = "audio/wav"
-                    return audio_response.content
-                elif audio_response.content[:2] in (b"ID", b"\xff\xfb"):
-                    self.audio_content_type = "audio/mpeg"
-                    return audio_response.content
-                raise RuntimeError("VoiceTut API returned an unsupported audio format")
-        except RuntimeError as error:
-            if api_key and not anonymous_retry and "VoiceTut API failed to synthesize audio: null" in str(error):
-                return await self.synthesize(text, speaker=speaker, language=language, anonymous_retry=True)
-            raise RuntimeError(str(error)) from error
-        except httpx.HTTPError as error:
-            raise RuntimeError(f"VoiceTut TTS synthesis failed: {error}") from error
+        with tempfile.TemporaryDirectory(prefix="careos-edge-tts-") as temp_dir:
+            audio_path = Path(temp_dir) / "speech.mp3"
+            await edge_tts.Communicate(text, voice).save(str(audio_path))
+            audio_bytes = audio_path.read_bytes()
+
+        if not audio_bytes or not (
+            audio_bytes.startswith(b"ID3")
+            or audio_bytes[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")
+        ):
+            raise RuntimeError("Edge TTS returned an invalid audio file")
+        return audio_bytes
+
+
+def get_edge_tts_provider() -> EdgeTTSProvider:
+    return EdgeTTSProvider()
+
+
+class GoogleArabicTTSProvider(TextToSpeechProvider):
+    name = "google_tts"
+    audio_content_type = "audio/mpeg"
+
+    @staticmethod
+    def _synthesize_sync(text: str) -> bytes:
+        from gtts import gTTS
+
+        audio = BytesIO()
+        gTTS(text=text, lang="ar", slow=False).write_to_fp(audio)
+        audio_bytes = audio.getvalue()
+        if not audio_bytes or not (
+            audio_bytes.startswith(b"ID3")
+            or audio_bytes[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")
+        ):
+            raise RuntimeError("Google TTS returned an invalid audio file")
+        return audio_bytes
+
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        speaker: str = "Mohammed",
+        language: str = "ar-EG",
+        **kwargs: object,
+    ) -> bytes:
+        if not language.lower().startswith("ar"):
+            raise ValueError("Google Arabic TTS only supports Arabic")
+        return await asyncio.to_thread(self._synthesize_sync, text)
+
+
+def get_google_arabic_tts_provider() -> GoogleArabicTTSProvider:
+    return GoogleArabicTTSProvider()
 
 
 
@@ -1210,13 +1174,10 @@ def get_text_to_speech_provider() -> TextToSpeechProvider:
     configured = settings.text_to_speech_provider.strip().lower()
     if configured in {"voicetut", "huggingface"}:
         return VoiceTutTTSProvider(settings.text_to_speech_api_url)
-    if configured in {"gtts", "google", "google-tts", "unconfigured", ""}:
-        return GTTSTTSProvider()
-    try:
-        import edge_tts  # noqa: F401
-        return EdgeTTSProvider()
-    except Exception:
-        return GTTSTTSProvider()
+    raise RuntimeError(
+        "VoiceTut is the only supported text-to-speech provider; "
+        "set TEXT_TO_SPEECH_PROVIDER=voicetut"
+    )
 
 
 summary_provider = ClinicalSummaryProvider()

@@ -3,6 +3,7 @@ import base64
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -186,7 +187,7 @@ def test_groq_speech_provider_uses_compatible_transcription_endpoint(monkeypatch
     }
 
 
-def test_voicetut_retries_unauthenticated_when_space_rejects_token(monkeypatch) -> None:
+def test_voicetut_uses_gradio_client_with_configured_token(monkeypatch, tmp_path) -> None:
     from app.config import get_settings
     from app.integrations import get_text_to_speech_provider
 
@@ -194,54 +195,42 @@ def test_voicetut_retries_unauthenticated_when_space_rejects_token(monkeypatch) 
     monkeypatch.setenv("TEXT_TO_SPEECH_API_URL", "https://voice.example")
     monkeypatch.setenv("TEXT_TO_SPEECH_API_KEY", "unit-test-token")
     get_settings.cache_clear()
-    client_headers: list[bool] = []
+    audio_path = tmp_path / "voice.wav"
+    audio_path.write_bytes(b"RIFFfake-wav")
+    client_args: list[dict[str, object]] = []
+    prediction_args: list[dict[str, object]] = []
 
-    class FakeResponse:
-        def __init__(self, *, text: str = "", content: bytes = b"") -> None:
-            self.text = text
-            self.content = content
+    class FakeClient:
+        def __init__(self, src: str, **kwargs: object) -> None:
+            client_args.append({"src": src, **kwargs})
 
-        def raise_for_status(self) -> None:
+        def predict(self, *args: object, **kwargs: object) -> tuple[str, dict[str, object]]:
+            prediction_args.append({"args": args, **kwargs})
+            return str(audio_path), {}
+
+        def close(self) -> None:
             return None
 
-        def json(self) -> dict[str, str]:
-            return {"event_id": "test-event"}
-
-    class FakeAsyncClient:
-        def __init__(self, *, timeout: int, headers: dict[str, str]) -> None:
-            assert timeout == 180
-            client_headers.append("Authorization" in headers)
-            self.authenticated = "Authorization" in headers
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args) -> None:
-            return None
-
-        async def get(self, url: str):
-            if "/gradio_api/call/run_b_oneshot/" in url:
-                if self.authenticated:
-                    return FakeResponse(text="event: error\ndata: null\n")
-                audio = json.dumps([{"url": "https://voice.example/audio.wav"}])
-                return FakeResponse(text=f"event: complete\ndata: {audio}\n")
-            if url.endswith("/audio.wav"):
-                return FakeResponse(content=b"RIFFfake-wav")
-            return FakeResponse()
-
-        async def post(self, url: str, **kwargs):
-            return FakeResponse()
-
-    monkeypatch.setattr("app.integrations.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("gradio_client.Client", FakeClient)
     try:
-        audio = asyncio.run(
-            get_text_to_speech_provider().synthesize("Test", language="en-US")
-        )
+        provider = get_text_to_speech_provider()
+        audio = asyncio.run(provider.synthesize("Test", speaker="Mariam", language="en-US"))
     finally:
         get_settings.cache_clear()
 
     assert audio.startswith(b"RIFF")
-    assert client_headers == [True, False]
+    assert provider.audio_content_type == "audio/wav"
+    assert client_args == [{
+        "src": "https://voice.example",
+        "hf_token": "unit-test-token",
+        "verbose": False,
+        "analytics_enabled": False,
+        "httpx_kwargs": {"timeout": 120.0},
+    }]
+    assert prediction_args == [{
+        "args": ("Test", "en", "speaker", "spk_15_female", None, "", 32, 2.0, 1.0, True),
+        "api_name": "/synthesize",
+    }]
 
 
 def test_speech_provider_defaults_to_openai_when_ai_provider_is_openai(monkeypatch) -> None:
@@ -764,15 +753,15 @@ def test_legacy_patient_code_has_pretty_code_and_round_trips() -> None:
     assert legacy_patient_code(pretty_code) == legacy_code
 
 
-def test_default_tts_provider_uses_working_gtts_backend(monkeypatch) -> None:
+def test_tts_provider_requires_voicetut(monkeypatch) -> None:
     from app.config import get_settings
     from app.integrations import get_text_to_speech_provider
 
-    monkeypatch.setenv("TEXT_TO_SPEECH_PROVIDER", "unconfigured")
+    monkeypatch.setenv("TEXT_TO_SPEECH_PROVIDER", "gtts")
     get_settings.cache_clear()
     try:
-        provider = get_text_to_speech_provider()
-        assert provider.name == "gtts"
+        with pytest.raises(RuntimeError, match="VoiceTut is the only supported"):
+            get_text_to_speech_provider()
     finally:
         get_settings.cache_clear()
 
@@ -791,9 +780,7 @@ def test_huggingface_tts_provider_alias_uses_voicetut_backend(monkeypatch) -> No
         get_settings.cache_clear()
 
 
-async def test_voice_tut_tts_provider_generates_wav_bytes(monkeypatch) -> None:
-    import json
-
+async def test_voice_tut_tts_provider_generates_wav_bytes(monkeypatch, tmp_path) -> None:
     from app.config import get_settings
     from app.integrations import get_text_to_speech_provider
 
@@ -801,57 +788,33 @@ async def test_voice_tut_tts_provider_generates_wav_bytes(monkeypatch) -> None:
     monkeypatch.setenv("TEXT_TO_SPEECH_API_URL", "https://tts.example")
     monkeypatch.setenv("TEXT_TO_SPEECH_API_KEY", "hf_test_token")
     get_settings.cache_clear()
+    audio_path = tmp_path / "tts.wav"
+    audio_path.write_bytes(b"RIFF-test-WAVE")
+    client_options: dict[str, object] = {}
+    prediction: dict[str, object] = {}
 
-    class FakeResponse:
-        def __init__(self, *, payload=None, text="", content=b"") -> None:
-            self.payload = payload
-            self.text = text
-            self.content = content
+    class FakeClient:
+        def __init__(self, src: str, **kwargs: object) -> None:
+            client_options.update(src=src, **kwargs)
 
-        def raise_for_status(self) -> None:
+        def predict(self, *args: object, **kwargs: object) -> tuple[str, dict[str, object]]:
+            prediction.update(args=args, **kwargs)
+            return str(audio_path), {}
+
+        def close(self) -> None:
             return None
 
-        def json(self):
-            return self.payload
-
-    class FakeAsyncClient:
-        requests: list[tuple[str, str, object]] = []
-        client_headers: dict[str, str] = {}
-
-        def __init__(self, *, timeout: int, headers: dict[str, str]) -> None:
-            self.timeout = timeout
-            type(self).client_headers = headers
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args) -> None:
-            return None
-
-        async def post(self, url: str, *, json: dict[str, object]):
-            self.requests.append(("POST", url, json))
-            return FakeResponse(payload={"event_id": "job-123"})
-
-        async def get(self, url: str):
-            self.requests.append(("GET", url, None))
-            if url.endswith("job-123"):
-                result = [{"url": "https://tts.example/gradio_api/file=/audio.wav"}, ""]
-                return FakeResponse(text=f"event: complete\ndata: {json.dumps(result)}\n")
-            return FakeResponse(content=b"RIFF-test-WAVE")
-
-    monkeypatch.setattr("app.integrations.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("gradio_client.Client", FakeClient)
     try:
         provider = get_text_to_speech_provider()
         result = await provider.synthesize("ازيك عامل ايه النهاردة؟", speaker="Mohamed")
         assert result == b"RIFF-test-WAVE"
         assert provider.name == "voicetut"
-        assert FakeAsyncClient.client_headers == {"Authorization": "Bearer hf_test_token"}
-        assert FakeAsyncClient.requests[0] == ("GET", "https://tts.example", None)
-        assert FakeAsyncClient.requests[1][2] == {
-            "data": ["Mohamed", "ازيك عامل ايه النهاردة؟", "العربية (Egyptian)", 32, 2.5, 0.95, True]
+        assert client_options["hf_token"] == "hf_test_token"
+        assert prediction == {
+            "args": ("ازيك عامل ايه النهاردة؟", "arz", "speaker", "spk_06_male", None, "", 32, 2.0, 1.0, True),
+            "api_name": "/synthesize",
         }
-        assert FakeAsyncClient.requests[2][1].endswith("/job-123")
-        assert FakeAsyncClient.requests[3][1].endswith("/audio.wav")
     finally:
         get_settings.cache_clear()
 
@@ -865,43 +828,66 @@ async def test_voice_tut_tts_provider_raises_when_space_reports_error(monkeypatc
     monkeypatch.setenv("TEXT_TO_SPEECH_API_KEY", "hf_test_token")
     get_settings.cache_clear()
 
-    class FakeResponse:
-        def __init__(self, *, payload=None, text="", content=b"") -> None:
-            self.payload = payload
-            self.text = text
-            self.content = content
+    from gradio_client.exceptions import AppError
 
-        def raise_for_status(self) -> None:
+    class FakeClient:
+        def __init__(self, src: str, **kwargs: object) -> None:
+            pass
+
+        def predict(self, *args: object, **kwargs: object) -> object:
+            raise AppError("You have exceeded your ZeroGPU runs limit.")
+
+        def close(self) -> None:
             return None
 
-        def json(self):
-            return self.payload
-
-    class FakeAsyncClient:
-        def __init__(self, *, timeout: int, headers: dict[str, str]) -> None:
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args) -> None:
-            return None
-
-        async def post(self, url: str, *, json: dict[str, object]):
-            return FakeResponse(payload={"event_id": "job-123"})
-
-        async def get(self, url: str):
-            if url.endswith("job-123"):
-                return FakeResponse(text="event: error\ndata: null\n")
-            return FakeResponse(content=b"RIFF-test-WAVE")
-
-    monkeypatch.setattr("app.integrations.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("gradio_client.Client", FakeClient)
     try:
         provider = get_text_to_speech_provider()
-        with pytest.raises(RuntimeError, match="VoiceTut API"):
+        with pytest.raises(RuntimeError, match="VoiceTut ZeroGPU quota exceeded"):
             await provider.synthesize("السلام عليكم، ده اختبار للصوت.", speaker="Mohamed")
     finally:
         get_settings.cache_clear()
+
+
+async def test_edge_tts_provider_selects_matching_neural_voice(monkeypatch) -> None:
+    from app.integrations import EdgeTTSProvider
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeCommunicate:
+        def __init__(self, text: str, voice: str) -> None:
+            calls.append((text, voice))
+
+        async def save(self, path: str) -> None:
+            Path(path).write_bytes(b"ID3-edge-audio")
+
+    monkeypatch.setattr("edge_tts.Communicate", FakeCommunicate)
+    provider = EdgeTTSProvider()
+
+    male_audio = await provider.synthesize("Hello", speaker="Mohammed", language="en-US")
+    female_audio = await provider.synthesize("مرحبا", speaker="Mariam", language="ar-EG")
+
+    assert male_audio == b"ID3-edge-audio"
+    assert female_audio == b"ID3-edge-audio"
+    assert provider.audio_content_type == "audio/mpeg"
+    assert calls == [
+        ("Hello", "en-US-GuyNeural"),
+        ("مرحبا", "ar-EG-SalmaNeural"),
+    ]
+
+
+async def test_google_tts_provider_only_accepts_arabic() -> None:
+    from app.integrations import GoogleArabicTTSProvider
+
+    provider = GoogleArabicTTSProvider()
+    provider._synthesize_sync = lambda text: b"ID3-google-audio"
+
+    audio = await provider.synthesize("مرحبا", language="ar-EG")
+
+    assert audio == b"ID3-google-audio"
+    assert provider.audio_content_type == "audio/mpeg"
+    with pytest.raises(ValueError, match="only supports Arabic"):
+        await provider.synthesize("Hello", language="en-US")
 
 
 async def test_guest_voice_keeps_non_wav_audio_mime(monkeypatch) -> None:

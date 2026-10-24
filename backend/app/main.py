@@ -113,5 +113,4 @@ async def root():
 async def root_voice_tts(request: Request):
     from .api import assistant_tts, AssistantTTSInput
     payload = await request.json()
-    return await assistant_tts(AssistantTTSInput(**payload))
-
+    return await assistant_tts(AssistantTTSInput(**payload), request)

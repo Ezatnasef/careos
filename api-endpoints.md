@@ -495,6 +495,15 @@ Examples used by protected dependencies:
 
 ## 7. AI, Documents, Messages, Tasks, and Care Plans
 
+### POST /assistant/tts
+
+- Authentication: public, rate-limited by client IP.
+- Body: text, optional `ar-EG` or `en-US` language, and optional `Mohammed` or `Mariam` speaker.
+- VoiceTut-TTS is tried first, followed by Edge TTS; Arabic replies also fall back to Google TTS if both fail.
+- If all applicable providers are unavailable, returns `503`; the assistant reply remains available as text.
+- Edge TTS and Google TTS send reply text to their respective online speech services. Google TTS uses a generic Arabic voice.
+- The landing-page assistant, patient-portal assistant, and Voice Agent use this same CareOS TTS route.
+
 ### POST /patients/{patient_id}/documents
 
 - Permission: `documents.create`.

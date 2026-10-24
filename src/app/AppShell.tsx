@@ -264,7 +264,7 @@ export default function AppShell() {
     documents: <DocumentWorkflow t={t} language={language} canReviewDocuments={userRole === "doctor" || userRole === "nurse" || userPermissions.includes("documents.create") || userPermissions.includes("patient.write")} />,
     appointments: <Appointments t={t} language={language} />,
     messages: <Messages t={t} language={language} />,
-    portal: <PatientPortal t={t} language={language} />,
+    portal: <PatientPortal t={t} language={language} visitorMode={visitorMode} />,
     analytics: <Analytics t={t} />,
     departments: <DepartmentOverview t={t} language={language} />,
     reports: <ReportsPage t={t} />,

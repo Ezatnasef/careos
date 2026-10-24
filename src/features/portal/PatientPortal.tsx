@@ -87,6 +87,33 @@ function parsePortalDateTime(value: string): Date {
 export function PatientPortal({
   t,
   language,
+  visitorMode = false,
+}: {
+  t: Translator;
+  language: Language;
+  visitorMode?: boolean;
+}) {
+  if (visitorMode) {
+    return (
+      <main className="patient-portal-empty" dir={language === "ar" ? "rtl" : "ltr"}>
+        <section className="panel" aria-label={language === "ar" ? "بوابة المريض" : "Patient Portal"}>
+          <h1>{language === "ar" ? "بوابة المريض" : "Patient Portal"}</h1>
+          <p>
+            {language === "ar"
+              ? "لا توجد معلومات متاحة في هذه المعاينة."
+              : "No information is available in this preview."}
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  return <FullPatientPortal t={t} language={language} />;
+}
+
+function FullPatientPortal({
+  t,
+  language,
 }: {
   t: Translator;
   language: Language;

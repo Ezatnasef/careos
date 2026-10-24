@@ -231,7 +231,7 @@ def test_text_api_streaming_endpoint_yields_sse_events() -> None:
 def test_tts_route_surfaces_safe_provider_error_instead_of_audio_fallback() -> None:
     async def failing_tts(text: str) -> tuple[bytes, str] | None:
         del text
-        raise TTSGenerationError("Gemini TTS failed (APIError, HTTP 401): API key not valid.")
+        raise TTSGenerationError("VoiceTut speech is temporarily unavailable.")
 
     app = create_test_app(
         user=None,
@@ -248,6 +248,5 @@ def test_tts_route_surfaces_safe_provider_error_instead_of_audio_fallback() -> N
 
     assert response.status_code == 502
     assert response.json() == {
-        "detail": "Gemini TTS failed (APIError, HTTP 401): API key not valid."
+        "detail": "VoiceTut speech is temporarily unavailable."
     }
-

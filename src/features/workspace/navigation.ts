@@ -76,7 +76,6 @@ export const roleNavMap: Record<Role, AppView[]> = {
     "documents",
     "appointments",
     "messages",
-    "contacts",
     "departments",
     "clinicOps",
     "integrations",

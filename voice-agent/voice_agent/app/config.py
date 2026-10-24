@@ -28,8 +28,6 @@ class Settings(BaseSettings):
     orchestrator_token: str | None = None
     llm_model: str | None = None
     llm_timeout_seconds: float = 20.0
-    gemini_tts_arabic_voice: str = "Kore"
-    gemini_tts_english_voice: str = "Kore"
     live_voice_model: str = "gemini-3.8-live"
     log_level: str = "INFO"
     emergency_escalation_workflow: str | None = None

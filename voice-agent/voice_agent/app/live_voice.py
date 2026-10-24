@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 from typing import Any, Callable
@@ -14,22 +15,6 @@ from voice_agent.app.config import Settings
 logger = logging.getLogger(__name__)
 LIVE_MODEL = "gemini-3.8-live"
 TRANSCRIBE_MODEL = "gemini-3.5-transcribe-live"
-LIVE_SYSTEM_INSTRUCTION = """
-You are a friendly, intelligent voice assistant for a specialized Cosmetics & Aesthetics Clinic.
-
-CRITICAL LANGUAGE RULE (STRICT):
-Always detect and speak in the EXACT SAME LANGUAGE that the user is speaking:
-- If the user speaks ENGLISH: Respond strictly in natural, clear, conversational English.
-- If the user speaks ARABIC: Respond strictly in natural Egyptian Arabic (مصري) written in Arabic script.
-- NEVER speak in Arabic when the user speaks English!
-- NEVER speak in English when the user speaks Arabic!
-
-CLINIC SPECIALIZATION:
-Our clinic is strictly dedicated to cosmetics, aesthetic dermatology, laser, botox, fillers, skin rejuvenation, and beauty treatments. We do NOT have general medical departments like cardiology, pediatrics, or internal medicine. If asked about unrelated departments, clarify politely in the user's language that we are a specialized cosmetic clinic.
-
-OPERATING HOURS:
-A real clinic calendar and booking dataset are dynamically checked. NEVER invent clinic names, doctors, prices, appointment slots, or opening/closing hours. If asked for clinic hours or openings, explain in the user's language that operating hours and available appointments will be provided once checked with the clinic database. Never provide medical diagnoses or prescriptions. Use synthetic/demo context only.
-""".strip()
 
 
 def add_live_voice_route(
@@ -39,7 +24,7 @@ def add_live_voice_route(
     client_factory: Callable[[str], Any] | None = None,
     live_types: Any | None = None,
 ) -> None:
-    """Mount a server-to-server Gemini Live bridge; the API key stays backend-side."""
+    """Mount a transcription bridge; spoken replies use VoiceTut TTS."""
 
     @app.websocket("/v1/voice/live")
     async def live_voice(websocket: WebSocket) -> None:
@@ -100,10 +85,8 @@ def add_live_voice_route(
                 live_model = TRANSCRIBE_MODEL
             else:
                 config = config_type(
-                    response_modalities=["AUDIO"],
-                    system_instruction=LIVE_SYSTEM_INSTRUCTION,
+                    response_modalities=["TEXT"],
                     input_audio_transcription={},
-                    output_audio_transcription={},
                 )
                 live_model = settings.live_voice_model or LIVE_MODEL
             async with client.aio.live.connect(model=live_model, config=config) as session:
@@ -173,12 +156,50 @@ def add_live_voice_route(
                                         reply, updated_state = await agent.handle_text(text, state)
                                         state = updated_state
                                         await store.save(state, user)
-                                        
-                                        # Send CareOS response back to Gemini Live to speak it
-                                        if hasattr(session, "send_realtime_input") and reply:
-                                            await session.send_realtime_input(
-                                                text=f"CAREOS_RESPONSE: {reply}\nInstruction: Speak this response to the user naturally in their language as is. Do not invent or change any appointment, doctor, time, or medical information."
+                                        await websocket.send_json(
+                                            {"type": "assistant_text", "text": reply}
+                                        )
+                                        tts_generator = getattr(
+                                            websocket.app.state, "tts_generator", None
+                                        )
+                                        if tts_generator is None:
+                                            await websocket.send_json(
+                                                {
+                                                    "type": "tts_unavailable",
+                                                    "message": "VoiceTut speech is unavailable.",
+                                                }
                                             )
+                                        else:
+                                            try:
+                                                audio_result = await tts_generator(
+                                                    reply,
+                                                    voice="Mohammed",
+                                                )
+                                                if audio_result is None:
+                                                    raise RuntimeError(
+                                                        "VoiceTut returned no audio"
+                                                    )
+                                                audio_bytes, audio_mime = audio_result
+                                                await websocket.send_json(
+                                                    {
+                                                        "type": "assistant_audio",
+                                                        "audio_base64": base64.b64encode(
+                                                            audio_bytes
+                                                        ).decode("ascii"),
+                                                        "audio_mime_type": audio_mime,
+                                                    }
+                                                )
+                                            except Exception as exc:
+                                                logger.warning(
+                                                    "live_voice.voicetut_tts_failed (%s)",
+                                                    type(exc).__name__,
+                                                )
+                                                await websocket.send_json(
+                                                    {
+                                                        "type": "tts_unavailable",
+                                                        "message": "VoiceTut speech is temporarily unavailable.",
+                                                    }
+                                                )
                                     except Exception as exc:
                                         logger.warning(f"CareOS state sync failed: {exc}")
                             if mode == "speech_to_text" and content.model_turn:
@@ -187,14 +208,6 @@ def add_live_voice_route(
                                         await websocket.send_json(
                                             {"type": "dictation_final", "text": part.text}
                                         )
-                            if mode == "speech_to_speech" and content.output_transcription and content.output_transcription.text:
-                                await websocket.send_json(
-                                    {"type": "output_transcription", "text": content.output_transcription.text}
-                                )
-                            if mode == "speech_to_speech" and content.model_turn:
-                                for part in content.model_turn.parts:
-                                    if part.inline_data and part.inline_data.data:
-                                        await websocket.send_bytes(part.inline_data.data)
                             if content.turn_complete:
                                 if mode == "speech_to_text" and user_stopped.is_set():
                                     await websocket.send_json({"type": "dictation_done"})

@@ -7,7 +7,9 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from voice_agent.app.config import Settings
-from voice_agent.app.live_voice import LIVE_MODEL, LIVE_SYSTEM_INSTRUCTION, add_live_voice_route
+from voice_agent.app.live_voice import LIVE_MODEL, add_live_voice_route
+from voice_agent.app.schemas.auth import AuthenticatedUserContext
+from voice_agent.app.schemas.requests import ConversationState
 
 
 class FakeBlob:
@@ -85,7 +87,7 @@ def test_live_route_requires_gemini_configuration() -> None:
     assert "Gemini provider" in message["message"]
 
 
-def test_live_route_streams_mic_pcm_and_returns_egyptian_audio_and_transcripts() -> None:
+def test_live_route_uses_voicetut_for_spoken_agent_reply() -> None:
     session = FakeLiveSession()
     fake_client = FakeLiveClient(session)
     app = FastAPI()
@@ -106,27 +108,58 @@ def test_live_route_streams_mic_pcm_and_returns_egyptian_audio_and_transcripts()
         live_types=SimpleNamespace(Blob=FakeBlob, LiveConnectConfig=FakeLiveConnectConfig),
     )
 
+    user = AuthenticatedUserContext(patient_id="test-patient")
+    app.state.authenticator = SimpleNamespace(
+        authenticate=lambda _websocket: asyncio.sleep(0, result=user)
+    )
+    state = ConversationState(authenticated_user=user)
+
+    class ConversationStore:
+        async def get_or_create(self, _session_id, _user):
+            return state
+
+        async def save(self, _state, _user):
+            return None
+
+    class Agent:
+        async def handle_text(self, text, current_state):
+            assert text == "محتاج أحجز مع دكتور قلب"
+            return "CareOS booking response", current_state
+
+    synthesized: list[tuple[str, str]] = []
+
+    async def synthesize(text: str, *, voice: str):
+        synthesized.append((text, voice))
+        return b"voicetut-mp3", "audio/mpeg"
+
+    app.state.conversation_store = ConversationStore()
+    app.state.voice_agent = Agent()
+    app.state.tts_generator = synthesize
+
     with TestClient(app) as client:
         with client.websocket_connect("/v1/voice/live") as websocket:
             ready = websocket.receive_json()
             websocket.send_bytes(b"mic-pcm-chunk")
             input_text = websocket.receive_json()
-            output_text = websocket.receive_json()
-            audio = websocket.receive_bytes()
+            reply_text = websocket.receive_json()
+            reply_audio = websocket.receive_json()
             complete = websocket.receive_json()
 
     assert ready == {"type": "ready", "model": LIVE_MODEL, "mode": "speech_to_speech"}
     assert fake_client.model == LIVE_MODEL
     assert fake_client.config is not None
-    assert fake_client.config.values["response_modalities"] == ["AUDIO"]
-    assert "Egyptian Arabic" in LIVE_SYSTEM_INSTRUCTION
+    assert fake_client.config.values["response_modalities"] == ["TEXT"]
     assert session.received_audio[0].data == b"mic-pcm-chunk"
     assert session.received_audio[0].mime_type == "audio/pcm;rate=16000"
     assert input_text["type"] == "input_transcription"
     assert "دكتور قلب" in input_text["text"]
-    assert output_text["type"] == "output_transcription"
-    assert "أهلاً" in output_text["text"]
-    assert audio == b"pcm-audio"
+    assert reply_text == {"type": "assistant_text", "text": "CareOS booking response"}
+    assert reply_audio == {
+        "type": "assistant_audio",
+        "audio_base64": "dm9pY2V0dXQtbXAz",
+        "audio_mime_type": "audio/mpeg",
+    }
+    assert synthesized == [("CareOS booking response", "Mohammed")]
     assert complete["type"] == "turn_complete"
     assert fake_client.closed
 
@@ -273,15 +306,11 @@ def test_lifecycle_sender_finishes_before_receiver() -> None:
             websocket.send_bytes(b"pcm-data")
             websocket.send_json({"type": "stop"})
             input_text = websocket.receive_json()
-            output_text = websocket.receive_json()
-            audio = websocket.receive_bytes()
             complete = websocket.receive_json()
 
     assert ready["type"] == "ready"
     assert input_text["type"] == "input_transcription"
     assert input_text["text"] == "احجز لي دكتور عيون"
-    assert output_text["type"] == "output_transcription"
-    assert audio == b"pcm-audio"
     assert complete["type"] == "turn_complete"
     assert session.stream_ended
     assert fake_client.closed

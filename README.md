@@ -390,6 +390,12 @@ Both `.env` (in the repo root) and `backend/.env` are automatically loaded by `b
 - **Approval Gate**: Uploaded documents start in `review_status="pending_review"`. Only when a clinician clicks **Approve & Index** (`POST /api/v1/documents/{id}/review`) are the document's chunks embedded and stored in `document_chunks`. Rejected or soft-deleted documents are immediately purged from the vector store.
 - **No External LLM Key Required**: When no `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `AI_API_KEY` is configured, the RAG pipeline uses deterministic **Extractive Evidence Synthesis** with strict sentence-level citation verification (`[Source: <filename>, Page <n>]`). If an external key is configured, the pipeline uses the external LLM while still enforcing post-generation citation verification and refusal on insufficient evidence.
 
+### Speech Output
+- Generated speech uses VoiceTut-TTS first through `POST /api/v1/assistant/tts`, including the landing-page assistant, patient portal, and Voice Agent.
+- The backend calls VoiceTut through the Gradio Python client using the server-side Hugging Face token. If VoiceTut fails or its ZeroGPU quota is exhausted, Edge TTS is tried next; Arabic replies also use Google Translate TTS as a final fallback.
+- Edge TTS and Google TTS send reply text to their respective online speech services. Google TTS uses a generic Arabic voice rather than a distinct Egyptian male/female voice.
+- If all applicable speech providers fail, the reply remains available as text.
+
 ---
 
 ## 11. Running the Full Stack Locally
@@ -501,4 +507,3 @@ Before zipping, copying, or pushing `newcareos-main` to share with another devel
 - **Department Details Modal (`DepartmentOverview.tsx`)**: 2x2 metric grid (Bed Capacity, On-duty Physicians, Nursing Staff, Daily Follow-ups), clinical supervisor details, and balanced action buttons.
 - **Account & Security Dashboard (`AccountPage.tsx`)**: Modern profile hero banner, status badge, workplace affiliation card, and security controls with prominent sign-out.
 - **Patient Portal Messages Tab (`PatientPortal.tsx`)**: Telegram follow-up card, bidirectional chat bubbles, and prescription viewing with QR codes.
-

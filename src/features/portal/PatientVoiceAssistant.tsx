@@ -125,61 +125,57 @@ export function PatientVoiceAssistant({
     if (messageId) setPlayingMessageId(messageId);
 
     try {
-      const endpoints = [
-        "/api/v1/assistant/tts",
-        "/api/v1/voice/tts",
-        "http://127.0.0.1:8003/api/v1/assistant/tts",
-        "http://127.0.0.1:8003/api/v1/voice/tts",
-      ];
-
-      for (const endpoint of endpoints) {
-        try {
-          const resp = await fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              text,
-              language: isArabic ? "ar-EG" : "en-US",
-              voice: preferredVoice,
-            }),
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            if (data?.audio_base64) {
-              const mime = data.audio_mime_type || "audio/wav";
-              const binary = atob(data.audio_base64);
-              const bytes = new Uint8Array(binary.length);
-              for (let i = 0; i < binary.length; i++) {
-                bytes[i] = binary.charCodeAt(i);
-              }
-              const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
-              const audio = new Audio(blobUrl);
-              setActiveAudioElement(audio);
-
-              audio.onended = () => {
-                URL.revokeObjectURL(blobUrl);
-                setIsPlayingAudio(false);
-                setPlayingMessageId(null);
-                setActiveAudioElement(null);
-              };
-              audio.onerror = () => {
-                URL.revokeObjectURL(blobUrl);
-                setIsPlayingAudio(false);
-                setPlayingMessageId(null);
-                setActiveAudioElement(null);
-              };
-
-              await audio.play();
-              return;
-            }
-          }
-        } catch {
-          // Try next endpoint
-        }
+      const resp = await fetch("/api/v1/assistant/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          language: isArabic ? "ar-EG" : "en-US",
+          voice: preferredVoice,
+        }),
+      });
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.audio_base64) {
+        throw new Error(data?.detail || "Speech is unavailable");
       }
-    } catch {
+
+      const mime = data.audio_mime_type || "audio/wav";
+      const binary = atob(data.audio_base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+      const audio = new Audio(blobUrl);
+      setActiveAudioElement(audio);
+
+      const cleanup = () => {
+        URL.revokeObjectURL(blobUrl);
+        setIsPlayingAudio(false);
+        setPlayingMessageId(null);
+        setActiveAudioElement(null);
+      };
+      audio.onended = cleanup;
+      audio.onerror = () => {
+        cleanup();
+        setVoiceStatus(
+          isArabic
+            ? "تعذّر تشغيل الصوت مؤقتًا. سيظل الرد متاحًا كنص."
+            : "Speech is temporarily unavailable. The reply remains available as text.",
+        );
+      };
+      await audio.play();
+      setVoiceStatus("");
+    } catch (error) {
       setIsPlayingAudio(false);
       setPlayingMessageId(null);
+      setVoiceStatus(
+        error instanceof Error && error.message
+          ? error.message
+          : isArabic
+            ? "تعذّر تشغيل الصوت مؤقتًا. سيظل الرد متاحًا كنص."
+            : "Speech is temporarily unavailable. The reply remains available as text.",
+      );
     }
   };
 
@@ -271,7 +267,7 @@ export function PatientVoiceAssistant({
       setIsThinking(false);
       setVoiceStatus("");
 
-      // Automatically speak the response using VoiceTut TTS
+      // Automatically speak the response using CareOS TTS.
       void playSynthesizedSpeech(answerText, assistantMsg.id);
     } catch {
       setIsThinking(false);
@@ -507,7 +503,7 @@ export function PatientVoiceAssistant({
                   color: "var(--color-primary-teal, #0d9488)",
                 }}
               >
-                VoiceTut · {preferredVoice === "Mariam" ? (isArabic ? "مريم" : "Mariam") : (isArabic ? "محمد" : "Mohammed")}
+                {isArabic ? "الصوت" : "Voice"} · {preferredVoice === "Mariam" ? (isArabic ? "مريم" : "Mariam") : (isArabic ? "محمد" : "Mohammed")}
               </span>
             </div>
             <span style={{ fontSize: "11px", color: "var(--muted)" }}>
@@ -679,7 +675,7 @@ export function PatientVoiceAssistant({
                   (isRecording
                     ? (isArabic ? "الميكروفون يستمع... تحدث الآن" : "Listening... Speak now")
                     : isPlayingAudio
-                      ? (isArabic ? "المساعد يتحدث الآن بصوت VoiceTut..." : "Speaking response...")
+                      ? (isArabic ? "المساعد يتحدث الآن..." : "Speaking response...")
                       : (isArabic ? "اضغط على الميكروفون وتحدث بحرية باللهجة المصرية" : "Click the mic to speak in Egyptian Arabic"))}
               </span>
             </div>

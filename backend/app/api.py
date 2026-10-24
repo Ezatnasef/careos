@@ -54,7 +54,7 @@ from .auth import (
 from .rbac import ROLE_PERMISSIONS, can_access_section, normalize_role
 from .ai.orchestrator.contracts import OrchestratorState
 from .ai.orchestrator.orchestrator import CareOSOrchestrator
-from .integrations import get_speech_to_text_provider, get_text_to_speech_provider, notification_provider, rag_provider, summary_provider, to_egyptian_colloquial_speech
+from .integrations import get_edge_tts_provider, get_google_arabic_tts_provider, get_speech_to_text_provider, get_text_to_speech_provider, notification_provider, rag_provider, summary_provider, to_egyptian_colloquial_speech
 from .models import Appointment, AudioFile, AuditEvent, AuthSession, BreakGlassAccess, CarePlan, ClinicalNote, ClinicalNoteVersion, ClinicianSchedule, DocumentChunk, Encounter, LabOrder, LabResult, Notification, Organization, Patient, PatientDocument, PatientMessage, PatientPortalAccount, PatientPortalDocument, PatientPortalSession, PasswordResetToken, PatientProfile, Permission, Prescription, ReminderJob, Role, RolePermission, ScheduleOverride, SSOConfiguration, SystemLead, Task, TeamInvite, Transcript, TranscriptVersion, TranscriptionJob, User, UserRole, VitalSigns
 from .patient_access import ensure_patient_access, owned_patient, patient_scope_matches
 from .rag.loader import build_ocr_diagnostics, extract_clinical_candidates, extract_document_bytes, get_ocr_status_info, normalize_clinical_text
@@ -2964,24 +2964,42 @@ async def generate_note_document(note_id: UUID, user=Depends(require_permission(
 
 
 async def _guest_tts_audio(text: str, language: str, speaker: str | None = None) -> dict[str, str]:
-    tts_provider = get_text_to_speech_provider()
-    if getattr(tts_provider, "name", "unconfigured") == "unconfigured":
-        raise RuntimeError("Text-to-speech provider is not configured")
     is_ar = language.lower().startswith("ar") or any("\u0600" <= char <= "\u06ff" for char in (text or ""))
+    tts_language = language if not is_ar or language.lower().startswith("ar") else "ar-EG"
     spoken_text = to_egyptian_colloquial_speech(text) if is_ar else text
     chosen_speaker = speaker or get_settings().text_to_speech_default_speaker or "Mohamed"
-    synthesized = tts_provider.synthesize(
-        spoken_text,
-        speaker=chosen_speaker,
-        language=language,
-    )
-    audio_bytes = await synthesized if inspect.isawaitable(synthesized) else synthesized
-    audio_content_type = getattr(tts_provider, "audio_content_type", "audio/wav")
-    return {
-        "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
-        "audio_content_type": audio_content_type,
-        "speaker": chosen_speaker,
-    }
+    providers = [get_text_to_speech_provider(), get_edge_tts_provider()]
+    if is_ar:
+        providers.append(get_google_arabic_tts_provider())
+    provider_errors: list[tuple[str, Exception]] = []
+    for tts_provider in providers:
+        try:
+            synthesized = tts_provider.synthesize(
+                spoken_text,
+                speaker=chosen_speaker,
+                language=tts_language,
+            )
+            audio_bytes = await synthesized if inspect.isawaitable(synthesized) else synthesized
+            if not audio_bytes:
+                raise RuntimeError("TTS provider returned empty audio")
+            return {
+                "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+                "audio_content_type": getattr(tts_provider, "audio_content_type", "audio/wav"),
+                "speaker": chosen_speaker,
+                "tts_provider": getattr(tts_provider, "name", "unknown"),
+            }
+        except Exception as error:
+            provider_name = getattr(tts_provider, "name", "unknown")
+            logger.warning(
+                "assistant_tts.provider_failed provider=%s error_type=%s",
+                provider_name,
+                type(error).__name__,
+            )
+            provider_errors.append((provider_name, error))
+
+    if any("zerogpu quota exceeded" in str(error).lower() for _, error in provider_errors):
+        raise RuntimeError("VoiceTut ZeroGPU quota exceeded; all speech fallbacks failed") from provider_errors[-1][1]
+    raise RuntimeError("VoiceTut and speech fallbacks are unavailable") from provider_errors[-1][1]
 
 
 def _clean_text_for_egyptian_speech(text: str) -> str:
@@ -2997,64 +3015,59 @@ class AssistantTTSInput(BaseModel):
 @router.post("/assistant/tts", tags=["ai"])
 @router.post("/voice/tts", tags=["ai"])
 @router.post("/v1/voice/tts", tags=["ai"])
-async def assistant_tts(payload: AssistantTTSInput) -> dict[str, str]:
-    import tempfile
-    from pathlib import Path
+async def assistant_tts(
+    payload: AssistantTTSInput,
+    request: Request,
+) -> dict[str, str]:
+    client_ip = request.client.host if request.client else "unknown"
+    allowed, retry_after = _allow_guest_chat(client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many speech requests. Please wait before trying again.",
+            headers={"Retry-After": str(retry_after)},
+        )
 
     raw_text = payload.text.strip()
     if not raw_text:
         raise HTTPException(status_code=422, detail="Text cannot be blank")
 
-    # Detect Arabic characters
     is_arabic = any("\u0600" <= char <= "\u06ff" for char in raw_text)
     language = payload.language or ("ar-EG" if is_arabic else "en-US")
 
-    # Convert text to 100% authentic, natural Egyptian colloquial dialect
-    spoken_text = to_egyptian_colloquial_speech(raw_text) if is_arabic else raw_text
-
-    # Map requested voice strictly to VoiceTut Egyptian speakers (Mohammed & Mariam)
     req_voice = (payload.voice or "").strip().lower()
     is_female = any(name in req_voice for name in ("mariam", "female", "مريم", "مريومة", "نسائي"))
     target_speaker = "Mariam" if is_female else "Mohammed"
 
-    # 1. Primary: Authentic VoiceTut-TTS (mohammedaly22/VoiceTut-TTS)
     try:
-        logger.info("Synthesizing audio with VoiceTut-TTS (speaker=%s) for text=%r", target_speaker, spoken_text[:50])
-        result = await _guest_tts_audio(spoken_text, language, speaker=target_speaker)
-        return {
-            "audio_base64": result["audio_base64"],
-            "audio_mime_type": result.get("audio_content_type", "audio/wav"),
-            "audio_content_type": result.get("audio_content_type", "audio/wav"),
-            "voice": f"VoiceTut-{target_speaker}",
-            "speaker": target_speaker,
-        }
-    except Exception as vt_exc:
-        logger.warning("VoiceTut space attempt: %s, using fallback for speaker %s", vt_exc, target_speaker)
-
-    # 2. Resilient fallback: High-speed Natural Neural Voice (distinguishes Mohamed vs Mariam)
-    try:
-        from .integrations import EdgeTTSProvider
-        edge = EdgeTTSProvider()
-        audio_data = await edge.synthesize(spoken_text, speaker=target_speaker, language=language)
-        return {
-            "audio_base64": base64.b64encode(audio_data).decode("ascii"),
-            "audio_mime_type": "audio/mpeg",
-            "audio_content_type": "audio/mpeg",
-            "voice": f"VoiceTut-{target_speaker}",
-            "speaker": target_speaker,
-        }
-    except Exception as edge_exc:
-        logger.warning("Edge fallback attempt: %s, trying gTTS", edge_exc)
-        from .integrations import GTTSTTSProvider
-        gtts = GTTSTTSProvider()
-        audio_data = await gtts.synthesize(spoken_text, speaker=target_speaker, language=language)
-        return {
-            "audio_base64": base64.b64encode(audio_data).decode("ascii"),
-            "audio_mime_type": "audio/mpeg",
-            "audio_content_type": "audio/mpeg",
-            "voice": f"VoiceTut-{target_speaker}",
-            "speaker": target_speaker,
-        }
+        result = await _guest_tts_audio(raw_text, language, speaker=target_speaker)
+    except (RuntimeError, httpx.HTTPError, ValueError, TypeError, AttributeError) as error:
+        logger.warning("assistant_tts.unavailable error_type=%s", type(error).__name__)
+        quota_exceeded = "VoiceTut ZeroGPU quota exceeded" in str(error)
+        if quota_exceeded and language.lower().startswith("ar"):
+            detail = "نفدت حصة VoiceTut ولم تنجح أصوات Edge وGoogle الاحتياطية. سيظل الرد متاحًا كنص."
+        elif quota_exceeded:
+            detail = "VoiceTut's daily ZeroGPU quota is exhausted and the Edge TTS fallback is unavailable. The reply remains available as text."
+        elif language.lower().startswith("ar"):
+            detail = "تعذّر تشغيل VoiceTut وEdge وGoogle TTS. سيظل الرد متاحًا كنص."
+        else:
+            detail = "VoiceTut and Edge TTS are temporarily unavailable. The reply remains available as text."
+        raise HTTPException(
+            status_code=503,
+            detail=detail,
+        ) from error
+    return {
+        "audio_base64": result["audio_base64"],
+        "audio_mime_type": result.get("audio_content_type", "audio/wav"),
+        "audio_content_type": result.get("audio_content_type", "audio/wav"),
+        "voice": {
+            "voicetut": f"VoiceTut-{target_speaker}",
+            "edge_tts": f"EdgeTTS-{target_speaker}",
+            "google_tts": "GoogleTTS-Arabic",
+        }.get(result["tts_provider"], f"{result['tts_provider']}-{target_speaker}"),
+        "speech_provider": result["tts_provider"],
+        "speaker": target_speaker,
+    }
 
 
 @router.post("/assistant/guest-chat", tags=["ai"])
@@ -3078,12 +3091,19 @@ async def guest_assistant_chat(payload: GeneralChatInput, request: Request) -> d
         else:
             response = await rag_provider.answer_general(payload.message)
         if payload.synthesize_speech:
-            response.update(
-                await _guest_tts_audio(
-                    str(response.get("answer") or ""),
-                    payload.language or "ar-EG",
+            try:
+                response.update(
+                    await _guest_tts_audio(
+                        str(response.get("answer") or ""),
+                        payload.language or "ar-EG",
+                    )
                 )
-            )
+            except (RuntimeError, httpx.HTTPError) as error:
+                logger.warning(
+                    "guest_assistant.voicetut_unavailable (%s)",
+                    type(error).__name__,
+                )
+                response["speech_unavailable"] = True
         return response
     except (RuntimeError, httpx.HTTPError) as error:
         logger.warning(
@@ -5501,4 +5521,3 @@ async def delete_system_lead(
     await session.delete(lead)
     await session.commit()
     return {"deleted": True}
-

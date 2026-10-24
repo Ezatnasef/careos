@@ -327,7 +327,7 @@ def create_app(
             else:
                 result = await tts_generator(payload.text)
         except TTSGenerationError as exc:
-            logger.warning("api.tts.failed provider=gemini error=%s", exc)
+            logger.warning("api.tts.failed provider=voicetut error=%s", exc)
             raise HTTPException(status_code=502, detail=str(exc)) from None
         except Exception as exc:
             logger.error(
@@ -339,14 +339,14 @@ def create_app(
                 detail=f"TTS generation failed ({type(exc).__name__}).",
             ) from None
         if result is None:
-            logger.warning("api.tts.failed provider=gemini reason=no_audio")
+            logger.warning("api.tts.failed provider=voicetut reason=no_audio")
             raise HTTPException(
                 status_code=502,
-                detail="Gemini TTS returned no audio content.",
+                detail="VoiceTut returned no audio content.",
             )
         audio_bytes, mime = result
         logger.info(
-            "api.tts.succeeded provider=gemini content_type=%s audio_bytes=%d",
+            "api.tts.succeeded provider=voicetut content_type=%s audio_bytes=%d",
             mime,
             len(audio_bytes),
         )

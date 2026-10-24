@@ -1,157 +1,95 @@
 import asyncio
 import base64
-from types import SimpleNamespace
+
+import httpx
+import pytest
 
 from voice_agent.app.audio.tts import TTSGenerationError, generate_speech_audio
 from voice_agent.app.config import Settings
 
 
-class FakeTTSClient:
-    def __init__(self, data: bytes = b"fake-wav-bytes", mime_type: str = "audio/wav") -> None:
-        self.request: dict[str, object] = {}
-        response = SimpleNamespace(
-            outputs=[
-                SimpleNamespace(
-                    type="audio",
-                    data=base64.b64encode(data).decode("ascii"),
-                    mime_type=mime_type,
-                )
-            ]
+def test_generate_speech_audio_uses_careos_voicetut_endpoint() -> None:
+    settings = Settings(
+        _env_file=None,
+        app_env="development",
+        careos_api_url="http://careos.test/api/v1",
+    )
+    requests: list[tuple[str, dict[str, str]]] = []
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url: str, *, json: dict[str, str]):
+            requests.append((url, json))
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", url),
+                json={
+                    "audio_base64": base64.b64encode(b"voicetut-audio").decode(),
+                    "audio_mime_type": "audio/wav",
+                },
+            )
+
+    result = asyncio.run(
+        generate_speech_audio(
+            "أهلاً بيك",
+            settings,
+            client_factory=lambda **_kwargs: FakeClient(),
+            voice_preference="Mariam",
         )
+    )
 
-        async def create_interaction(**kwargs: object) -> SimpleNamespace:
-            self.request = kwargs
-            return response
-
-        self.aio = SimpleNamespace(
-            interactions=SimpleNamespace(create=create_interaction)
+    assert result == (b"voicetut-audio", "audio/wav")
+    assert requests == [
+        (
+            "http://careos.test/api/v1/assistant/tts",
+            {"text": "أهلاً بيك", "language": "ar-EG", "voice": "Mariam"},
         )
+    ]
 
 
-def test_generate_speech_audio_reports_missing_api_key_without_fallback() -> None:
-    settings = Settings(_env_file=None, app_env="development", llm_provider="gemini", llm_api_key=None)
-    try:
+def test_generate_speech_audio_requires_careos_endpoint() -> None:
+    settings = Settings(_env_file=None, app_env="development", careos_api_url=None)
+
+    with pytest.raises(TTSGenerationError, match="CAREOS_API_URL"):
         asyncio.run(generate_speech_audio("Hello", settings))
-    except TTSGenerationError as exc:
-        assert "LLM_API_KEY" in str(exc)
-    else:
-        raise AssertionError("Missing Gemini credentials must not return a fallback result")
+
+
+def test_generate_speech_audio_does_not_fallback_when_voicetut_fails() -> None:
+    settings = Settings(
+        _env_file=None,
+        app_env="development",
+        careos_api_url="http://careos.test/api/v1",
+    )
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return httpx.Response(
+                503,
+                request=httpx.Request("POST", "http://careos.test/api/v1/assistant/tts"),
+                json={"detail": "VoiceTut is unavailable"},
+            )
+
+    with pytest.raises(TTSGenerationError, match="temporarily unavailable"):
+        asyncio.run(
+            generate_speech_audio(
+                "Hello",
+                settings,
+                client_factory=lambda **_kwargs: FakeClient(),
+            )
+        )
 
 
 def test_generate_speech_audio_skips_empty_text() -> None:
-    settings = Settings(_env_file=None, app_env="development", llm_provider="gemini", llm_api_key="key")
-    result = asyncio.run(generate_speech_audio("   ", settings))
-    assert result is None
-
-
-def test_generate_speech_audio_synthesizes_wav() -> None:
-    settings = Settings(_env_file=None, app_env="development", llm_provider="gemini", llm_api_key="key")
-    fake_client = FakeTTSClient(b"sample-audio-data")
-
-    result = asyncio.run(
-        generate_speech_audio(
-            "Hello world",
-            settings,
-            client_factory=lambda **kwargs: fake_client,
-        )
-    )
-    assert result is not None
-    data, mime = result
-    assert data == b"sample-audio-data"
-    assert mime == "audio/wav"
-    assert fake_client.request["model"] == "gemini-3.8-flash-tts"
-    assert fake_client.request["generation_config"] == {"speech_config": [{"voice": "Kore"}]}
-    assert fake_client.request["input"][0]["content"][0]["text"] == "Hello world"
-    assert "English (en-US)" in fake_client.request["input"][0]["content"][0]["annotations"][0]["style"]
-
-
-def test_generate_speech_audio_preserves_arabic_and_requests_egyptian_voice() -> None:
-    text = "أهلاً بيك، أنا مساعد كير أوس، أقدر أساعدك في حجز المواعيد."
-    settings = Settings(
-        _env_file=None,
-        app_env="development",
-        llm_provider="gemini",
-        llm_api_key="key",
-        gemini_tts_arabic_voice="Puck",
-    )
-    fake_client = FakeTTSClient()
-
-    result = asyncio.run(
-        generate_speech_audio(
-            text,
-            settings,
-            client_factory=lambda **kwargs: fake_client,
-        )
-    )
-
-    assert result is not None
-    assert fake_client.request["input"][0]["content"][0]["text"] == text
-    assert fake_client.request["generation_config"] == {"speech_config": [{"voice": "Puck"}]}
-    style = fake_client.request["input"][0]["content"][0]["annotations"][0]["style"]
-    assert "Egyptian Arabic (ar-EG)" in style
-
-
-def test_generate_speech_audio_uses_configured_english_voice_for_english() -> None:
-    settings = Settings(
-        _env_file=None,
-        app_env="development",
-        llm_provider="gemini",
-        llm_api_key="key",
-        gemini_tts_english_voice="Zephyr",
-    )
-    fake_client = FakeTTSClient()
-
-    result = asyncio.run(
-        generate_speech_audio(
-            "Your appointment for سارة is confirmed.",
-            settings,
-            client_factory=lambda **kwargs: fake_client,
-        )
-    )
-
-    assert result is not None
-    assert fake_client.request["generation_config"] == {
-        "speech_config": [{"voice": "Zephyr"}]
-    }
-    assert fake_client.request["input"][0]["content"][0]["text"] == (
-        "Your appointment for سارة is confirmed."
-    )
-    style = fake_client.request["input"][0]["content"][0]["annotations"][0]["style"]
-    assert "English (en-US)" in style
-
-
-def test_generate_speech_audio_reports_provider_error_and_redacts_api_key(caplog) -> None:
-    settings = Settings(
-        _env_file=None,
-        app_env="development",
-        llm_provider="gemini",
-        llm_api_key="secret-test-value",
-    )
-
-    class FailingClient:
-        def __init__(self) -> None:
-            async def create_interaction(**kwargs: object) -> None:
-                del kwargs
-                raise RuntimeError(
-                    "API key not valid: AIza123456789012345678901234567890"
-                )
-
-            self.aio = SimpleNamespace(
-                interactions=SimpleNamespace(create=create_interaction)
-            )
-
-    try:
-        asyncio.run(
-            generate_speech_audio(
-                "أهلاً بيك",
-                settings,
-                client_factory=lambda **kwargs: FailingClient(),
-            )
-        )
-    except TTSGenerationError as exc:
-        assert "API key not valid" in str(exc)
-        assert "AIza123456789012345678901234567890" not in str(exc)
-    else:
-        raise AssertionError("Gemini provider errors must be surfaced")
-
-    assert "AIza123456789012345678901234567890" not in caplog.text
+    settings = Settings(_env_file=None, app_env="development", careos_api_url=None)
+    assert asyncio.run(generate_speech_audio("   ", settings)) is None

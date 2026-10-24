@@ -15,8 +15,8 @@ An enterprise-ready **AI Voice Agent & Multi-Agent Reception Backend** designed 
 - **Real-Time Voice & Text Support**:
   - **Single-turn REST API** (`POST /v1/voice/turns`) for chat widgets and transcribed audio.
   - **Server-Sent Events (SSE)** (`POST /v1/voice/turns/stream`) for token-by-token streaming with internal thoughts separated from user replies.
-  - **Bidirectional Live Voice WebSocket** (`WS /v1/voice/live`) powered by Google Gemini Live (`gemini-3.8-live`).
-  - **Text-to-Speech (TTS)** (`POST /v1/voice/tts`) audio synthesis.
+  - **Live Audio Input WebSocket** (`WS /v1/voice/live`) uses Gemini Live for transcription; spoken replies are synthesized by CareOS VoiceTut-TTS.
+  - **Text-to-Speech (TTS)** (`POST /v1/voice/tts`) proxies to CareOS, which tries VoiceTut-TTS first, Edge TTS next, and Google TTS as the final Arabic fallback.
 - **Pure Backend Architecture**: Ready for direct platform integration as a microservice daemon or mounted FastAPI sub-application. Frontend responsibilities remain with the host platform.
 
 ---
@@ -202,6 +202,7 @@ If integrating into the [CareOS Platform](https://github.com/Ezatnasef/careos), 
 ### 1. Prerequisites
 - Python 3.10+ (tested on Python 3.11, 3.12, 3.13)
 - Gemini API key from [Google AI Studio](https://aistudio.google.com/) (for live voice and multilingual translation)
+- `CAREOS_API_URL` must point to the CareOS API configured with `TEXT_TO_SPEECH_PROVIDER=voicetut`. CareOS handles VoiceTut, Edge, and Arabic Google TTS fallbacks; if applicable providers fail, replies remain text-only.
 
 ### 2. Installation
 

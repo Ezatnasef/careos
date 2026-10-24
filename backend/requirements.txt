@@ -11,16 +11,20 @@ argon2-cffi==23.1.0
 cryptography==44.0.2
 python3-saml==1.16.0
 httpx==0.28.1
+gradio_client==1.13.3
+edge-tts==7.3.1
+gTTS==2.5.4
+huggingface-hub>=0.34.0,<1.0
 reportlab==4.4.3
 arabic-reshaper>=3.0.0
 python-bidi>=0.4.2
-edge-tts==6.1.13
 pypdf>=4.0.0
 PyMuPDF>=1.24.0
 python-docx>=1.1.0
 Pillow>=10.0.0
 numpy>=1.26.0
-sentence-transformers>=2.6.0
+sentence-transformers>=2.6.0,<6.0.0
+transformers>=4.45.0,<5.0.0
 langchain-text-splitters>=0.2.0
 # Optional OCR engines (lazy-loaded when installed):
 # paddlepaddle>=2.6.0

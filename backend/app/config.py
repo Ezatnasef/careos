@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     speech_to_text_model: str = "gpt-4o-mini-transcribe"
     speech_to_text_language: str = "ar-EG"
     speech_to_text_diarization: bool = True
-    text_to_speech_provider: str = "edge"
+    text_to_speech_provider: str = "voicetut"
     text_to_speech_api_url: str = ""
     text_to_speech_api_key: str = ""
     text_to_speech_model_id: str = ""
