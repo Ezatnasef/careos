@@ -9684,6 +9684,116 @@ html {
   color: #fff;
 }
 
+/* ═══════════════════════════════════════════════
+   VISITOR MODE (Read-Only Demo Preview)
+   ═══════════════════════════════════════════════ */
 
+/* Floating banner at the bottom */
+.visitor-mode-banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 99990;
+  padding: 0 16px 16px;
+  pointer-events: none;
+  animation: visitorBannerSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.visitor-mode-banner-inner {
+  pointer-events: auto;
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(14, 135, 116, 0.92), rgba(11, 107, 92, 0.95));
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.visitor-mode-banner-inner svg {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.visitor-mode-exit {
+  margin-inline-start: 6px;
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.visitor-mode-exit:hover {
+  background: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+@keyframes visitorBannerSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Disable form submissions and write actions in visitor mode */
+.visitor-mode .page-content form button[type="submit"],
+.visitor-mode .page-content .primary-btn:not(.visitor-mode-exit),
+.visitor-mode .page-content button[aria-label*="delete" i],
+.visitor-mode .page-content button[aria-label*="حذف"],
+.visitor-mode .page-content button[aria-label*="remove" i],
+.visitor-mode .page-content button[aria-label*="إزالة"] {
+  opacity: 0.5;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+/* Visual read-only indicator on inputs */
+.visitor-mode .page-content input:not([type="search"]):not([type="text"]),
+.visitor-mode .page-content textarea,
+.visitor-mode .page-content select {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* Dark mode adjustments */
+.dark-mode .visitor-mode-banner-inner {
+  background: linear-gradient(135deg, rgba(14, 135, 116, 0.88), rgba(8, 80, 68, 0.92));
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+  .visitor-mode-banner-inner {
+    flex-wrap: wrap;
+    font-size: 12px;
+    padding: 8px 14px;
+    gap: 6px;
+  }
+
+  .visitor-mode-exit {
+    font-size: 11px;
+    padding: 4px 10px;
+  }
+}
 
 

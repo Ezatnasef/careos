@@ -3017,7 +3017,21 @@ async def assistant_tts(payload: AssistantTTSInput) -> dict[str, str]:
     is_female = any(name in req_voice for name in ("mariam", "female", "مريم", "مريومة", "نسائي"))
     target_speaker = "Mariam" if is_female else "Mohammed"
 
-    # 1. Primary: EdgeTTS high-speed natural neural voice (Mohammed: ar-EG-ShakirNeural / Mariam: ar-EG-SalmaNeural)
+    # 1. Primary: Authentic VoiceTut-TTS (mohammedaly22/VoiceTut-TTS)
+    try:
+        logger.info("Synthesizing audio with VoiceTut-TTS (speaker=%s) for text=%r", target_speaker, spoken_text[:50])
+        result = await _guest_tts_audio(spoken_text, language, speaker=target_speaker)
+        return {
+            "audio_base64": result["audio_base64"],
+            "audio_mime_type": result.get("audio_content_type", "audio/wav"),
+            "audio_content_type": result.get("audio_content_type", "audio/wav"),
+            "voice": f"VoiceTut-{target_speaker}",
+            "speaker": target_speaker,
+        }
+    except Exception as vt_exc:
+        logger.warning("VoiceTut space attempt: %s, using fallback for speaker %s", vt_exc, target_speaker)
+
+    # 2. Resilient fallback: High-speed Natural Neural Voice (distinguishes Mohamed vs Mariam)
     try:
         from .integrations import EdgeTTSProvider
         edge = EdgeTTSProvider()
@@ -3030,23 +3044,7 @@ async def assistant_tts(payload: AssistantTTSInput) -> dict[str, str]:
             "speaker": target_speaker,
         }
     except Exception as edge_exc:
-        logger.warning("EdgeTTS attempt note: %s, trying VoiceTut space fallback", edge_exc)
-
-    # 2. Secondary fallback: VoiceTut-TTS Space
-    try:
-        result = await _guest_tts_audio(spoken_text, language, speaker=target_speaker)
-        return {
-            "audio_base64": result["audio_base64"],
-            "audio_mime_type": result.get("audio_content_type", "audio/wav"),
-            "audio_content_type": result.get("audio_content_type", "audio/wav"),
-            "voice": f"VoiceTut-{target_speaker}",
-            "speaker": target_speaker,
-        }
-    except Exception as vt_exc:
-        logger.warning("VoiceTut space attempt note: %s, trying gTTS fallback", vt_exc)
-
-    # 3. Third resilient fallback: gTTS
-    try:
+        logger.warning("Edge fallback attempt: %s, trying gTTS", edge_exc)
         from .integrations import GTTSTTSProvider
         gtts = GTTSTTSProvider()
         audio_data = await gtts.synthesize(spoken_text, speaker=target_speaker, language=language)
@@ -3057,9 +3055,6 @@ async def assistant_tts(payload: AssistantTTSInput) -> dict[str, str]:
             "voice": f"VoiceTut-{target_speaker}",
             "speaker": target_speaker,
         }
-    except Exception as gtts_exc:
-        logger.error("All TTS fallbacks failed: %s", gtts_exc)
-        raise HTTPException(status_code=503, detail="TTS synthesis temporarily unavailable")
 
 
 @router.post("/assistant/guest-chat", tags=["ai"])

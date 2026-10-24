@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ShieldCheck } from "lucide-react";
+import { Eye, ShieldCheck } from "lucide-react";
 import { LoadingState } from "../components/LoadingState";
 import { bootstrapAuth, bootstrapPortalAuth } from "./authBootstrap";
 import { navigateToView, viewFromLocation, type AppView } from "./routes";
@@ -46,6 +46,7 @@ export default function AppShell() {
   const [authStatus, setAuthStatus] = useState<"checking" | "authenticated" | "unauthenticated">("checking");
   const [onboardingComplete, setOnboardingComplete] = useState(() => localStorage.getItem("careos-onboarding-complete") === "true");
   const [portalMode, setPortalMode] = useState(false);
+  const [visitorMode, setVisitorMode] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -207,14 +208,14 @@ export default function AppShell() {
     return () => { active = false; };
   }, []);
 
-  const handleDemoLogin = async (account: DemoAccount, customName?: string) => {
+  const handleDemoLogin = async (account: DemoAccount, customName?: string, isVisitor?: boolean) => {
     try {
       const result = await apiDemoLogin(account.role, account.username, account.password);
       if (result.portal_access_token) {
         setPortalMode(true);
         setDoctorName(customName || result.user.full_name);
         setUserRole("patient");
-        setUserPermissions([]);
+        setUserPermissions(isVisitor ? [] : []);
         setView("portal");
         setOnboardingComplete(true);
         navigateToView("portal");
@@ -233,7 +234,7 @@ export default function AppShell() {
           : user.full_name;
         setDoctorName(displayName);
         setUserRole(normalizeFrontendRole(user.role));
-        setUserPermissions(user.permissions ?? []);
+        setUserPermissions(isVisitor ? [] : (user.permissions ?? []));
         setDepartment(user.department || "General Medicine");
         setProject(user.project || "Demo workspace");
         setOnboardingComplete(Boolean(user.onboarding_complete));
@@ -241,6 +242,7 @@ export default function AppShell() {
         localStorage.setItem("careos-active-view", "dashboard");
         navigateToView("dashboard");
       }
+      setVisitorMode(!!isVisitor);
       setShowLanding(false);
       setAuthStatus("authenticated");
     } catch (error) {
@@ -253,7 +255,7 @@ export default function AppShell() {
   if (!loggedIn) return <LoginRoute theme={theme} language={language} setLanguage={setLanguage} initialMode={loginMode} initialAccessMethod={loginAccessMethod} onBackHome={() => { setShowLanding(true); window.location.hash = ""; }} t={t} onDemoLogin={handleDemoLogin} onLogin={async ({ mode, email, password, fullName, organizationName, authMethod, role, department: nextDepartment = "", project: nextProject = "", patientData }) => { try { if (authMethod === "sso") { const start = await startHospitalSso("hospital_sso", email); sessionStorage.setItem("careos-sso-state", start.state); window.location.assign(start.redirect_url); return; } if (role === "patient") { if (patientData) { localStorage.setItem("careos-patient-profile", JSON.stringify(patientData)); } try { const result = mode === "signup" ? await portalSignUp({ full_name: fullName, email, password, phone: patientData?.phone || "", national_id: patientData?.nationalId, date_of_birth: patientData?.dateOfBirth, gender: patientData?.gender, blood_type: patientData?.bloodType, emergency_contact: patientData?.emergencyContact, chronic_conditions: patientData?.chronicConditions, allergies: patientData?.allergies, address: patientData?.address }) : await portalLogin(email, password); setDoctorName(result.user.full_name || fullName || "مريض CareOS"); } catch (err) { notify(err instanceof Error ? err.message : "فشل تسجيل الدخول أو إنشاء الحساب"); return; } setPortalMode(true); setUserRole("patient"); setUserPermissions([]); setOnboardingComplete(true); setAuthStatus("authenticated"); setView("portal"); localStorage.setItem("careos-active-view", "portal"); navigateToView("portal"); return; } const result = mode === "signup" ? await apiRegister(email, password, fullName, organizationName, nextDepartment, nextProject) : await apiLogin(email, password); setDoctorName(result.user.full_name); setUserRole(normalizeFrontendRole(result.user.role)); setUserPermissions(result.user.permissions ?? []); setDepartment(result.user.department || "General Medicine"); setProject(result.user.project || "Outpatient"); setLoginAccessMethod(authMethod); setOnboardingComplete(Boolean(result.user.onboarding_complete)); setView("dashboard"); localStorage.setItem("careos-active-view", "dashboard"); navigateToView("dashboard"); setAuthStatus("authenticated"); } catch (error) { notify(error instanceof Error ? error.message : "Could not connect to the server."); } }} />;
   if (!onboardingComplete) return <Onboarding language={language} setLanguage={changeLanguage} t={t} complete={async (name, dept = "General Medicine", tz = "Africa/Cairo") => { try { await Promise.race([completeOrganization(name, dept, tz), new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Workspace setup timed out")), 5000))]); localStorage.setItem("careos-onboarding-complete", "true"); setDepartment(dept); setOnboardingComplete(true); } catch (error) { notify(error instanceof Error ? error.message : "Could not complete workspace setup."); } }} onBack={() => { setAuthStatus("unauthenticated"); setOnboardingComplete(false); }} />;
 
-  const logout = async () => { await apiLogout(); setUserPermissions([]); setUserRole("receptionist"); setAuthStatus("unauthenticated"); };
+  const logout = async () => { await apiLogout(); setUserPermissions([]); setUserRole("receptionist"); setAuthStatus("unauthenticated"); setVisitorMode(false); };
   const pages: Partial<Record<AppView, ReactNode>> = {
     dashboard: <RoleDashboard key={userRole} onNavigate={changeView} doctorName={doctorName} t={t} role={userRole} department={department} project={project} language={language} />,
     patients: <Patients t={t} department={department} project={project} canCreatePatient={userPermissions.includes("patients.create")} onNavigate={(next) => changeView(next)} />,
@@ -277,5 +279,5 @@ export default function AppShell() {
     contacts: <ContactDirectory t={t} language={language} />,
   };
   const activeView = portalMode && view !== "account" ? "portal" : canAccessView(userRole, view, userPermissions) ? view : firstAllowedView(userRole, userPermissions);
-    return <div className={`app-shell ${theme === "dark" ? "dark-mode" : ""}`} dir={language === "ar" ? "rtl" : "ltr"}><Sidebar view={activeView} setView={changeView} mobileNav={mobileNav} setMobileNav={setMobileNav} language={language} doctorName={doctorName} role={userRole} permissions={userPermissions} t={t} />{mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label={t("openNavigation")} />}<main className="main-content"><Header view={activeView} language={language} setLanguage={changeLanguage} setMobileNav={setMobileNav} showNotifications={showNotifications} setShowNotifications={setShowNotifications} theme={theme} setTheme={changeTheme} onHelp={() => setHelpOpen(true)} onAccount={() => changeView("account")} onNavigate={changeView} t={t} role={userRole} allowDemoRoleSwitch={false} onRoleChange={(newRole) => { setUserRole(newRole); setUserPermissions(rolePermissions[newRole] || []); const nextView = newRole === "patient" ? "portal" : "dashboard"; setPortalMode(newRole === "patient"); setView(nextView); localStorage.setItem("careos-active-view", nextView); navigateToView(nextView); }} /><div className="page-content">{pages[activeView] ?? pages.dashboard}</div></main>{helpOpen && <div className="modal-backdrop" onClick={() => setHelpOpen(false)}><div className="modal" onClick={(event) => event.stopPropagation()}><h2>{t("helpTitle")}</h2><p>{t("helpBody")}</p><button className="primary-btn" onClick={() => setHelpOpen(false)}>{t("close")}</button></div></div>}{toast && <div className="toast" role="status">{toast}</div>}</div>;
+    return <div className={`app-shell ${theme === "dark" ? "dark-mode" : ""} ${visitorMode ? "visitor-mode" : ""}`} dir={language === "ar" ? "rtl" : "ltr"}><Sidebar view={activeView} setView={changeView} mobileNav={mobileNav} setMobileNav={setMobileNav} language={language} doctorName={doctorName} role={userRole} permissions={userPermissions} t={t} />{mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label={t("openNavigation")} />}<main className="main-content"><Header view={activeView} language={language} setLanguage={changeLanguage} setMobileNav={setMobileNav} showNotifications={showNotifications} setShowNotifications={setShowNotifications} theme={theme} setTheme={changeTheme} onHelp={() => setHelpOpen(true)} onAccount={() => changeView("account")} onNavigate={changeView} t={t} role={userRole} allowDemoRoleSwitch={false} onRoleChange={(newRole) => { setUserRole(newRole); setUserPermissions(rolePermissions[newRole] || []); const nextView = newRole === "patient" ? "portal" : "dashboard"; setPortalMode(newRole === "patient"); setView(nextView); localStorage.setItem("careos-active-view", nextView); navigateToView(nextView); }} /><div className="page-content">{pages[activeView] ?? pages.dashboard}</div></main>{visitorMode && <div className="visitor-mode-banner" dir={language === "ar" ? "rtl" : "ltr"}><div className="visitor-mode-banner-inner"><Eye size={16} /><span>{language === "ar" ? "وضع العرض التجريبي — البيانات المعروضة تجريبية وليست حقيقية" : "Demo Preview Mode — All displayed data is simulated"}</span><button className="visitor-mode-exit" onClick={() => { setVisitorMode(false); setAuthStatus("unauthenticated"); setShowLanding(true); window.location.hash = ""; }}>{language === "ar" ? "العودة للصفحة الرئيسية" : "Back to Home"}</button></div></div>}{helpOpen && <div className="modal-backdrop" onClick={() => setHelpOpen(false)}><div className="modal" onClick={(event) => event.stopPropagation()}><h2>{t("helpTitle")}</h2><p>{t("helpBody")}</p><button className="primary-btn" onClick={() => setHelpOpen(false)}>{t("close")}</button></div></div>}{toast && <div className="toast" role="status">{toast}</div>}</div>;
 }

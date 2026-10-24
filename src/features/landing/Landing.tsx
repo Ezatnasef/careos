@@ -59,7 +59,7 @@ type Props = {
   language: Language;
   setLanguage: (language: Language) => void;
   onEnter: (mode?: "signin" | "signup") => void;
-  onDemoLogin?: (account: DemoAccount, customName?: string) => void;
+  onDemoLogin?: (account: DemoAccount, customName?: string, isVisitor?: boolean) => void;
   t: Translator;
   theme: Theme;
   setTheme: (theme: Theme) => void;
@@ -113,7 +113,7 @@ export function Landing({
           ? `تسجيل دخول وتجربة عبر Google OAuth - الدور: ${user.role === "patient" ? "مريض" : "طبيب"}`
           : `Visitor verified via Google Sign-In - Role: ${user.role || "doctor"}`,
       });
-    } catch {}
+    } catch { }
 
     const isPatient = user.role === "patient";
     const targetAccount = isPatient
@@ -132,7 +132,7 @@ export function Landing({
     setTimeout(() => {
       setGoogleSuccessToast("");
       if (onDemoLogin) {
-        onDemoLogin(targetAccount, user.fullName);
+        onDemoLogin(targetAccount, user.fullName, true);
       } else {
         onEnter("signin");
       }
@@ -164,33 +164,25 @@ export function Landing({
     return "Mohammed";
   });
 
+  const handleVoiceSelect = (voice: string) => {
+    setPreferredVoice(voice);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("careos-preferred-voice", voice);
+    }
+  };
+
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
-  const audioRequestIdRef = useRef<number>(0);
-  const audioAbortControllerRef = useRef<AbortController | null>(null);
   const [playingMessageId, setPlayingMessageId] = useState<number | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
   const stopVoicePlayback = () => {
-    if (audioAbortControllerRef.current) {
-      audioAbortControllerRef.current.abort();
-      audioAbortControllerRef.current = null;
-    }
     if (activeAudioRef.current) {
       activeAudioRef.current.pause();
-      activeAudioRef.current.src = "";
       activeAudioRef.current = null;
     }
     setIsPlayingAudio(false);
     setPlayingMessageId(null);
     setIsVoiceOrbActive(false);
-  };
-
-  const handleVoiceSelect = (voice: string) => {
-    stopVoicePlayback();
-    setPreferredVoice(voice);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("careos-preferred-voice", voice);
-    }
   };
 
   useEffect(
@@ -200,7 +192,7 @@ export function Landing({
       if (speechRecognitionRef.current) {
         try {
           speechRecognitionRef.current.stop();
-        } catch {}
+        } catch { }
       }
       voiceStream.current?.getTracks().forEach((track) => track.stop());
     },
@@ -209,21 +201,12 @@ export function Landing({
 
   const speakReplyWithGemini = async (text: string | null, messageId?: number) => {
     if (!text?.trim()) return;
-
-    audioRequestIdRef.current += 1;
-    const currentRequestId = audioRequestIdRef.current;
-
     stopVoicePlayback();
-
-    const abortController = new AbortController();
-    audioAbortControllerRef.current = abortController;
-
     setVoicePlaybackError("");
     setIsVoiceTtsLoading(true);
     if (messageId !== undefined) {
       setPlayingMessageId(messageId);
     }
-
     try {
       type TTSResponsePayload = { audio_base64?: string; audio_mime_type?: string; detail?: string };
       let payload: TTSResponsePayload | null = null;
@@ -234,12 +217,11 @@ export function Landing({
       const endpoints = [
         "/api/v1/assistant/tts",
         "/api/v1/voice/tts",
+        "http://127.0.0.1:8003/api/v1/assistant/tts",
+        "http://127.0.0.1:8003/api/v1/voice/tts",
       ];
 
       for (const endpoint of endpoints) {
-        if (currentRequestId !== audioRequestIdRef.current || abortController.signal.aborted) {
-          return;
-        }
         try {
           const response = await fetch(endpoint, {
             method: "POST",
@@ -249,7 +231,6 @@ export function Landing({
               language: isArabic ? "ar-EG" : "en-US",
               voice: voiceName,
             }),
-            signal: abortController.signal,
           });
           const parsed = (await response.json().catch(() => null)) as TTSResponsePayload | null;
           if (response.ok && parsed?.audio_base64) {
@@ -260,10 +241,6 @@ export function Landing({
         } catch {
           // Continue to next endpoint
         }
-      }
-
-      if (currentRequestId !== audioRequestIdRef.current || abortController.signal.aborted) {
-        return;
       }
 
       // Play authentic Egyptian neural voice (Mohammed or Mariam):
@@ -278,7 +255,6 @@ export function Landing({
         const audio = new Audio(audioUrl);
         activeAudioRef.current = audio;
         setIsPlayingAudio(true);
-
         const cleanup = () => {
           URL.revokeObjectURL(audioUrl);
           if (activeAudioRef.current === audio) {
@@ -288,11 +264,13 @@ export function Landing({
           setPlayingMessageId(null);
           setIsVoiceOrbActive(false);
         };
-
         setIsVoiceOrbActive(true);
-        audio.onended = cleanup;
-        audio.onerror = cleanup;
-
+        audio.onended = () => {
+          cleanup();
+        };
+        audio.onerror = () => {
+          cleanup();
+        };
         try {
           await audio.play();
           return;
@@ -303,7 +281,6 @@ export function Landing({
 
       throw new Error(payload?.detail || (isArabic ? "تعذّر تشغيل الصوت العصبي" : "Failed to synthesize neural voice"));
     } catch (error) {
-      if (currentRequestId !== audioRequestIdRef.current) return;
       const detail = error instanceof Error ? error.message : "TTS error.";
       setVoicePlaybackError(
         `${isArabic ? "تعذّر تشغيل الصوت المصري" : "Voice playback failed"}: ${detail}`,
@@ -311,9 +288,7 @@ export function Landing({
       setPlayingMessageId(null);
       setIsPlayingAudio(false);
     } finally {
-      if (currentRequestId === audioRequestIdRef.current) {
-        setIsVoiceTtsLoading(false);
-      }
+      setIsVoiceTtsLoading(false);
     }
   };
 
@@ -469,7 +444,7 @@ export function Landing({
       if (speechRecognitionRef.current) {
         try {
           speechRecognitionRef.current.stop();
-        } catch {}
+        } catch { }
         speechRecognitionRef.current = null;
       }
       if (voiceRecorder.current?.state === "recording") {
@@ -567,150 +542,149 @@ export function Landing({
     detailAr: string;
     icon: ReactNode;
   }> = [
-    {
-      role: "doctor",
-      account: demoAccounts.find((a) => a.role === "doctor") || demoAccounts[1],
-      titleEn: "Physician & Doctor",
-      titleAr: "بوابة الأطباء (Doctor)",
-      badgeEn: "Clinical Care",
-      badgeAr: "العيادة والملاحظات",
-      detailEn: "Consultations, AI note drafts, active patient files, and scheduled appointments.",
-      detailAr: "إدارة الاستشارات، مسودات الملاحظات السريرية، ملفات المرضى، وجدول المواعيد.",
-      icon: <Stethoscope size={24} />,
-    },
-    {
-      role: "admin",
-      account: demoAccounts.find((a) => a.role === "admin") || demoAccounts[0],
-      titleEn: "System Administrator",
-      titleAr: "إدارة المنظومة (Admin)",
-      badgeEn: "Operations & Governance",
-      badgeAr: "الإدارة والتحكم",
-      detailEn: "Clinic settings, audit logs, staff delegation, department management, and security.",
-      detailAr: "إعدادات المنشأة، سجلات التدقيق، إدارة الطاقم والأقسام، وصلاحيات الأمان.",
-      icon: <ShieldCheck size={24} />,
-    },
-    {
-      role: "patient",
-      account: demoAccounts.find((a) => a.role === "patient") || demoAccounts[7],
-      titleEn: "Patient Portal",
-      titleAr: "بوابة المريض (Patient)",
-      badgeEn: "Personal Health",
-      badgeAr: "ملفي الصحي",
-      detailEn: "View upcoming clinic visits, approved lab reports, medical history, and care plans.",
-      detailAr: "استعراض المواعيد القادمة، نتائج التحاليل المعتمدة، الملف الطبي، والتواصل مع الطبيب.",
-      icon: <UserCheck size={24} />,
-    },
-    {
-      role: "nurse",
-      account: demoAccounts.find((a) => a.role === "nurse") || demoAccounts[2],
-      titleEn: "Nursing & Reception Staff",
-      titleAr: "طاقم التمريض والاستقبال",
-      badgeEn: "Care Workflow",
-      badgeAr: "سير العمليات والفرز",
-      detailEn: "Patient triage queue, check-in, vital signs, care plans, and daily clinic flow.",
-      detailAr: "قوائم الفرز، تسجيل حضور المرضى، العلامات الحيوية، وتنسيق تدفق العيادة اليومي.",
-      icon: <Activity size={24} />,
-    },
-  ];
+      {
+        role: "doctor",
+        account: demoAccounts.find((a) => a.role === "doctor") || demoAccounts[1],
+        titleEn: "Physician & Doctor",
+        titleAr: "بوابة الأطباء (Doctor)",
+        badgeEn: "Clinical Care",
+        badgeAr: "العيادة والملاحظات",
+        detailEn: "Consultations, AI note drafts, active patient files, and scheduled appointments.",
+        detailAr: "إدارة الاستشارات، مسودات الملاحظات السريرية، ملفات المرضى، وجدول المواعيد.",
+        icon: <Stethoscope size={24} />,
+      },
+      {
+        role: "admin",
+        account: demoAccounts.find((a) => a.role === "admin") || demoAccounts[0],
+        titleEn: "System Administrator",
+        titleAr: "إدارة المنظومة (Admin)",
+        badgeEn: "Operations & Governance",
+        badgeAr: "الإدارة والتحكم",
+        detailEn: "Clinic settings, audit logs, staff delegation, department management, and security.",
+        detailAr: "إعدادات المنشأة، سجلات التدقيق، إدارة الطاقم والأقسام، وصلاحيات الأمان.",
+        icon: <ShieldCheck size={24} />,
+      },
+      {
+        role: "patient",
+        account: demoAccounts.find((a) => a.role === "patient") || demoAccounts[7],
+        titleEn: "Patient Portal",
+        titleAr: "بوابة المريض (Patient)",
+        badgeEn: "Personal Health",
+        badgeAr: "ملفي الصحي",
+        detailEn: "View upcoming clinic visits, approved lab reports, medical history, and care plans.",
+        detailAr: "استعراض المواعيد القادمة، نتائج التحاليل المعتمدة، الملف الطبي، والتواصل مع الطبيب.",
+        icon: <UserCheck size={24} />,
+      },
+      {
+        role: "nurse",
+        account: demoAccounts.find((a) => a.role === "nurse") || demoAccounts[2],
+        titleEn: "Nursing & Reception Staff",
+        titleAr: "طاقم التمريض والاستقبال",
+        badgeEn: "Care Workflow",
+        badgeAr: "سير العمليات والفرز",
+        detailEn: "Patient triage queue, check-in, vital signs, care plans, and daily clinic flow.",
+        detailAr: "قوائم الفرز، تسجيل حضور المرضى، العلامات الحيوية، وتنسيق تدفق العيادة اليومي.",
+        icon: <Activity size={24} />,
+      },
+    ];
 
   const copy = isArabic
     ? {
-        title: "رعاية تفكر معك.",
-        detail:
-          "CareOS مساحة عمل SaaS موجهة للفرق الطبية: تلخيص فوري للملاحظات، اقتراحات مبنية على مصادر واضحة، وجدولة أذكى، مع بقاء القرار النهائي للطبيب.",
-        primary: "احجز عرض تجريبي",
-        secondary: "شاهد كيف يعمل",
-      }
+      title: "رعاية تفكر معك.",
+      detail:
+        "CareOS مساحة عمل SaaS موجهة للفرق الطبية: تلخيص فوري للملاحظات، اقتراحات مبنية على مصادر واضحة، وجدولة أذكى، مع بقاء القرار النهائي للطبيب.",
+      primary: "احجز عرض تجريبي",
+      secondary: "شاهد كيف يعمل",
+    }
     : {
-        title: "Care that thinks with you.",
-        detail:
-          "CareOS is a clinician workflow workspace: draft summarization, smarter scheduling, clear review queues, and the physician stays in control at the end of every workflow.",
-        primary: "Book a demo",
-        secondary: "See how it works",
-      };
+      title: "Care that thinks with you.",
+      detail:
+        "CareOS is a clinician workflow workspace: draft summarization, smarter scheduling, clear review queues, and the physician stays in control at the end of every workflow.",
+      primary: "Book a demo",
+      secondary: "See how it works",
+    };
   const features = isArabic
     ? [
-        {
-          icon: <BookOpen />,
-          title: "تلخيص AI",
-          detail: "حوّل الملاحظة الحرة إلى مسودة منظمة قبل الاعتماد.",
-        },
-        {
-          icon: <Database />,
-          title: "دعم صياغة سريرية",
-          detail: "جهّز مسودات منظمة ومراجعات بشرية دون إجراءات آلية.",
-        },
-        {
-          icon: <CalendarDays />,
-          title: "إدارة مواعيد ذكية",
-          detail: "نسّق اليوميّة وذكّر الفريق من نفس الواجهة.",
-        },
-        {
-          icon: <ShieldCheck />,
-          title: "حوكمة وأمان مؤسسي",
-          detail: "صلاحيات واضحة وسجل تدقيق يساعد فريقك على العمل بثقة.",
-        },
-        {
-          icon: <FileText />,
-          title: "ملف مريض منظم",
-          detail: "اجمع المستندات والملاحظات في سياق واضح يسهل الرجوع إليه.",
-        },
-        {
-          icon: <Mic />,
-          title: "إدخال صوتي",
-          detail: "دوّن الملاحظات أثناء التحدث وتابعها مباشرة داخل السجل الطبي.",
-        },
-        {
-          icon: <MessageCircle />,
-          title: "سير مراجعة طبيب",
-          detail: "احتفظ بالأسئلة والمسودات وموافقة الطبيب داخل سير العمل السريري بدلًا من إجراءات تلقائية.",
-        },
-      ]
+      {
+        icon: <BookOpen />,
+        title: "تلخيص AI",
+        detail: "حوّل الملاحظة الحرة إلى مسودة منظمة قبل الاعتماد.",
+      },
+      {
+        icon: <Database />,
+        title: "دعم صياغة سريرية",
+        detail: "جهّز مسودات منظمة ومراجعات بشرية دون إجراءات آلية.",
+      },
+      {
+        icon: <CalendarDays />,
+        title: "إدارة مواعيد ذكية",
+        detail: "نسّق اليوميّة وذكّر الفريق من نفس الواجهة.",
+      },
+      {
+        icon: <ShieldCheck />,
+        title: "حوكمة وأمان مؤسسي",
+        detail: "صلاحيات واضحة وسجل تدقيق يساعد فريقك على العمل بثقة.",
+      },
+      {
+        icon: <FileText />,
+        title: "ملف مريض منظم",
+        detail: "اجمع المستندات والملاحظات في سياق واضح يسهل الرجوع إليه.",
+      },
+      {
+        icon: <Mic />,
+        title: "إدخال صوتي",
+        detail: "دوّن الملاحظات أثناء التحدث وتابعها مباشرة داخل السجل الطبي.",
+      },
+      {
+        icon: <MessageCircle />,
+        title: "سير مراجعة طبيب",
+        detail: "احتفظ بالأسئلة والمسودات وموافقة الطبيب داخل سير العمل السريري بدلًا من إجراءات تلقائية.",
+      },
+    ]
     : [
-        {
-          icon: <BookOpen />,
-          title: "AI summarization",
-          detail:
-            "Turn a free-form note into an editable draft before sign-off.",
-        },
-        {
-          icon: <Database />,
-          title: "Clinical drafting support",
-          detail:
-            "Prepare structured drafts and review queues without autonomous actions.",
-        },
-        {
-          icon: <CalendarDays />,
-          title: "Smart scheduling",
-          detail: "Keep appointments and follow-ups moving from one place.",
-        },
-        {
-          icon: <ShieldCheck />,
-          title: "Governed operations",
-          detail: "Clear permissions and an audit trail for accountable care teams.",
-        },
-        {
-          icon: <FileText />,
-          title: "Organized patient records",
-          detail: "Keep documents and notes together in a context your team can trust.",
-        },
-        {
-          icon: <Mic />,
-          title: "Voice capture",
-          detail: "Dictate notes in real time and turn them into structured clinical context.",
-        },
-        {
-          icon: <MessageCircle />,
-          title: "Clinician review workflow",
-          detail: "Keep questions, drafts, and sign-off steps inside the clinical workflow instead of autonomous actions.",
-        },
-      ];
+      {
+        icon: <BookOpen />,
+        title: "AI summarization",
+        detail:
+          "Turn a free-form note into an editable draft before sign-off.",
+      },
+      {
+        icon: <Database />,
+        title: "Clinical drafting support",
+        detail:
+          "Prepare structured drafts and review queues without autonomous actions.",
+      },
+      {
+        icon: <CalendarDays />,
+        title: "Smart scheduling",
+        detail: "Keep appointments and follow-ups moving from one place.",
+      },
+      {
+        icon: <ShieldCheck />,
+        title: "Governed operations",
+        detail: "Clear permissions and an audit trail for accountable care teams.",
+      },
+      {
+        icon: <FileText />,
+        title: "Organized patient records",
+        detail: "Keep documents and notes together in a context your team can trust.",
+      },
+      {
+        icon: <Mic />,
+        title: "Voice capture",
+        detail: "Dictate notes in real time and turn them into structured clinical context.",
+      },
+      {
+        icon: <MessageCircle />,
+        title: "Clinician review workflow",
+        detail: "Keep questions, drafts, and sign-off steps inside the clinical workflow instead of autonomous actions.",
+      },
+    ];
   const nav = (next: typeof page) => setPage(next);
   return (
     <div
-      className={`landing-page ${theme === "dark" ? "dark-mode-landing" : ""} ${
-        isMobilePreview ? "force-mobile" : ""
-      }`}
+      className={`landing-page ${theme === "dark" ? "dark-mode-landing" : ""} ${isMobilePreview ? "force-mobile" : ""
+        }`}
       dir={isArabic ? "rtl" : "ltr"}
     >
       <header className="landing-nav landing-enter-nav">
@@ -1086,12 +1060,12 @@ export function Landing({
                         )
                         : "CareOS Clinical AI Assistant"
                       : page === "demo"
-                      ? isArabic
-                        ? "التغطية الشاملة والحوكمة الطبية"
-                        : "Hospital Ecosystem & Clinical Governance"
-                      : isArabic
-                        ? "تواصل معنا واحجز عرضاً تجريبياً لمستشفاك"
-                        : "Request a Hospital Demo"}
+                        ? isArabic
+                          ? "التغطية الشاملة والحوكمة الطبية"
+                          : "Hospital Ecosystem & Clinical Governance"
+                        : isArabic
+                          ? "تواصل معنا واحجز عرضاً تجريبياً لمستشفاك"
+                          : "Request a Hospital Demo"}
               </h2>
             </div>
             {page === "assistant" ? (
@@ -1349,10 +1323,10 @@ export function Landing({
                                   style={
                                     playingMessageId === message.id
                                       ? {
-                                          background: "rgba(239, 68, 68, 0.15)",
-                                          color: "#ef4444",
-                                          borderColor: "rgba(239, 68, 68, 0.35)",
-                                        }
+                                        background: "rgba(239, 68, 68, 0.15)",
+                                        color: "#ef4444",
+                                        borderColor: "rgba(239, 68, 68, 0.35)",
+                                      }
                                       : undefined
                                   }
                                 >
@@ -1602,7 +1576,7 @@ export function Landing({
                     ? "مقارنة سريرية شاملة"
                     : "Clinical Systems Comparison"}
                 </div>
-                
+
                 <div className="problem-comparison-grid">
                   <div className="problem-compare-card before">
                     <div className="compare-badge before">
@@ -1699,7 +1673,7 @@ export function Landing({
                     ? "منظومة المستشفى المتكاملة"
                     : "Hospital Ecosystem & Governance"}
                 </div>
-                
+
                 {/* 1. التغطية الشاملة لمنشأتك */}
                 <div className="landing-ecosystem-header">
                   <h3>
@@ -1859,7 +1833,7 @@ export function Landing({
                     ? "طلب استشارة وعرض تجريبي"
                     : "Hospital Demo Request"}
                 </div>
-                
+
                 <div className="contact-enhanced-grid">
                   <div className="contact-card-box">
                     <h3 className="contact-form-title">

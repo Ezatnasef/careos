@@ -69,11 +69,8 @@ export function PatientVoiceAssistant({
   const [isThinking, setIsThinking] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
+  const [activeAudioElement, setActiveAudioElement] = useState<HTMLAudioElement | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<string>("");
-
-  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
-  const audioRequestIdRef = useRef<number>(0);
-  const audioAbortControllerRef = useRef<AbortController | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -88,54 +85,42 @@ export function PatientVoiceAssistant({
     }
   }, [messages, isThinking]);
 
-  const stopActiveAudio = () => {
-    if (audioAbortControllerRef.current) {
-      audioAbortControllerRef.current.abort();
-      audioAbortControllerRef.current = null;
-    }
-    if (activeAudioRef.current) {
-      activeAudioRef.current.pause();
-      activeAudioRef.current.src = "";
-      activeAudioRef.current = null;
-    }
-    setIsPlayingAudio(false);
-    setPlayingMessageId(null);
-  };
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (activeAudioElement) {
+        activeAudioElement.pause();
+      }
+      if (speechRecognitionRef.current) {
+        try {
+          speechRecognitionRef.current.stop();
+        } catch { }
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [activeAudioElement]);
 
   const handleVoiceSelect = (voice: string) => {
-    stopActiveAudio();
     setPreferredVoice(voice);
     if (typeof window !== "undefined") {
       localStorage.setItem("careos-preferred-voice", voice);
     }
   };
 
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      stopActiveAudio();
-      if (speechRecognitionRef.current) {
-        try {
-          speechRecognitionRef.current.stop();
-        } catch {}
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, []);
+  const stopActiveAudio = () => {
+    if (activeAudioElement) {
+      activeAudioElement.pause();
+      setActiveAudioElement(null);
+    }
+    setIsPlayingAudio(false);
+    setPlayingMessageId(null);
+  };
 
   const playSynthesizedSpeech = async (text: string, messageId?: string) => {
     if (!text?.trim()) return;
-
-    audioRequestIdRef.current += 1;
-    const currentRequestId = audioRequestIdRef.current;
-
     stopActiveAudio();
-
-    const abortController = new AbortController();
-    audioAbortControllerRef.current = abortController;
-
     setIsPlayingAudio(true);
     if (messageId) setPlayingMessageId(messageId);
 
@@ -143,12 +128,11 @@ export function PatientVoiceAssistant({
       const endpoints = [
         "/api/v1/assistant/tts",
         "/api/v1/voice/tts",
+        "http://127.0.0.1:8003/api/v1/assistant/tts",
+        "http://127.0.0.1:8003/api/v1/voice/tts",
       ];
 
       for (const endpoint of endpoints) {
-        if (currentRequestId !== audioRequestIdRef.current || abortController.signal.aborted) {
-          return;
-        }
         try {
           const resp = await fetch(endpoint, {
             method: "POST",
@@ -158,15 +142,11 @@ export function PatientVoiceAssistant({
               language: isArabic ? "ar-EG" : "en-US",
               voice: preferredVoice,
             }),
-            signal: abortController.signal,
           });
           if (resp.ok) {
             const data = await resp.json();
             if (data?.audio_base64) {
-              if (currentRequestId !== audioRequestIdRef.current || abortController.signal.aborted) {
-                return;
-              }
-              const mime = data.audio_mime_type || "audio/mpeg";
+              const mime = data.audio_mime_type || "audio/wav";
               const binary = atob(data.audio_base64);
               const bytes = new Uint8Array(binary.length);
               for (let i = 0; i < binary.length; i++) {
@@ -174,19 +154,20 @@ export function PatientVoiceAssistant({
               }
               const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
               const audio = new Audio(blobUrl);
-              activeAudioRef.current = audio;
+              setActiveAudioElement(audio);
 
-              const cleanup = () => {
+              audio.onended = () => {
                 URL.revokeObjectURL(blobUrl);
-                if (activeAudioRef.current === audio) {
-                  activeAudioRef.current = null;
-                }
                 setIsPlayingAudio(false);
                 setPlayingMessageId(null);
+                setActiveAudioElement(null);
               };
-
-              audio.onended = cleanup;
-              audio.onerror = cleanup;
+              audio.onerror = () => {
+                URL.revokeObjectURL(blobUrl);
+                setIsPlayingAudio(false);
+                setPlayingMessageId(null);
+                setActiveAudioElement(null);
+              };
 
               await audio.play();
               return;
@@ -197,12 +178,8 @@ export function PatientVoiceAssistant({
         }
       }
     } catch {
-      // Ignore abort
-    } finally {
-      if (currentRequestId === audioRequestIdRef.current && !activeAudioRef.current) {
-        setIsPlayingAudio(false);
-        setPlayingMessageId(null);
-      }
+      setIsPlayingAudio(false);
+      setPlayingMessageId(null);
     }
   };
 
@@ -347,10 +324,10 @@ export function PatientVoiceAssistant({
             setVoiceStatus(text);
           }
         };
-        recognition.onerror = () => {};
+        recognition.onerror = () => { };
         recognition.start();
         speechRecognitionRef.current = recognition;
-      } catch {}
+      } catch { }
     }
 
     try {
@@ -382,7 +359,7 @@ export function PatientVoiceAssistant({
       setIsRecording(true);
     } catch {
       if (speechRecognitionRef.current) {
-        try { speechRecognitionRef.current.stop(); } catch {}
+        try { speechRecognitionRef.current.stop(); } catch { }
         speechRecognitionRef.current = null;
       }
       setVoiceStatus(isArabic ? "يرجى السماح بالوصول للميكروفون" : "Please allow microphone access");
@@ -394,7 +371,7 @@ export function PatientVoiceAssistant({
     if (speechRecognitionRef.current) {
       try {
         speechRecognitionRef.current.stop();
-      } catch {}
+      } catch { }
       speechRecognitionRef.current = null;
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
@@ -462,17 +439,17 @@ export function PatientVoiceAssistant({
 
   const quickPrompts = isArabic
     ? [
-        "عايز أحجز ميعاد مع الدكتور",
-        "طمني على تحاليلي ومواعيد المتابعة",
-        "إيه المواعيد المتاحة النهاردة أو بكرة؟",
-        "تعليمات التحضير قبل زيارة العيادة",
-      ]
+      "عايز أحجز ميعاد مع الدكتور",
+      "طمني على تحاليلي ومواعيد المتابعة",
+      "إيه المواعيد المتاحة النهاردة أو بكرة؟",
+      "تعليمات التحضير قبل زيارة العيادة",
+    ]
     : [
-        "Book appointment with doctor",
-        "Review my lab results & follow-up",
-        "Available clinic slots today or tomorrow",
-        "Preparation instructions for clinic visit",
-      ];
+      "Book appointment with doctor",
+      "Review my lab results & follow-up",
+      "Available clinic slots today or tomorrow",
+      "Preparation instructions for clinic visit",
+    ];
 
   return (
     <section
@@ -666,8 +643,8 @@ export function PatientVoiceAssistant({
                   background: isRecording
                     ? "linear-gradient(135deg, #ef4444, #dc2626)"
                     : isPlayingAudio
-                    ? "linear-gradient(135deg, #0d9488, #059669)"
-                    : "linear-gradient(135deg, #0d9488, #14b8a6)",
+                      ? "linear-gradient(135deg, #0d9488, #059669)"
+                      : "linear-gradient(135deg, #0d9488, #14b8a6)",
                   color: "#fff",
                   boxShadow: isRecording
                     ? "0 0 20px rgba(239, 68, 68, 0.5)"
@@ -702,8 +679,8 @@ export function PatientVoiceAssistant({
                   (isRecording
                     ? (isArabic ? "الميكروفون يستمع... تحدث الآن" : "Listening... Speak now")
                     : isPlayingAudio
-                    ? (isArabic ? "المساعد يتحدث الآن بصوت VoiceTut..." : "Speaking response...")
-                    : (isArabic ? "اضغط على الميكروفون وتحدث بحرية باللهجة المصرية" : "Click the mic to speak in Egyptian Arabic"))}
+                      ? (isArabic ? "المساعد يتحدث الآن بصوت VoiceTut..." : "Speaking response...")
+                      : (isArabic ? "اضغط على الميكروفون وتحدث بحرية باللهجة المصرية" : "Click the mic to speak in Egyptian Arabic"))}
               </span>
             </div>
 
