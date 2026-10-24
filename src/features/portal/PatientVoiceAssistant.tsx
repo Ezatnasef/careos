@@ -69,8 +69,11 @@ export function PatientVoiceAssistant({
   const [isThinking, setIsThinking] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
-  const [activeAudioElement, setActiveAudioElement] = useState<HTMLAudioElement | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<string>("");
+
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRequestIdRef = useRef<number>(0);
+  const audioAbortControllerRef = useRef<AbortController | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -85,12 +88,32 @@ export function PatientVoiceAssistant({
     }
   }, [messages, isThinking]);
 
+  const stopActiveAudio = () => {
+    if (audioAbortControllerRef.current) {
+      audioAbortControllerRef.current.abort();
+      audioAbortControllerRef.current = null;
+    }
+    if (activeAudioRef.current) {
+      activeAudioRef.current.pause();
+      activeAudioRef.current.src = "";
+      activeAudioRef.current = null;
+    }
+    setIsPlayingAudio(false);
+    setPlayingMessageId(null);
+  };
+
+  const handleVoiceSelect = (voice: string) => {
+    stopActiveAudio();
+    setPreferredVoice(voice);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("careos-preferred-voice", voice);
+    }
+  };
+
   // Clean up on unmount
   useEffect(() => {
     return () => {
-      if (activeAudioElement) {
-        activeAudioElement.pause();
-      }
+      stopActiveAudio();
       if (speechRecognitionRef.current) {
         try {
           speechRecognitionRef.current.stop();
@@ -100,27 +123,19 @@ export function PatientVoiceAssistant({
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
     };
-  }, [activeAudioElement]);
-
-  const handleVoiceSelect = (voice: string) => {
-    setPreferredVoice(voice);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("careos-preferred-voice", voice);
-    }
-  };
-
-  const stopActiveAudio = () => {
-    if (activeAudioElement) {
-      activeAudioElement.pause();
-      setActiveAudioElement(null);
-    }
-    setIsPlayingAudio(false);
-    setPlayingMessageId(null);
-  };
+  }, []);
 
   const playSynthesizedSpeech = async (text: string, messageId?: string) => {
     if (!text?.trim()) return;
+
+    audioRequestIdRef.current += 1;
+    const currentRequestId = audioRequestIdRef.current;
+
     stopActiveAudio();
+
+    const abortController = new AbortController();
+    audioAbortControllerRef.current = abortController;
+
     setIsPlayingAudio(true);
     if (messageId) setPlayingMessageId(messageId);
 
@@ -128,11 +143,12 @@ export function PatientVoiceAssistant({
       const endpoints = [
         "/api/v1/assistant/tts",
         "/api/v1/voice/tts",
-        "http://127.0.0.1:8003/api/v1/assistant/tts",
-        "http://127.0.0.1:8003/api/v1/voice/tts",
       ];
 
       for (const endpoint of endpoints) {
+        if (currentRequestId !== audioRequestIdRef.current || abortController.signal.aborted) {
+          return;
+        }
         try {
           const resp = await fetch(endpoint, {
             method: "POST",
@@ -142,11 +158,15 @@ export function PatientVoiceAssistant({
               language: isArabic ? "ar-EG" : "en-US",
               voice: preferredVoice,
             }),
+            signal: abortController.signal,
           });
           if (resp.ok) {
             const data = await resp.json();
             if (data?.audio_base64) {
-              const mime = data.audio_mime_type || "audio/wav";
+              if (currentRequestId !== audioRequestIdRef.current || abortController.signal.aborted) {
+                return;
+              }
+              const mime = data.audio_mime_type || "audio/mpeg";
               const binary = atob(data.audio_base64);
               const bytes = new Uint8Array(binary.length);
               for (let i = 0; i < binary.length; i++) {
@@ -154,20 +174,19 @@ export function PatientVoiceAssistant({
               }
               const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
               const audio = new Audio(blobUrl);
-              setActiveAudioElement(audio);
+              activeAudioRef.current = audio;
 
-              audio.onended = () => {
+              const cleanup = () => {
                 URL.revokeObjectURL(blobUrl);
+                if (activeAudioRef.current === audio) {
+                  activeAudioRef.current = null;
+                }
                 setIsPlayingAudio(false);
                 setPlayingMessageId(null);
-                setActiveAudioElement(null);
               };
-              audio.onerror = () => {
-                URL.revokeObjectURL(blobUrl);
-                setIsPlayingAudio(false);
-                setPlayingMessageId(null);
-                setActiveAudioElement(null);
-              };
+
+              audio.onended = cleanup;
+              audio.onerror = cleanup;
 
               await audio.play();
               return;
@@ -178,8 +197,12 @@ export function PatientVoiceAssistant({
         }
       }
     } catch {
-      setIsPlayingAudio(false);
-      setPlayingMessageId(null);
+      // Ignore abort
+    } finally {
+      if (currentRequestId === audioRequestIdRef.current && !activeAudioRef.current) {
+        setIsPlayingAudio(false);
+        setPlayingMessageId(null);
+      }
     }
   };
 

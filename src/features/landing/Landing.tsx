@@ -164,25 +164,33 @@ export function Landing({
     return "Mohammed";
   });
 
-  const handleVoiceSelect = (voice: string) => {
-    setPreferredVoice(voice);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("careos-preferred-voice", voice);
-    }
-  };
-
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRequestIdRef = useRef<number>(0);
+  const audioAbortControllerRef = useRef<AbortController | null>(null);
   const [playingMessageId, setPlayingMessageId] = useState<number | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
   const stopVoicePlayback = () => {
+    if (audioAbortControllerRef.current) {
+      audioAbortControllerRef.current.abort();
+      audioAbortControllerRef.current = null;
+    }
     if (activeAudioRef.current) {
       activeAudioRef.current.pause();
+      activeAudioRef.current.src = "";
       activeAudioRef.current = null;
     }
     setIsPlayingAudio(false);
     setPlayingMessageId(null);
     setIsVoiceOrbActive(false);
+  };
+
+  const handleVoiceSelect = (voice: string) => {
+    stopVoicePlayback();
+    setPreferredVoice(voice);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("careos-preferred-voice", voice);
+    }
   };
 
   useEffect(
@@ -201,12 +209,21 @@ export function Landing({
 
   const speakReplyWithGemini = async (text: string | null, messageId?: number) => {
     if (!text?.trim()) return;
+
+    audioRequestIdRef.current += 1;
+    const currentRequestId = audioRequestIdRef.current;
+
     stopVoicePlayback();
+
+    const abortController = new AbortController();
+    audioAbortControllerRef.current = abortController;
+
     setVoicePlaybackError("");
     setIsVoiceTtsLoading(true);
     if (messageId !== undefined) {
       setPlayingMessageId(messageId);
     }
+
     try {
       type TTSResponsePayload = { audio_base64?: string; audio_mime_type?: string; detail?: string };
       let payload: TTSResponsePayload | null = null;
@@ -217,11 +234,12 @@ export function Landing({
       const endpoints = [
         "/api/v1/assistant/tts",
         "/api/v1/voice/tts",
-        "http://127.0.0.1:8003/api/v1/assistant/tts",
-        "http://127.0.0.1:8003/api/v1/voice/tts",
       ];
 
       for (const endpoint of endpoints) {
+        if (currentRequestId !== audioRequestIdRef.current || abortController.signal.aborted) {
+          return;
+        }
         try {
           const response = await fetch(endpoint, {
             method: "POST",
@@ -231,6 +249,7 @@ export function Landing({
               language: isArabic ? "ar-EG" : "en-US",
               voice: voiceName,
             }),
+            signal: abortController.signal,
           });
           const parsed = (await response.json().catch(() => null)) as TTSResponsePayload | null;
           if (response.ok && parsed?.audio_base64) {
@@ -241,6 +260,10 @@ export function Landing({
         } catch {
           // Continue to next endpoint
         }
+      }
+
+      if (currentRequestId !== audioRequestIdRef.current || abortController.signal.aborted) {
+        return;
       }
 
       // Play authentic Egyptian neural voice (Mohammed or Mariam):
@@ -255,6 +278,7 @@ export function Landing({
         const audio = new Audio(audioUrl);
         activeAudioRef.current = audio;
         setIsPlayingAudio(true);
+
         const cleanup = () => {
           URL.revokeObjectURL(audioUrl);
           if (activeAudioRef.current === audio) {
@@ -264,13 +288,11 @@ export function Landing({
           setPlayingMessageId(null);
           setIsVoiceOrbActive(false);
         };
+
         setIsVoiceOrbActive(true);
-        audio.onended = () => {
-          cleanup();
-        };
-        audio.onerror = () => {
-          cleanup();
-        };
+        audio.onended = cleanup;
+        audio.onerror = cleanup;
+
         try {
           await audio.play();
           return;
@@ -281,6 +303,7 @@ export function Landing({
 
       throw new Error(payload?.detail || (isArabic ? "تعذّر تشغيل الصوت العصبي" : "Failed to synthesize neural voice"));
     } catch (error) {
+      if (currentRequestId !== audioRequestIdRef.current) return;
       const detail = error instanceof Error ? error.message : "TTS error.";
       setVoicePlaybackError(
         `${isArabic ? "تعذّر تشغيل الصوت المصري" : "Voice playback failed"}: ${detail}`,
@@ -288,7 +311,9 @@ export function Landing({
       setPlayingMessageId(null);
       setIsPlayingAudio(false);
     } finally {
-      setIsVoiceTtsLoading(false);
+      if (currentRequestId === audioRequestIdRef.current) {
+        setIsVoiceTtsLoading(false);
+      }
     }
   };
 
