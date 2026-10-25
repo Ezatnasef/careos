@@ -9818,9 +9818,121 @@ html {
   min-width: 0;
 }
 
+.ocr-result-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ocr-result-section {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.ocr-result-section-title {
+  margin: 0;
+  color: var(--text, #263b3a);
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.ocr-clinician-section {
+  padding: 0.75rem;
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  border-radius: 0.6rem;
+  background: rgba(16, 185, 129, 0.07);
+}
+
+.ocr-clinician-section .ocr-result-section-title,
+.ocr-medication-name {
+  color: var(--teal-primary, #0d9488);
+}
+
+.ocr-clinician-fields,
+.ocr-patient-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem 1rem;
+  min-width: 0;
+}
+
+.ocr-result-field {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ocr-result-field > span {
+  color: var(--muted, #758381);
+  font-size: 0.76rem;
+}
+
+.ocr-result-field > strong {
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.ocr-result-chips,
+.ocr-medication-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.ocr-medication-list {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.ocr-medication-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.85rem;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 0.55rem;
+  background: var(--paper-subtle, rgba(148, 163, 184, 0.08));
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.ocr-medication-name {
+  font-size: 0.92rem;
+}
+
+.ocr-medication-details {
+  flex: 1 1 250px;
+}
+
+.ocr-medication-instructions {
+  color: var(--amber-text, #d97706);
+}
+
+.ocr-result-empty {
+  margin: 0;
+  color: var(--muted, #758381);
+  font-size: 0.84rem;
+}
+
+.document-extracted-text-content {
+  max-height: 24rem;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
 @media (max-width: 520px) {
   .clinical-candidate-field-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-}
 
+  .ocr-clinician-fields,
+  .ocr-patient-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

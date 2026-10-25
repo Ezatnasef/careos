@@ -1078,7 +1078,7 @@ export function DocumentWorkflow({
 
               {cand && (
                 <div
-                  className="card"
+                  className="card ocr-result-card"
                   data-testid="document-structured-candidates"
                   dir={language === "ar" ? "rtl" : "ltr"}
                   style={{
@@ -1484,87 +1484,95 @@ export function DocumentWorkflow({
                     </div>
                   ) : (
                     <>
-                      {cand.clinician_metadata &&
-                        (cand.clinician_metadata.clinician_name || cand.clinician_metadata.facility) && (
-                          <div
-                            data-testid="structured-clinician-metadata"
-                            style={{
-                              padding: "0.55rem 0.75rem",
-                              borderRadius: "0.5rem",
-                              background: "rgba(16, 185, 129, 0.08)",
-                              border: "1px solid rgba(16, 185, 129, 0.22)",
-                              fontSize: "0.88rem",
-                              display: "flex",
-                              flexWrap: "wrap",
-                              gap: "0.8rem",
-                              alignItems: "center",
-                            }}
-                          >
+                      <section
+                        className="ocr-result-section ocr-clinician-section"
+                        data-testid="structured-clinician-metadata"
+                      >
+                        <h3 className="ocr-result-section-title">
+                          {language === "ar" ? "بيانات الطبيب والمنشأة" : "Clinician & Facility"}
+                        </h3>
+                        {cand.clinician_metadata &&
+                        (cand.clinician_metadata.clinician_name ||
+                          cand.clinician_metadata.specialty ||
+                          cand.clinician_metadata.facility ||
+                          cand.clinician_metadata.clinic_address ||
+                          cand.clinician_metadata.clinic_phone) ? (
+                          <div className="ocr-clinician-fields">
                             {cand.clinician_metadata.clinician_name && (
-                              <span>
-                                <strong>{language === "ar" ? "الطبيب المعالج:" : "Physician:"}</strong>{" "}
-                                {cand.clinician_metadata.clinician_name}
-                              </span>
+                              <div className="ocr-result-field">
+                                <span>{language === "ar" ? "الطبيب المعالج" : "Physician"}</span>
+                                <strong>{cand.clinician_metadata.clinician_name}</strong>
+                              </div>
                             )}
                             {cand.clinician_metadata.specialty && (
-                              <span>
-                                <strong>{language === "ar" ? "التخصص:" : "Specialty:"}</strong>{" "}
-                                {cand.clinician_metadata.specialty}
-                              </span>
+                              <div className="ocr-result-field">
+                                <span>{language === "ar" ? "التخصص" : "Specialty"}</span>
+                                <strong>{cand.clinician_metadata.specialty}</strong>
+                              </div>
                             )}
                             {cand.clinician_metadata.facility && (
-                              <span>
-                                <strong>{language === "ar" ? "المستشفى / الجهة:" : "Facility:"}</strong>{" "}
-                                {cand.clinician_metadata.facility}
-                              </span>
+                              <div className="ocr-result-field">
+                                <span>{language === "ar" ? "المستشفى / الجهة" : "Facility"}</span>
+                                <strong>{cand.clinician_metadata.facility}</strong>
+                              </div>
+                            )}
+                            {cand.clinician_metadata.clinic_address && (
+                              <div className="ocr-result-field">
+                                <span>{language === "ar" ? "العنوان" : "Address"}</span>
+                                <strong>{cand.clinician_metadata.clinic_address}</strong>
+                              </div>
                             )}
                             {cand.clinician_metadata.clinic_phone && (
-                              <span>
-                                <strong>{language === "ar" ? "الهاتف:" : "Phone:"}</strong>{" "}
-                                {cand.clinician_metadata.clinic_phone}
-                              </span>
+                              <div className="ocr-result-field">
+                                <span>{language === "ar" ? "الهاتف" : "Phone"}</span>
+                                <strong dir="ltr">{cand.clinician_metadata.clinic_phone}</strong>
+                              </div>
                             )}
                           </div>
+                        ) : (
+                          <p className="ocr-result-empty">
+                            {language === "ar" ? "لم يتم استخراج بيانات الطبيب من المستند." : "No clinician details were extracted."}
+                          </p>
                         )}
+                      </section>
 
                       {cand.patient_metadata &&
                         (cand.patient_metadata.patient_name ||
                           cand.patient_metadata.mrn ||
                           cand.patient_metadata.age !== null && cand.patient_metadata.age !== undefined ||
                           cand.patient_metadata.sex) && (
-                          <div
+                          <section
+                            className="ocr-result-section"
                             data-testid="structured-patient-metadata"
-                            style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", fontSize: "0.88rem" }}
                           >
+                            <h3 className="ocr-result-section-title">
+                              {language === "ar" ? "بيانات المريض" : "Patient"}
+                            </h3>
+                            <div className="ocr-patient-fields">
                             {cand.patient_metadata.patient_name && (
-                              <span>
-                                <strong>{language === "ar" ? "المريض:" : "Patient:"}</strong> {cand.patient_metadata.patient_name}
-                              </span>
+                              <div className="ocr-result-field"><span>{language === "ar" ? "المريض" : "Patient"}</span><strong>{cand.patient_metadata.patient_name}</strong></div>
                             )}
                             {cand.patient_metadata.mrn && (
-                              <span>
-                                <strong>{language === "ar" ? "رقم الملف:" : "MRN:"}</strong> {cand.patient_metadata.mrn}
-                              </span>
+                              <div className="ocr-result-field"><span>{language === "ar" ? "رقم الملف" : "MRN"}</span><strong>{cand.patient_metadata.mrn}</strong></div>
                             )}
                             {cand.patient_metadata.age !== null && cand.patient_metadata.age !== undefined && (
-                              <span>
-                                <strong>{language === "ar" ? "السن:" : "Age:"}</strong> {cand.patient_metadata.age}
-                              </span>
+                              <div className="ocr-result-field"><span>{language === "ar" ? "السن" : "Age"}</span><strong>{cand.patient_metadata.age}</strong></div>
                             )}
                             {cand.patient_metadata.sex && (
-                              <span>
-                                <strong>{language === "ar" ? "النوع:" : "Sex:"}</strong> {cand.patient_metadata.sex}
-                              </span>
+                              <div className="ocr-result-field"><span>{language === "ar" ? "النوع" : "Sex"}</span><strong>{cand.patient_metadata.sex}</strong></div>
                             )}
-                          </div>
+                            </div>
+                          </section>
                         )}
 
-                      {cand.diagnoses && cand.diagnoses.length > 0 && (
-                        <div data-testid="structured-diagnoses">
-                          <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                            {language === "ar" ? `التشخيصات والشكوى السريرية (${cand.diagnoses.length})` : `Diagnoses (${cand.diagnoses.length})`}
-                          </strong>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                      <section className="ocr-result-section" data-testid="structured-diagnoses">
+                        <h3 className="ocr-result-section-title">
+                          {language === "ar"
+                            ? `التشخيصات والشكوى السريرية (${cand.diagnoses?.length || 0})`
+                            : `Diagnoses (${cand.diagnoses?.length || 0})`}
+                        </h3>
+                        {cand.diagnoses?.length ? (
+                          <div className="ocr-result-chips">
                             {cand.diagnoses.map((diag, idx) => (
                               <span
                                 key={`${diag.value}-${idx}`}
@@ -1580,62 +1588,52 @@ export function DocumentWorkflow({
                               </span>
                             ))}
                           </div>
-                        </div>
-                      )}
+                        ) : (
+                          <p className="ocr-result-empty">
+                            {language === "ar" ? "لم يتم استخراج تشخيص من المستند." : "No diagnosis was extracted."}
+                          </p>
+                        )}
+                      </section>
 
-                      {cand.medications && cand.medications.length > 0 && (
-                        <div data-testid="structured-medications">
-                          <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "0.3rem" }}>
-                            {language === "ar" ? `الأدوية والوصفات الطبية (${cand.medications.length})` : `Medications (${cand.medications.length})`}
-                          </strong>
-                          <div style={{ display: "grid", gap: "0.45rem", fontSize: "0.86rem" }}>
+                      <section className="ocr-result-section" data-testid="structured-medications">
+                        <h3 className="ocr-result-section-title">
+                          {language === "ar"
+                            ? `الأدوية والوصفات الطبية (${cand.medications?.length || 0})`
+                            : `Medications (${cand.medications?.length || 0})`}
+                        </h3>
+                        {cand.medications?.length ? (
+                          <div className="ocr-medication-list">
                             {cand.medications.map((med, idx) => (
-                              <div
-                                key={`${med.name}-${idx}`}
-                                style={{
-                                  padding: "0.55rem 0.75rem",
-                                  borderRadius: "0.45rem",
-                                  background: "rgba(148, 163, 184, 0.08)",
-                                  border: "1px solid rgba(148, 163, 184, 0.15)",
-                                  display: "flex",
-                                  flexWrap: "wrap",
-                                  gap: "0.75rem",
-                                  alignItems: "center",
-                                }}
-                              >
-                                <strong style={{ color: "var(--teal-primary, #0d9488)", fontSize: "0.92rem" }}>
-                                  {med.name}
-                                </strong>
-                                {(med.strength || med.dose) && (
-                                  <span>
-                                    <strong>{language === "ar" ? "الجرعة:" : "Strength:"}</strong> {med.strength || med.dose}
-                                  </span>
-                                )}
-                                {med.dosage && med.dosage !== (med.strength || med.dose) && (
-                                  <span>
-                                    <strong>{language === "ar" ? "الشكل:" : "Form:"}</strong> {med.dosage}
-                                  </span>
-                                )}
-                                {med.frequency && (
-                                  <span>
-                                    <strong>{language === "ar" ? "التكرار:" : "Frequency:"}</strong> {med.frequency}
-                                  </span>
-                                )}
-                                {med.duration && (
-                                  <span>
-                                    <strong>{language === "ar" ? "المدة:" : "Duration:"}</strong> {med.duration}
-                                  </span>
-                                )}
-                                {med.instructions && (
-                                  <span style={{ color: "var(--amber-text, #d97706)" }}>
-                                    <strong>{language === "ar" ? "تعليمات:" : "Note:"}</strong> {med.instructions}
-                                  </span>
-                                )}
+                              <div key={`${med.name}-${idx}`} className="ocr-medication-card">
+                                <strong className="ocr-medication-name">{med.name}</strong>
+                                <div className="ocr-medication-details">
+                                  {(med.strength || med.dose) && (
+                                    <span><strong>{language === "ar" ? "الجرعة:" : "Strength:"}</strong> {med.strength || med.dose}</span>
+                                  )}
+                                  {med.dosage && med.dosage !== (med.strength || med.dose) && (
+                                    <span><strong>{language === "ar" ? "الشكل:" : "Form:"}</strong> {med.dosage}</span>
+                                  )}
+                                  {med.frequency && (
+                                    <span><strong>{language === "ar" ? "التكرار:" : "Frequency:"}</strong> {med.frequency}</span>
+                                  )}
+                                  {med.duration && (
+                                    <span><strong>{language === "ar" ? "المدة:" : "Duration:"}</strong> {med.duration}</span>
+                                  )}
+                                  {med.instructions && (
+                                    <span className="ocr-medication-instructions">
+                                      <strong>{language === "ar" ? "تعليمات:" : "Note:"}</strong> {med.instructions}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             ))}
                           </div>
-                        </div>
-                      )}
+                        ) : (
+                          <p className="ocr-result-empty">
+                            {language === "ar" ? "لم يتم استخراج أدوية من المستند." : "No medications were extracted."}
+                          </p>
+                        )}
+                      </section>
 
                       {cand.allergies && cand.allergies.length > 0 && (
                         <div data-testid="structured-allergies">
@@ -1730,6 +1728,7 @@ export function DocumentWorkflow({
                 >
                   <span className="eyebrow" style={{ display: "block", marginBottom: "8px" }}>{t("clinicalFindingExtracted")}</span>
                   <pre
+                    className="document-extracted-text-content"
                     dir="auto"
                     style={{
                       margin: 0,
