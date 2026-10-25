@@ -1,5 +1,6 @@
 import base64
 import io
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -259,6 +260,100 @@ def test_image_parser_and_ocr_engines_lazy_loading(tmp_path: Path) -> None:
         assert round(res["confidence"], 2) == 0.96
 
 
+def test_printed_ocr_falls_back_to_local_tesseract() -> None:
+    printed = OCREngine(lang="ar", auto_init=False)
+    tsv = (
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+        "5\t1\t1\t1\t1\t1\t0\t0\t20\t10\t95.00\tضغط\n"
+        "5\t1\t1\t1\t1\t2\t21\t0\t30\t10\t90.00\tالدم\n"
+        "5\t1\t1\t1\t2\t1\t0\t20\t30\t10\t85.00\tStable\n"
+    )
+    process_result = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=tsv.encode("utf-8"), stderr=b""
+    )
+
+    with (
+        patch.object(printed, "_get_engine", side_effect=RuntimeError("PaddleOCR is unavailable")),
+        patch.object(printed, "_is_tesseract_available", return_value=True),
+        patch("app.rag.ocr.ocr_engine.subprocess.run", return_value=process_result) as run,
+    ):
+        result = printed.extract_text(Image.new("RGB", (64, 64)))
+
+    assert result["text"] == "ضغط الدم\nStable"
+    assert result["ocr_engine"] == "Tesseract"
+    assert result["language"] == "ar"
+    assert round(result["confidence"], 2) == 0.90
+    assert run.call_args.args[0] == ["tesseract", "stdin", "stdout", "-l", "ara+eng", "tsv"]
+    assert run.call_args.kwargs["input"].startswith(b"\x89PNG")
+
+
+def test_tesseract_requires_all_configured_language_data() -> None:
+    printed = OCREngine(lang="ar", auto_init=False)
+    process_result = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout="List of available languages in '/usr/share/tessdata/' (2):\nara\neng\n",
+        stderr="",
+    )
+
+    with (
+        patch("app.rag.ocr.ocr_engine.shutil.which", return_value="/usr/bin/tesseract"),
+        patch("app.rag.ocr.ocr_engine.subprocess.run", return_value=process_result),
+    ):
+        assert printed._is_tesseract_available() is True
+
+    missing_arabic_result = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout="List of available languages (1):\neng\n",
+        stderr="",
+    )
+    with (
+        patch("app.rag.ocr.ocr_engine.shutil.which", return_value="/usr/bin/tesseract"),
+        patch("app.rag.ocr.ocr_engine.subprocess.run", return_value=missing_arabic_result),
+    ):
+        assert printed._is_tesseract_available() is False
+
+
+def test_tesseract_retries_sparse_page_segmentation_when_no_words_are_found() -> None:
+    printed = OCREngine(lang="ar", auto_init=False)
+    empty_tsv = (
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+    )
+    recognized_tsv = (
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+        "5\t1\t1\t1\t1\t1\t0\t0\t20\t10\t85.00\tضغط\n"
+    )
+
+    with (
+        patch.object(printed, "_get_engine", side_effect=RuntimeError("PaddleOCR is unavailable")),
+        patch.object(printed, "_is_tesseract_available", return_value=True),
+        patch(
+            "app.rag.ocr.ocr_engine.subprocess.run",
+            side_effect=[
+                subprocess.CompletedProcess(args=[], returncode=0, stdout=empty_tsv.encode(), stderr=b""),
+                subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout=recognized_tsv.encode(), stderr=b""
+                ),
+            ],
+        ) as run,
+    ):
+        result = printed.extract_text(Image.new("RGB", (64, 64)))
+
+    assert result["text"] == "ضغط"
+    assert run.call_count == 2
+    assert run.call_args_list[1].args[0] == [
+        "tesseract",
+        "stdin",
+        "stdout",
+        "-l",
+        "ara+eng",
+        "--psm",
+        "11",
+        "tsv",
+    ]
+
+
 def test_api_ocr_endpoints_and_patient_document_extraction(monkeypatch) -> None:
     client = TestClient(app)
     headers, patient_id = _register_clinician_with_patient(client)
@@ -322,7 +417,7 @@ def test_api_ocr_endpoints_and_patient_document_extraction(monkeypatch) -> None:
     # 4. Direct /api/v1/ocr/extract endpoint and on-demand /patients/{patient_id}/documents/{doc_id}/ocr
     png_bytes = _make_png_bytes()
 
-    # Upload PNG first while printed OCR is not mocked (so if paddleocr is absent it falls back safely to not_configured)
+    # Upload PNG first without requiring an OCR engine to be installed in the test environment.
     img_upload = client.post(
         f"/api/v1/patients/{patient_id}/documents",
         headers=headers,
@@ -609,7 +704,7 @@ def test_real_unmocked_smoke_test_synthetic_image_and_scanned_pdf(tmp_path: Path
         )
         assert real_img["ocr_status"] == "completed"
         assert real_img["ocr_applied"] is True
-        assert real_img["ocr_engine"] == "PaddleOCR"
+        assert real_img["ocr_engine"] in {"PaddleOCR", "Tesseract"}
         assert "CAREOS OCR SMOKE TEST 123" in (real_img["extracted_text"] or "").upper()
 
         real_scanned_pdf = extract_document_bytes(
@@ -621,7 +716,7 @@ def test_real_unmocked_smoke_test_synthetic_image_and_scanned_pdf(tmp_path: Path
         )
         assert real_scanned_pdf["ocr_status"] == "completed"
         assert real_scanned_pdf["ocr_applied"] is True
-        assert real_scanned_pdf["ocr_engine"] == "PaddleOCR"
+        assert real_scanned_pdf["ocr_engine"] in {"PaddleOCR", "Tesseract"}
         assert "CAREOS OCR SMOKE TEST 123" in (real_scanned_pdf["extracted_text"] or "").upper()
 
         # 5. Verify end-to-end persistence via the real upload pipeline (no mocks)
@@ -666,7 +761,7 @@ def test_real_unmocked_smoke_test_synthetic_image_and_scanned_pdf(tmp_path: Path
         assert router._handwriting_engine._model is None
         assert router._handwriting_engine._processor is None
     else:
-        with pytest.raises(RuntimeError, match="PaddleOCR is not installed"):
+        with pytest.raises(RuntimeError, match="No printed OCR engine is available"):
             extract_document_bytes(
                 filename="smoke_test_english.png",
                 content=img_bytes,
@@ -1898,6 +1993,3 @@ def test_egyptian_psychiatric_prescription_dr_amir_samir_normalization_and_extra
     # Follow-up
     assert len(cands["follow_up"]) >= 1
     assert any("بعد شهرين" in f["value"] for f in cands["follow_up"])
-
-
-

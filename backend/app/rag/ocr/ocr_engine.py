@@ -1,11 +1,15 @@
+import csv
+import io
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, Union
 from PIL import Image
 
 
 class OCREngine:
-    """Optional printed text OCR engine wrapping PaddleOCR with lazy loading."""
+    """Printed OCR engine preferring PaddleOCR and falling back to local Tesseract."""
 
     def __init__(self, lang: str = "ar", auto_init: bool = False):
         self.lang = lang
@@ -52,7 +56,7 @@ class OCREngine:
         return self._engine
 
     def is_available(self) -> bool:
-        """Check if PaddleOCR can be imported without throwing an exception."""
+        """Check whether PaddleOCR or the configured local Tesseract languages are available."""
         try:
             try:
                 import torch  # noqa: F401
@@ -61,7 +65,94 @@ class OCREngine:
             from paddleocr import PaddleOCR  # noqa: F401
             return True
         except Exception:
+            return self._is_tesseract_available()
+
+    def _tesseract_language(self) -> str:
+        language = self.lang.lower()
+        if language in {"ar", "ara", "arabic"}:
+            return "ara+eng"
+        if language in {"en", "eng", "english"}:
+            return "eng"
+        return self.lang
+
+    def _is_tesseract_available(self) -> bool:
+        if shutil.which("tesseract") is None:
             return False
+
+        try:
+            result = subprocess.run(
+                ["tesseract", "--list-langs"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+        available_languages = {
+            line.strip()
+            for line in result.stdout.splitlines()
+            if line.strip() and not line.startswith("List of available languages")
+        }
+        required_languages = set(self._tesseract_language().split("+"))
+        return required_languages.issubset(available_languages)
+
+    def _extract_with_tesseract(self, image: Union[str, Path, Image.Image]) -> Dict[str, Any]:
+        command = [
+            "tesseract",
+            "stdin" if isinstance(image, Image.Image) else str(image),
+            "stdout",
+            "-l",
+            self._tesseract_language(),
+        ]
+        image_bytes = None
+        if isinstance(image, Image.Image):
+            image_buffer = io.BytesIO()
+            image.save(image_buffer, format="PNG")
+            image_bytes = image_buffer.getvalue()
+
+        lines: Dict[tuple[str, str, str], list[str]] = {}
+        confidences = []
+        for page_segmentation_args in ([], ["--psm", "11"]):
+            result = subprocess.run(
+                [*command, *page_segmentation_args, "tsv"],
+                input=image_bytes,
+                check=True,
+                capture_output=True,
+                timeout=120,
+            )
+
+            lines = {}
+            confidences = []
+            tsv_output = result.stdout.decode("utf-8", errors="replace")
+            for row in csv.DictReader(io.StringIO(tsv_output), delimiter="\t"):
+                if row.get("level") != "5":
+                    continue
+                text = (row.get("text") or "").strip()
+                if not text:
+                    continue
+
+                line_key = (row["block_num"], row["par_num"], row["line_num"])
+                lines.setdefault(line_key, []).append(text)
+                try:
+                    confidence = float(row["conf"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if confidence >= 0:
+                    confidences.append(confidence / 100)
+            if lines:
+                break
+
+        extracted_text = "\n".join(" ".join(words) for words in lines.values()).strip()
+        average_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+        return {
+            "text": extracted_text,
+            "confidence": average_confidence,
+            "ocr_engine": "Tesseract",
+            "language": self.lang,
+            "status": "success",
+        }
 
     def extract_text(self, image: Union[str, Path, Image.Image]) -> Dict[str, Any]:
         """Extract printed text from an image file or PIL Image.
@@ -70,10 +161,18 @@ class OCREngine:
             Dict containing:
                 - text: Extracted string
                 - confidence: Average confidence score
-                - ocr_engine: 'PaddleOCR'
+                - ocr_engine: 'PaddleOCR' or 'Tesseract'
                 - language: Selected language
         """
-        engine = self._get_engine()
+        try:
+            engine = self._get_engine()
+        except RuntimeError as paddle_error:
+            if not self._is_tesseract_available():
+                raise RuntimeError(
+                    "No printed OCR engine is available. Install PaddleOCR or Tesseract "
+                    f"with the required language data. PaddleOCR details: {paddle_error}"
+                ) from paddle_error
+            return self._extract_with_tesseract(image)
 
         temp_path = None
         if isinstance(image, Image.Image):
@@ -134,4 +233,3 @@ class OCREngine:
                     os.remove(temp_path)
                 except OSError:
                     pass
-

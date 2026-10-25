@@ -1301,7 +1301,7 @@ def get_ocr_status_info() -> Dict[str, Any]:
         },
         "engines": {
             "printed": {
-                "engine": "PaddleOCR",
+                "engine": "PaddleOCR (preferred) / Tesseract (fallback)",
                 "available": printed_available,
                 "language": router._printed_engine.lang,
             },

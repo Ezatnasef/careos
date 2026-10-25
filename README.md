@@ -12,7 +12,7 @@ CareOS is an enterprise-grade healthcare operations and clinical intelligence pl
 
 CareOS provides:
 - **Multi-Tenant Clinical Operations**: Patient records, encounters, vitals, allergies, diagnoses, medications, lab results, appointments, tasks, care plans, billing/invoices, and audit logs.
-- **Document Workflow & Bilingual OCR**: Upload PDF, DOCX, PNG/JPG, or plain-text clinical documents (`<= 25 MB`). Automatic routing across native PDF/DOCX parsers (`PyMuPDF` / `pypdf` / `python-docx`), printed OCR (`PaddleOCR` for Arabic & English), and optional handwritten OCR (`TrOCR`).
+- **Document Workflow & Bilingual OCR**: Upload PDF, DOCX, PNG/JPG, or plain-text clinical documents (`<= 25 MB`). Automatic routing across native PDF/DOCX parsers (`PyMuPDF` / `pypdf` / `python-docx`), printed OCR (`PaddleOCR` preferred, local Tesseract fallback for Arabic & English), and optional handwritten OCR (`TrOCR`).
 - **Structured Clinical Extraction & Clinician Review**: Automatically extracts structured clinical candidates (medications with strength/dosage/frequency/duration, lab results with units/reference ranges, diagnoses, allergies, clinical findings, and follow-up instructions) while flagging uncertain/handwritten tokens for human verification before indexing.
 - **Grounded Clinical RAG**: Indexes **only clinician-approved (`review_status="approved"`) and active (`deleted_at IS NULL`)** documents using a local 384-dimensional `SentenceTransformer` (`sentence-transformers/all-MiniLM-L6-v2`) embedding model, enforcing strict tenant/patient isolation, negation/uncertainty preservation, and sentence-level citation verification.
 
@@ -46,7 +46,7 @@ flowchart TD
     subgraph CoreBackend ["3. CareOS Core Backend (FastAPI - Port 8000)"]
         AuthModule["Auth & Identity Subsystem\n• JWT Token Lifecycle\n• Argon2id Hashing\n• TOTP 2-Factor Auth\n• RBAC Permission Matrix"]
         ClinicalOps["Clinical Operations Subsystem\n• Patients, Appointments & Vitals\n• Encounters & SOAP Notes\n• Invoices & Financial Auditing"]
-        DocEngine["Document & Bilingual OCR Pipeline\n• Format Router (PDF/DOCX/Images)\n• PaddleOCR (Arabic + English)\n• TrOCR Handwriting Fallback\n• Clinical Entity Extraction"]
+        DocEngine["Document & Bilingual OCR Pipeline\n• Format Router (PDF/DOCX/Images)\n• PaddleOCR / Tesseract (Arabic + English)\n• TrOCR Handwriting Fallback\n• Clinical Entity Extraction"]
         RAGEngine["Grounded Clinical RAG Engine\n• 384-dim SentenceTransformer\n• Hybrid SQLite / pgvector Search\n• Citation & Negation Verifier\n• 3 Retrieval Modes"]
         AuditSubsystem["Immutable HIPAA Audit Logger\n• Actor, Action, Resource, IP"]
     end
@@ -123,7 +123,7 @@ sequenceDiagram
     alt Native PDF or DOCX
         OCR->>OCR: Extract Embedded Text (PyMuPDF / python-docx)
     else Scanned Document or Image
-        OCR->>OCR: Run Bilingual PaddleOCR (Arabic & English text lines)
+        OCR->>OCR: Run PaddleOCR or local Tesseract (Arabic & English text lines)
         opt Low confidence / Handwritten tokens
             OCR->>OCR: TrOCR Handwriting Extraction & Uncertainty Flagging
         end
@@ -185,7 +185,7 @@ sequenceDiagram
 | **Frontend Web App** | React 19, TypeScript, Vite, Tailwind/Vanilla CSS tokens | Multi-tenant role dashboards, RTL bilingual localization, patient portal, responsive clinical tables, live audio recorder & playback. |
 | **Identity & Security** | JWT, Argon2id, PyOTP (TOTP 2FA), RBAC engine | User provisioning, credential verification, per-endpoint permission matrix, instant session revocation (`deleted_at`), HIPAA audit events. |
 | **Clinical Core API** | FastAPI, SQLAlchemy Async, Alembic | CRUD and business logic for patients, encounters, SOAP clinical notes, ICD-10 diagnoses, medications, labs, appointments, and billing. |
-| **Bilingual OCR Subsystem** | PyMuPDF, python-docx, PaddleOCR, TrOCR | Multi-format document parser, printed Arabic/English OCR, handwriting recognition, candidate entity extraction with confidence scoring. |
+| **Bilingual OCR Subsystem** | PyMuPDF, python-docx, PaddleOCR, Tesseract, TrOCR | Multi-format document parser, printed Arabic/English OCR, handwriting recognition, candidate entity extraction with confidence scoring. |
 | **Grounded Clinical RAG** | SentenceTransformers (`all-MiniLM-L6-v2`), pgvector/SQLite cosine | Semantic clinical retrieval strictly scoped to approved patient records, 3 search modes (`guideline_only`, `patient_only`, `mixed`), negation preservation, and sentence-level citation verification. |
 | **Voice Agent Microservice** | WebSockets, Groq Whisper STT, LangChain, Pydantic | Autonomous appointment booking, intelligent conversational triage, multi-turn state preservation, streaming audio responses. |
 | **Egyptian Voice Engine** | `mohammedaly22/VoiceTut-TTS` + Neural Egyptian Engine | Authentic Egyptian colloquial dialect transformation, distinct male (**محمد**) and female (**مريم**) voices, natural tempo calibration (+14%). |
@@ -230,7 +230,7 @@ newcareos-main/
     │   ├── storage.py           # Local filesystem (backend/storage/uploads) & S3 storage service
     │   └── rag/                 # Clinical RAG subsystem
     │       ├── parsers/         # PDF, DOCX, and Image parsers -> UnifiedDocument
-    │       ├── ocr/             # Printed (PaddleOCR) & Handwriting (TrOCR) OCR engines + router
+    │       ├── ocr/             # Printed (PaddleOCR/Tesseract) & Handwriting (TrOCR) OCR engines + router
     │       ├── chunker.py       # Overlapping clinical page chunker
     │       ├── embeddings.py    # Local SentenceTransformer (all-MiniLM-L6-v2, 384-dim)
     │       ├── store.py         # Dual-backend vector store (SQLite cosine + pgvector)
@@ -348,7 +348,7 @@ Both `.env` (in the repo root) and `backend/.env` are automatically loaded by `b
 | `ACCESS_TOKEN_MINUTES` | `30` | No | JWT access token expiration window in minutes |
 | `STORAGE_BACKEND` | `filesystem` | Yes | `filesystem` (stores under `backend/storage/uploads`) or `s3` |
 | `STORAGE_LOCAL_ROOT` | `storage/uploads` | No | Local upload folder (relative paths resolve inside `backend/`) |
-| `OCR_DEFAULT_ENGINE` | `printed` | No | `printed` (PaddleOCR), `handwriting`, or `auto` |
+| `OCR_DEFAULT_ENGINE` | `printed` | No | `printed` (PaddleOCR preferred, Tesseract fallback), `handwriting`, or `auto` |
 | `OCR_LANGUAGE` | `ar` | No | Default PaddleOCR language (`ar` or `en`) |
 | `HANDWRITING_OCR_MODEL` | `sherif1313/Arabic-handwritten-OCR-4bit-Qwen2.5-VL-3B-v3` | No | Optional Vision-Language handwriting OCR model |
 | `HANDWRITING_OCR_DEVICE` | `auto` | No | Device for handwriting OCR (`auto`, `cuda`, or `cpu`) |
@@ -382,7 +382,7 @@ Both `.env` (in the repo root) and `backend/.env` are automatically loaded by `b
 
 ### How OCR Works
 1. **PDF & DOCX Native Extraction**: Digital PDFs are parsed with `PyMuPDF` (`fitz`) and `pypdf` fallback; `.docx` files use `python-docx`.
-2. **Printed OCR (`PaddleOCR`)**: Scanned PDFs and images (`.png`, `.jpg`) are processed by `PaddleOCR` supporting both English and Arabic text lines.
+2. **Printed OCR (`PaddleOCR` / Tesseract)**: Scanned PDFs and images (`.png`, `.jpg`) use PaddleOCR when installed, with local Tesseract as the Arabic/English fallback.
 3. **Handwriting OCR (`Qwen2.5-VL` / Transformers, Optional)**: Lazy-loaded only when `ocr_engine="handwriting"` is explicitly requested.
 4. **Structured Candidate Organization**: Raw OCR text is normalized by `extract_structured_clinical_candidates` in `backend/app/ocr.py` into medications, labs, diagnoses, allergies, findings, and follow-up items, with explicit `[NEEDS_REVIEW]` flags for uncertain/handwritten lines.
 
@@ -432,6 +432,7 @@ docker compose logs -f api
 ```
 
 When running the backend in Docker on port `8000`, you can still run the Vite frontend locally on port `5173` via `npm.cmd run dev`.
+The backend image includes Tesseract and its Arabic/English language data as a local printed-text OCR fallback when PaddleOCR is unavailable. For a non-Docker backend, install Tesseract with the `ara` and `eng` language data and ensure `tesseract` is on `PATH`. Handwriting OCR remains a separate model-based feature.
 
 ---
 

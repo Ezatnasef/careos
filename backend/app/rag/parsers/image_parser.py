@@ -62,7 +62,7 @@ class ImageParser(BaseParser):
 
         Args:
             file_path: Path to the image.
-            ocr_engine: 'printed' (PaddleOCR) or 'handwriting' (Qwen-VL).
+            ocr_engine: 'printed' (PaddleOCR/Tesseract) or 'handwriting' (Qwen-VL).
             ocr_router: Optional OCRRouter instance.
             custom_prompt: Optional prompt for handwriting vision models.
 
@@ -109,4 +109,3 @@ class ImageParser(BaseParser):
         )
 
         return [doc]
-
