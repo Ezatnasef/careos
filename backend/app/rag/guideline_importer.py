@@ -29,9 +29,7 @@ from app.rag.store import async_upsert_chunks, upsert_chunks
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LEGACY_RAG_DB = (
-    Path(__file__).resolve().parents[4] / "backend" / "careos_rag.db"
-)
+DEFAULT_LEGACY_RAG_DB = (BACKEND_ROOT / "careos_rag.db").resolve()
 
 
 def resolve_legacy_rag_db_path(source_db_path: Optional[Path] = None) -> Path:
@@ -153,4 +151,3 @@ async def import_guidelines_async(
         "chunks_imported": imported,
         "sources": sources,
     }
-

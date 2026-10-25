@@ -13,6 +13,8 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if not inspector.has_table("patient_messages"):
+        return
     columns = {column["name"] for column in inspector.get_columns("patient_messages")}
     if "sender_user_id" not in columns:
         op.add_column(
@@ -55,6 +57,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    if not inspector.has_table("patient_messages"):
+        return
     columns = {column["name"] for column in inspector.get_columns("patient_messages")}
     if "sender_portal_account_id" in columns:
         op.drop_index(

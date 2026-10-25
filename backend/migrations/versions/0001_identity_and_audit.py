@@ -33,11 +33,16 @@ def upgrade() -> None:
             BEGIN
                 RAISE EXCEPTION 'audit_events are append-only';
             END;
-            $$ LANGUAGE plpgsql;
+            $$ LANGUAGE plpgsql
+        """)
+        op.execute("""
             CREATE TRIGGER audit_events_append_only
             BEFORE UPDATE OR DELETE ON audit_events
-            FOR EACH ROW EXECUTE FUNCTION prevent_audit_mutation();
+            FOR EACH ROW EXECUTE FUNCTION prevent_audit_mutation()
         """)
+        op.execute(
+            "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)"
+        )
 
 
 def downgrade() -> None:

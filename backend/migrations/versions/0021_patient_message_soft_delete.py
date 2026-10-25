@@ -12,10 +12,10 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    columns = {
-        column["name"]
-        for column in sa.inspect(bind).get_columns("patient_messages")
-    }
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("patient_messages"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("patient_messages")}
     if "deleted_at" not in columns:
         op.add_column(
             "patient_messages",
@@ -30,10 +30,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
-    columns = {
-        column["name"]
-        for column in sa.inspect(bind).get_columns("patient_messages")
-    }
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("patient_messages"):
+        return
+    columns = {column["name"] for column in inspector.get_columns("patient_messages")}
     if "deleted_at" in columns:
         op.drop_index(
             "ix_patient_messages_deleted_at",
