@@ -1450,6 +1450,35 @@ def test_unknown_credentials_are_rejected_without_development_seed() -> None:
     assert response.status_code == 401
 
 
+def test_production_demo_login_is_flagged_and_returns_a_valid_scoped_token(monkeypatch) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(
+        api,
+        "get_settings",
+        lambda: SimpleNamespace(is_production=True, demo_login_enabled=False),
+    )
+    credentials = {"role": "doctor", "username": "doctor.demo", "password": "Doctor@123"}
+    disabled = client.post("/api/v1/auth/demo-login", json=credentials)
+    assert disabled.status_code == 404
+
+    monkeypatch.setattr(
+        api,
+        "get_settings",
+        lambda: SimpleNamespace(is_production=True, demo_login_enabled=True),
+    )
+    enabled = client.post("/api/v1/auth/demo-login", json=credentials)
+    assert enabled.status_code == 200
+    body = enabled.json()
+    assert body["user"]["role"] == "doctor"
+    assert "patients.create" in body["user"]["permissions"]
+    assert "documents.create" in body["user"]["permissions"]
+    assert "users.delete" not in body["user"]["permissions"]
+    assert client.get(
+        "/api/v1/me",
+        headers={"Authorization": f"Bearer {body['access_token']}"},
+    ).status_code == 200
+
+
 def test_messages_portal_and_analytics_endpoints_are_real_and_scoped() -> None:
     client = TestClient(app)
     register, owner = register_clinician(client)

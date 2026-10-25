@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     secret_key: str = "development-only-change-this-secret"
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 30
+    demo_login_enabled: bool = False
     speech_to_text_provider: str = "unconfigured"
     speech_to_text_api_url: str = ""
     speech_to_text_api_key: str = ""

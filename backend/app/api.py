@@ -762,7 +762,8 @@ async def register(request: RegisterRequest, session: AsyncSession = Depends(get
 
 @router.post("/auth/demo-login", tags=["auth"], include_in_schema=False)
 async def demo_login(request: DemoLoginInput, session: AsyncSession = Depends(get_session)) -> dict[str, object]:
-    if get_settings().is_production:
+    settings = get_settings()
+    if settings.is_production and not settings.demo_login_enabled:
         raise HTTPException(status_code=404, detail="Demo login is disabled")
 
     demo_roles = {"admin", "doctor", "nurse", "receptionist", "hospital_director", "it_admin", "administrative_staff", "patient"}
@@ -783,9 +784,10 @@ async def demo_login(request: DemoLoginInput, session: AsyncSession = Depends(ge
     if request.username.strip().lower() != expected_username or request.password != expected_password:
         raise HTTPException(status_code=401, detail="Invalid demo credentials")
 
-    organization = await session.scalar(select(Organization).where(Organization.name == "CareOS Demo Hospital"))
+    organization_name = "CareOS Public Demo Sandbox"
+    organization = await session.scalar(select(Organization).where(Organization.name == organization_name))
     if organization is None:
-        organization = Organization(name="CareOS Demo Hospital", department="General Medicine", timezone="Africa/Cairo")
+        organization = Organization(name=organization_name, department="General Medicine", timezone="Africa/Cairo")
         session.add(organization)
         await session.flush()
 

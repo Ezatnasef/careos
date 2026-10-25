@@ -341,6 +341,7 @@ Both `.env` (in the repo root) and `backend/.env` are automatically loaded by `b
 | Variable | Default (Dev) | Required? | Description |
 | :--- | :--- | :--- | :--- |
 | `APP_ENV` | `development` | Yes | `development`, `staging`, or `production` |
+| `DEMO_LOGIN_ENABLED` | `false` | No | Enables the public demo accounts in production. Demo accounts are limited to the synthetic `CareOS Public Demo Sandbox` organization; leave disabled unless that sandbox is wanted. |
 | `API_PREFIX` | `/api/v1` | Yes | REST API route prefix |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./careos-local.db` | Yes | Async SQLAlchemy URL (`sqlite+aiosqlite` in dev, `postgresql+asyncpg` in prod) |
 | `SECRET_KEY` | `development-only-change-this-secret` | Prod: Yes | JWT & session signing key (must be `>= 32` chars in production) |
