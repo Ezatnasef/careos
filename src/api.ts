@@ -434,7 +434,9 @@ export async function demoLogin(role: string, username: string, password: string
     localStorage.setItem(DEMO_MODE_KEY, "false");
     return result;
   } catch (error) {
-    if (!isDemoRequestFailure(error)) {
+    const demoEndpointDisabled =
+      error instanceof ApiError && error.status === 404;
+    if (!isDemoRequestFailure(error) && !demoEndpointDisabled) {
       throw error;
     }
 
@@ -1270,4 +1272,3 @@ export async function recordPatientLab(
     body: JSON.stringify(payload),
   });
 }
-
