@@ -19,7 +19,12 @@ export async function request<T>(path: string, options: RequestInit = {}, tokenK
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    if (response.status === 401) clearSession();
+    if (
+      response.status === 401 &&
+      localStorage.getItem("careos-demo-mode") !== "true"
+    ) {
+      clearSession();
+    }
     throw new ApiError(response.status, body.detail || "Request failed");
   }
   if (response.status === 204) return undefined as T;
