@@ -526,9 +526,28 @@ def extract_clinical_candidates(
                 freq_str = None
                 dur_str = None
                 instructions = None
-                m_str = re.search(r"(\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|مجم|ملجم|مغ))", med_name, re.IGNORECASE)
-                med_strength = m_str.group(1) if m_str else None
-                raw_parts = [ln, med_name]
+                inline_medication = _MEDICATION_LINE_RE.search(med_name)
+                inline_directions = ""
+                if inline_medication:
+                    original_medication_line = med_name
+                    inline_directions = original_medication_line[inline_medication.end():]
+                    med_name = inline_medication.group(1).strip(" -•*:،,.")
+                    med_strength = f"{inline_medication.group(2)}{inline_medication.group(3)}"
+                else:
+                    m_str = re.search(
+                        r"(\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|مجم|ملجم|مغ))",
+                        med_name,
+                        re.IGNORECASE,
+                    )
+                    med_strength = m_str.group(1) if m_str else None
+                if inline_directions:
+                    inline_frequency = _FREQUENCY_EXTRACT_RE.search(inline_directions)
+                    if inline_frequency:
+                        freq_str = inline_frequency.group(1) or inline_frequency.group(2)
+                    inline_duration = _DURATION_EXTRACT_RE.search(inline_directions)
+                    if inline_duration:
+                        dur_str = inline_duration.group(1) or inline_duration.group(0)
+                raw_parts = [ln]
 
                 j = idx + 1
                 while j < len(all_lines) and not (re.match(r"^(?:R[/\\1ly|]|Rx|℞)\s*", all_lines[j], re.IGNORECASE) or re.match(r"^(?:Lonapex|Atomox)\b", all_lines[j], re.IGNORECASE)):

@@ -1167,15 +1167,15 @@ export function DocumentWorkflow({
                         <span style={{ fontSize: "0.85rem", fontWeight: 700, display: "block", marginBottom: "0.5rem", color: "var(--teal-primary, #0d9488)" }}>
                           {language === "ar" ? "بيانات الطبيب المعالج والمنشأة:" : "Clinician & Facility Information:"}
                         </span>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.5rem" }}>
-                          <div>
+                        <div className="clinical-candidate-field-grid">
+                          <div className="clinical-candidate-field">
                             <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
                               {language === "ar" ? "اسم الطبيب:" : "Physician Name:"}
                             </label>
                             <input
                               type="text"
                               className="form-control"
-                              style={{ fontSize: "0.85rem" }}
+                              style={{ fontSize: "0.85rem", width: "100%", minWidth: 0 }}
                               value={editedCandidates.clinician_metadata?.clinician_name || ""}
                               placeholder="د. أمير سمير (Amir Samir)"
                               onChange={(e) => setEditedCandidates({
@@ -1184,14 +1184,14 @@ export function DocumentWorkflow({
                               })}
                             />
                           </div>
-                          <div>
+                          <div className="clinical-candidate-field">
                             <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
                               {language === "ar" ? "التخصص:" : "Specialty:"}
                             </label>
                             <input
                               type="text"
                               className="form-control"
-                              style={{ fontSize: "0.85rem" }}
+                              style={{ fontSize: "0.85rem", width: "100%", minWidth: 0 }}
                               value={editedCandidates.clinician_metadata?.specialty || ""}
                               placeholder="طبيب نفسى وعلاج إدمان"
                               onChange={(e) => setEditedCandidates({
@@ -1200,14 +1200,14 @@ export function DocumentWorkflow({
                               })}
                             />
                           </div>
-                          <div>
+                          <div className="clinical-candidate-field">
                             <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
                               {language === "ar" ? "المنشأة / المستشفى:" : "Facility / Hospital:"}
                             </label>
                             <input
                               type="text"
                               className="form-control"
-                              style={{ fontSize: "0.85rem" }}
+                              style={{ fontSize: "0.85rem", width: "100%", minWidth: 0 }}
                               value={editedCandidates.clinician_metadata?.facility || ""}
                               placeholder="عضو الجمعية الأمريكية للطب النفسي"
                               onChange={(e) => setEditedCandidates({
@@ -1216,7 +1216,7 @@ export function DocumentWorkflow({
                               })}
                             />
                           </div>
-                          <div>
+                          <div className="clinical-candidate-field">
                             <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
                               {language === "ar" ? "الهاتف للتواصل:" : "Clinic Phone:"}
                             </label>
@@ -1224,7 +1224,7 @@ export function DocumentWorkflow({
                               type="text"
                               className="form-control"
                               dir="ltr"
-                              style={{ fontSize: "0.85rem" }}
+                              style={{ fontSize: "0.85rem", width: "100%", minWidth: 0 }}
                               value={editedCandidates.clinician_metadata?.clinic_phone || ""}
                               placeholder="01062342907"
                               onChange={(e) => setEditedCandidates({
@@ -1241,15 +1241,15 @@ export function DocumentWorkflow({
                         <span style={{ fontSize: "0.85rem", fontWeight: 700, display: "block", marginBottom: "0.5rem" }}>
                           {language === "ar" ? "بيانات المريض وتاريخ المستند:" : "Patient & Document Details:"}
                         </span>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.5rem" }}>
-                          <div>
+                        <div className="clinical-candidate-field-grid">
+                          <div className="clinical-candidate-field">
                             <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
                               {language === "ar" ? "اسم المريض:" : "Patient Name:"}
                             </label>
                             <input
                               type="text"
                               className="form-control"
-                              style={{ fontSize: "0.85rem" }}
+                              style={{ fontSize: "0.85rem", width: "100%", minWidth: 0 }}
                               value={editedCandidates.patient_metadata?.patient_name || ""}
                               placeholder="مهند أحمد عمر"
                               onChange={(e) => setEditedCandidates({
@@ -1258,14 +1258,14 @@ export function DocumentWorkflow({
                               })}
                             />
                           </div>
-                          <div>
+                          <div className="clinical-candidate-field">
                             <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
                               {language === "ar" ? "السن:" : "Age:"}
                             </label>
                             <input
                               type="text"
                               className="form-control"
-                              style={{ fontSize: "0.85rem" }}
+                              style={{ fontSize: "0.85rem", width: "100%", minWidth: 0 }}
                               value={editedCandidates.patient_metadata?.age ?? ""}
                               placeholder="22"
                               onChange={(e) => setEditedCandidates({
@@ -1274,14 +1274,14 @@ export function DocumentWorkflow({
                               })}
                             />
                           </div>
-                          <div>
+                          <div className="clinical-candidate-field">
                             <label style={{ fontSize: "0.78rem", display: "block", marginBottom: "2px", color: "var(--muted)" }}>
                               {language === "ar" ? "تاريخ الروشتة:" : "Prescription Date:"}
                             </label>
                             <input
                               type="text"
                               className="form-control"
-                              style={{ fontSize: "0.85rem" }}
+                              style={{ fontSize: "0.85rem", width: "100%", minWidth: 0 }}
                               value={editedCandidates.document_date || ""}
                               placeholder="2024-09-13"
                               onChange={(e) => setEditedCandidates({
@@ -1718,9 +1718,32 @@ export function DocumentWorkflow({
               )}
 
               {selectedDocument.extractedText && (
-                <div className="document-extracted-text" data-testid="document-extracted-text" style={{ padding: "14px 16px", borderRadius: "10px", background: "var(--paper-subtle, rgba(0,0,0,0.02))", border: "1px solid var(--line)" }}>
+                <div
+                  className="document-extracted-text"
+                  data-testid="document-extracted-text"
+                  style={{
+                    padding: "14px 16px",
+                    borderRadius: "10px",
+                    background: "var(--paper-subtle, rgba(0,0,0,0.02))",
+                    border: "1px solid var(--line)",
+                  }}
+                >
                   <span className="eyebrow" style={{ display: "block", marginBottom: "8px" }}>{t("clinicalFindingExtracted")}</span>
-                  <FormattedMessage text={cleanPrescriptionOcrText(selectedDocument.extractedText)} />
+                  <pre
+                    dir="auto"
+                    style={{
+                      margin: 0,
+                      fontFamily: "inherit",
+                      fontSize: "0.95rem",
+                      lineHeight: 1.9,
+                      textAlign: "start",
+                      whiteSpace: "pre-wrap",
+                      overflowWrap: "anywhere",
+                      unicodeBidi: "plaintext",
+                    }}
+                  >
+                    {selectedDocument.extractedText}
+                  </pre>
                 </div>
               )}
               <div className="document-actions">

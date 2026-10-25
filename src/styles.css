@@ -9796,4 +9796,31 @@ html {
   }
 }
 
+.clinical-candidates-editor,
+.clinical-candidates-editor > * {
+  min-width: 0;
+}
+
+.clinical-candidate-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 0.6rem;
+}
+
+.clinical-candidate-field {
+  min-width: 0;
+}
+
+.clinical-candidates-editor .form-control {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 520px) {
+  .clinical-candidate-field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 

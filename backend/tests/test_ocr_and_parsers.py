@@ -354,6 +354,25 @@ def test_tesseract_retries_sparse_page_segmentation_when_no_words_are_found() ->
     ]
 
 
+def test_inline_rx_directions_are_extracted_separately_from_medication_name() -> None:
+    from app.rag.loader import extract_clinical_candidates
+
+    candidates = extract_clinical_candidates(
+        "Discharge Summary\nRx: Amlodipine 10mg once daily for 30 days",
+        source="synthetic-prescription.txt",
+    )
+
+    medication = next(
+        medication
+        for medication in candidates["medications"]
+        if medication["name"].lower() == "amlodipine"
+    )
+    assert medication["dose"] == "10mg"
+    assert medication["frequency"].lower() == "once daily"
+    assert medication["duration"].lower() == "30 days"
+    assert medication["status"] == "present"
+
+
 def test_api_ocr_endpoints_and_patient_document_extraction(monkeypatch) -> None:
     client = TestClient(app)
     headers, patient_id = _register_clinician_with_patient(client)
@@ -1967,26 +1986,26 @@ def test_egyptian_psychiatric_prescription_dr_amir_samir_normalization_and_extra
 
     # Medications
     meds = {m["name"]: m for m in cands["medications"]}
-    assert "Atomox Apex 60mg" in meds
-    assert "Estikan 20mg" in meds
-    assert "Amipride 200mg" in meds
-    assert "Quetiapine 25mg" in meds
+    assert "Atomox Apex" in meds
+    assert "Estikan" in meds
+    assert "Amipride" in meds
+    assert "Quetiapine" in meds
 
-    atomox = meds["Atomox Apex 60mg"]
+    atomox = meds["Atomox Apex"]
     assert atomox["strength"] == "60mg"
     assert atomox["dosage"] == "كبسولة"
     assert "بعد الغداء" in (atomox["instructions"] or "")
 
-    estikan = meds["Estikan 20mg"]
+    estikan = meds["Estikan"]
     assert estikan["strength"] == "20mg"
     assert estikan["dosage"] == "قرص"
     assert "بعد العشاء" in (estikan["instructions"] or "")
 
-    amipride = meds["Amipride 200mg"]
+    amipride = meds["Amipride"]
     assert amipride["strength"] == "200mg"
     assert "نصف قرص" in (amipride["instructions"] or "")
 
-    quetiapine = meds["Quetiapine 25mg"]
+    quetiapine = meds["Quetiapine"]
     assert quetiapine["strength"] == "25mg"
     assert "2 قرص" in (quetiapine["instructions"] or "")
 
