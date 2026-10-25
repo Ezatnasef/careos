@@ -9920,10 +9920,35 @@ html {
   font-size: 0.84rem;
 }
 
+.document-extracted-text {
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--paper-subtle, rgba(0, 0, 0, 0.02));
+}
+
+.document-extracted-text > summary {
+  color: var(--muted, #758381);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.document-extracted-text[open] > summary {
+  margin-bottom: 0.65rem;
+}
+
 .document-extracted-text-content {
   max-height: 24rem;
+  margin: 0;
   overflow: auto;
-  border-top: 1px solid var(--line);
+  font-family: inherit;
+  font-size: 0.88rem;
+  line-height: 1.8;
+  text-align: start;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
 }
 
 @media (max-width: 520px) {

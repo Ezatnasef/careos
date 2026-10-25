@@ -373,6 +373,33 @@ def test_inline_rx_directions_are_extracted_separately_from_medication_name() ->
     assert medication["status"] == "present"
 
 
+def test_eye_drop_candidates_are_extracted_without_visible_rx_marker() -> None:
+    from app.rag.loader import extract_clinical_candidates
+
+    candidates = extract_clinical_candidates(
+        "Prescription\n"
+        "Efemyo Eye Drop\n"
+        "قطرة ٣ مرات يومياً لمدة أسبوع\n"
+        "Lubrivic Eye Drop\n"
+        "قطرة مرتين يومياً\n"
+        "وتكرر عند اللزوم",
+        source="synthetic-eye-prescription.jpg",
+        ocr_applied=True,
+        ocr_engine="Tesseract",
+        ocr_confidence=0.56,
+    )
+
+    medications = {item["name"]: item for item in candidates["medications"]}
+    assert set(medications) == {"Efemyo Eye Drop", "Lubrivic Eye Drop"}
+    assert medications["Efemyo Eye Drop"]["dosage"] == "قطرة"
+    assert "٣ مرات" in medications["Efemyo Eye Drop"]["frequency"]
+    assert "أسبوع" in medications["Efemyo Eye Drop"]["duration"]
+    assert medications["Lubrivic Eye Drop"]["duration"] is None
+    assert medications["Lubrivic Eye Drop"]["instructions"] == "وتكرر عند اللزوم"
+    assert candidates["provenance"]["requires_human_review"] is True
+    assert candidates["field_status"]["medications"] == "uncertain"
+
+
 def test_api_ocr_endpoints_and_patient_document_extraction(monkeypatch) -> None:
     client = TestClient(app)
     headers, patient_id = _register_clinician_with_patient(client)

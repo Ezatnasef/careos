@@ -458,7 +458,7 @@ def extract_clinical_candidates(
         if ocr_confidence is not None
         else (0.85 if ocr_applied else 0.98)
     )
-    low_ocr_confidence = ocr_applied and ocr_confidence is not None and float(ocr_confidence) < 0.55
+    low_ocr_confidence = ocr_applied and ocr_confidence is not None and float(ocr_confidence) < 0.65
 
     diagnoses: List[Dict[str, Any]] = []
     medications: List[Dict[str, Any]] = []
@@ -617,7 +617,7 @@ def extract_clinical_candidates(
         page_source = str(page_obj.get("source") or source)
         page_text = str(page_obj.get("text") or "")
 
-        for raw_line in page_text.split("\n"):
+        for raw_line_index, raw_line in enumerate(page_text.splitlines()):
             line = raw_line.strip()
             if not line:
                 continue
@@ -654,6 +654,59 @@ def extract_clinical_candidates(
             line_date_m = _DATE_EXTRACT_RE.search(line)
             line_date = line_date_m.group(1) if line_date_m else document_date
             matched_specific_entity = False
+
+            eye_drop_match = re.fullmatch(
+                r"([A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*)*\s+Eye\s+Drops?)",
+                line,
+                re.IGNORECASE,
+            )
+            if eye_drop_match:
+                medication_name = eye_drop_match.group(1).strip()
+                medication_key = f"{medication_name.lower()}::قطرة"
+                if medication_key not in seen_meds:
+                    frequency = None
+                    duration = None
+                    instructions = None
+                    page_lines = page_text.splitlines()
+                    for direction_line in page_lines[raw_line_index + 1:raw_line_index + 4]:
+                        direction = direction_line.strip()
+                        if not direction:
+                            continue
+                        if re.fullmatch(
+                            r"(?:R[/\\1ly|]|Rx|℞)\s*|"
+                            r"[A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*)*\s+Eye\s+Drops?",
+                            direction,
+                            re.IGNORECASE,
+                        ):
+                            break
+                        frequency_match = _FREQUENCY_EXTRACT_RE.search(direction)
+                        if frequency_match:
+                            frequency = frequency_match.group(1) or frequency_match.group(2) or frequency_match.group(0)
+                        duration_match = _DURATION_EXTRACT_RE.search(direction)
+                        if duration_match:
+                            duration = duration_match.group(1) or duration_match.group(0)
+                        if re.search(r"(?:تكرر\s+عند\s+اللزوم|عند\s+اللزوم|as needed|prn)", direction, re.IGNORECASE):
+                            instructions = "وتكرر عند اللزوم"
+
+                    seen_meds.add(medication_key)
+                    medications.append(
+                        {
+                            "name": medication_name,
+                            "strength": None,
+                            "dose": "قطرة",
+                            "dosage": "قطرة",
+                            "frequency": frequency,
+                            "duration": duration,
+                            "instructions": instructions,
+                            "raw": line,
+                            "status": assertion,
+                            "confidence": base_conf,
+                            "page": page_num,
+                            "source": page_source,
+                            "source_document_id": source_document_id,
+                        }
+                    )
+                matched_specific_entity = True
 
             # Parse markdown table rows for medications (e.g. | Amoxicillin | 500mg | TID | 7 days |)
             if line.startswith("|") and line.endswith("|"):

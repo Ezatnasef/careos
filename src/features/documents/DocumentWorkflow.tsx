@@ -151,14 +151,6 @@ function deriveStructuredCandidates(
   existing?: StructuredClinicalCandidates,
   extractedText?: string | null,
 ): StructuredClinicalCandidates | undefined {
-  if (
-    existing &&
-    (((existing.medications && existing.medications.length > 0) ||
-      (existing.diagnoses && existing.diagnoses.length > 0) ||
-      existing.clinician_metadata))
-  ) {
-    return existing;
-  }
   if (!extractedText) return existing;
 
   const cleaned = cleanPrescriptionOcrText(extractedText);
@@ -390,6 +382,57 @@ function deriveStructuredCandidates(
     idx++;
   }
 
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    const eyeDropMatch = line.match(
+      /^([A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*)*\s+Eye\s+Drops?)$/i,
+    );
+    if (!eyeDropMatch) continue;
+
+    const name = eyeDropMatch[1].trim();
+    const existingMedication = medications.some(
+      (medication) => medication.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (existingMedication) continue;
+
+    let frequency: string | null = null;
+    let duration: string | null = null;
+    let instructions: string | null = null;
+    for (
+      let directionIndex = lineIndex + 1;
+      directionIndex < Math.min(lines.length, lineIndex + 4);
+      directionIndex++
+    ) {
+      const direction = lines[directionIndex];
+      if (
+        /^(?:R[/\\1ly|]|Rx|℞)\s*/i.test(direction) ||
+        /^[A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*)*\s+Eye\s+Drops?$/i.test(direction)
+      ) {
+        break;
+      }
+
+      frequency ||= direction.match(
+        /([1-9١-٩]\s*مرات\s*يومي[اً|ا]?|مرتين\s*يومي[اً|ا]?|مرة\s*واحدة\s*يومي[اً|ا]?|once\s+daily|twice\s+daily|three\s+times\s+(?:a\s+)?day)/i,
+      )?.[1] || null;
+      duration ||= direction.match(
+        /(لمدة\s+(?:أسبوعين|اسبوعين|أسبوع|اسبوع|شهرين|شهر|يومين|[0-9٠-٩]+\s*(?:أيام|ايام|يوم|أسابيع|اسابيع|أسبوع|اسبوع|أشهر|اشهر|شهر))|for\s+\d+\s+(?:days?|weeks?|months?))/i,
+      )?.[1] || null;
+      if (!instructions && /(?:تكرر\s+عند\s+اللزوم|عند\s+اللزوم|as needed|prn)/i.test(direction)) {
+        instructions = "وتكرر عند اللزوم";
+      }
+    }
+
+    medications.push({
+      name,
+      dosage: "قطرة",
+      dose: "قطرة",
+      frequency,
+      duration,
+      instructions,
+      status: "present",
+    });
+  }
+
   const parsed: StructuredClinicalCandidates | undefined = (diagnoses.length > 0 || medications.length > 0 || clinician_name || patient_name)
     ? {
         document_type: "prescription",
@@ -434,6 +477,7 @@ function deriveStructuredCandidates(
       patient_name: existing.patient_metadata?.patient_name || parsed?.patient_metadata?.patient_name,
       age: existing.patient_metadata?.age || parsed?.patient_metadata?.age,
     },
+    diagnoses: existing.diagnoses?.length ? existing.diagnoses : (parsed?.diagnoses || []),
     medications: bestMeds,
     follow_up: (existing.follow_up && existing.follow_up.length > 0)
       ? existing.follow_up
@@ -1716,34 +1760,20 @@ export function DocumentWorkflow({
               )}
 
               {selectedDocument.extractedText && (
-                <div
+                <details
                   className="document-extracted-text"
                   data-testid="document-extracted-text"
-                  style={{
-                    padding: "14px 16px",
-                    borderRadius: "10px",
-                    background: "var(--paper-subtle, rgba(0,0,0,0.02))",
-                    border: "1px solid var(--line)",
-                  }}
                 >
-                  <span className="eyebrow" style={{ display: "block", marginBottom: "8px" }}>{t("clinicalFindingExtracted")}</span>
+                  <summary>
+                    {language === "ar" ? "عرض نص OCR الأصلي للمراجعة" : "Show original OCR text"}
+                  </summary>
                   <pre
                     className="document-extracted-text-content"
                     dir="auto"
-                    style={{
-                      margin: 0,
-                      fontFamily: "inherit",
-                      fontSize: "0.95rem",
-                      lineHeight: 1.9,
-                      textAlign: "start",
-                      whiteSpace: "pre-wrap",
-                      overflowWrap: "anywhere",
-                      unicodeBidi: "plaintext",
-                    }}
                   >
                     {selectedDocument.extractedText}
                   </pre>
-                </div>
+                </details>
               )}
               <div className="document-actions">
                 <button
