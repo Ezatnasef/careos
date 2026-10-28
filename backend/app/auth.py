@@ -121,7 +121,13 @@ async def current_user(credentials: HTTPAuthorizationCredentials | None = Depend
     expires_at = auth_session.expires_at if auth_session is not None else None
     if expires_at is not None and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if user is None or auth_session is None or expires_at is None or expires_at <= datetime.now(timezone.utc):
+    if (
+        user is None
+        or user.deleted_at is not None
+        or auth_session is None
+        or expires_at is None
+        or expires_at <= datetime.now(timezone.utc)
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     user_permissions = await permissions_for_user(session, user)
     expected_permissions = ROLE_PERMISSIONS.get(normalize_role(user.role), set())
@@ -244,7 +250,9 @@ async def register_user(session: AsyncSession, request: RegisterRequest) -> tupl
 
 async def authenticate(session: AsyncSession, request: LoginRequest) -> tuple[User, str]:
     email = str(request.email).lower()
-    user = await session.scalar(select(User).where(User.email == email))
+    user = await session.scalar(
+        select(User).where(User.email == email, User.deleted_at.is_(None))
+    )
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 

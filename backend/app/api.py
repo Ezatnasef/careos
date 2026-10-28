@@ -967,6 +967,8 @@ async def ensure_sso_user(session: AsyncSession, claims) -> User:
         raise HTTPException(status_code=400, detail="SSO claim is missing an email")
 
     user = await session.scalar(select(User).where(User.email == email))
+    if user is not None and user.deleted_at is not None:
+        raise HTTPException(status_code=401, detail="External identity is not authorized")
     if user is None:
         domain = (claims.organization_domain or (email.split("@", 1)[1] if "@" in email else "citycare.org")).strip().lower()
         organization_name = domain.split(".")[0].title() + " Health"
@@ -1004,7 +1006,10 @@ async def login_sso(request: SSOIdentityInput, session: AsyncSession = Depends(g
     provider = request.provider or "hospital_sso"
     if request.code and request.state:
         adapter = HospitalSSOAdapter(provider_name=provider)
-        claims = adapter.exchange_code_for_claims(code=request.code, state=request.state)
+        try:
+            claims = adapter.exchange_code_for_claims(code=request.code, state=request.state)
+        except ValueError as error:
+            raise HTTPException(status_code=401, detail="External identity verification failed") from error
     else:
         raise HTTPException(status_code=400, detail="SSO login requires a verified callback code and state")
 
@@ -1144,14 +1149,6 @@ class UserCreateInput(BaseModel):
     project: str = Field(default="CareOS Clinic", max_length=120)
 
 
-class TelegramFollowupInput(BaseModel):
-    patient_id: str | None = None
-    patient_name: str | None = None
-    phone: str | None = None
-    chat_id: str | None = None
-    message: str
-
-
 @router.get("/team", tags=["team"])
 async def team(user=Depends(require_permission("users.view")), session: AsyncSession = Depends(get_session)) -> list[dict[str, object]]:
     members = (await session.scalars(select(User).where(User.organization_id == user.organization_id, User.deleted_at.is_(None)))).all()
@@ -1238,22 +1235,13 @@ async def delete_team_user(
 
 
 @router.post("/integrations/telegram/send-followup", tags=["integrations"])
-async def send_telegram_followup(payload: TelegramFollowupInput) -> dict[str, object]:
-    target_chat = payload.chat_id or "demo_patient_chat"
-    text = (
-        f"🏥 <b>تنبيه متابعة رعاية سريرية - CareOS</b>\n\n"
-        f"عزيزي المريض <b>{payload.patient_name or 'المريض'}</b>:\n"
-        f"{payload.message}\n\n"
-        f"<i>يمكنك الرد مباشرة على هذه الرسالة للتواصل مع الفريق الطبي.</i>"
+async def send_telegram_followup(
+    account: PatientPortalAccount = Depends(current_portal_account),
+) -> dict[str, object]:
+    raise HTTPException(
+        status_code=503,
+        detail="Telegram follow-up is unavailable until a verified patient Telegram account is linked.",
     )
-    result = await notification_provider.send_telegram(target_chat, text)
-    return {
-        "status": "sent",
-        "channel": "telegram",
-        "recipient": target_chat,
-        "patient_id": payload.patient_id,
-        "result": result,
-    }
 
 
 @router.post("/integrations/telegram/webhook", tags=["integrations"])

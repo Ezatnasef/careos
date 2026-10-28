@@ -603,6 +603,12 @@ export function getPortalOverview(): Promise<PortalOverview> {
   return portalRequest<PortalOverview>("/patient-portal/overview");
 }
 
+export function requestPortalTelegramFollowup(): Promise<void> {
+  return portalRequest<void>("/integrations/telegram/send-followup", {
+    method: "POST",
+  });
+}
+
 export function getPortalClinicians(): Promise<PortalClinicianDirectory> {
   return portalRequest<PortalClinicianDirectory>("/patient-portal/clinicians");
 }

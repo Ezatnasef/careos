@@ -39,6 +39,7 @@ import {
   getPortalClinicians,
   getPortalOverview,
   getPortalPrescriptions,
+  requestPortalTelegramFollowup,
   sendPortalMessage,
   type PortalAvailabilitySlot,
   type PortalClinician,
@@ -1333,24 +1334,27 @@ function FullPatientPortal({
                   <button
                     type="button"
                     onClick={async () => {
+                      let toastMessage =
+                        language === "ar"
+                          ? "تعذر إرسال إشعار تليجرام."
+                          : "Could not send the Telegram follow-up.";
                       try {
-                        await fetch("/api/v1/integrations/telegram/send-followup", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            patient_id: overview.patient.id,
-                            patient_name: `${overview.patient.given_name} ${overview.patient.family_name}`,
-                            message: language === "ar"
-                              ? "إشعار متابعة من منصة CareOS: نتمنى لك دوام الصحة والعافية، لا تتردد في كتابة أي استفسار طبي هنا!"
-                              : "CareOS Follow-up Alert: We wish you good health! Feel free to reply with any health questions.",
-                          }),
-                        });
-                      } catch {}
+                        await requestPortalTelegramFollowup();
+                        toastMessage =
+                          language === "ar"
+                            ? "تم إرسال إشعار المتابعة بنجاح."
+                            : "Follow-up alert sent successfully.";
+                      } catch (error) {
+                        if (error instanceof ApiError && error.status === 503) {
+                          toastMessage =
+                            language === "ar"
+                              ? "إرسال تليجرام غير متاح حتى يتم ربط حساب المريض بطريقة آمنة."
+                              : "Telegram delivery is unavailable until the patient account is securely linked.";
+                        }
+                      }
                       window.dispatchEvent(
                         new CustomEvent("careos:toast", {
-                          detail: language === "ar"
-                            ? "تم إرسال إشعار المتابعة إلى حساب تليجرام بنجاح 📲"
-                            : "Follow-up alert sent to Telegram successfully!",
+                          detail: toastMessage,
                         }),
                       );
                     }}

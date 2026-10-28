@@ -15,8 +15,6 @@ Implementation order for the specialist:
 
 from __future__ import annotations
 
-import base64
-import json
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse, urlencode
@@ -58,11 +56,11 @@ class HospitalSSOAdapter:
 
     def build_redirect_url(self, *, state: str, nonce: str, redirect_uri: str | None = None) -> str:
         """Return a provider redirect URL with the required SSO state."""
+        settings = get_settings()
+        if not self.issuer_url or not self.client_id or not settings.oidc_client_secret:
+            raise ValueError("OIDC SSO is not configured")
         redirect_target = (redirect_uri or self.callback_url).strip()
         self.validate_redirect_uri(redirect_target)
-        if not self.issuer_url or not self.client_id:
-            delimiter = "&" if "?" in redirect_target else "?"
-            return f"{redirect_target}{delimiter}code=sso_hospital_clinician_code&state={state}"
         params = {
             "client_id": self.client_id,
             "redirect_uri": redirect_target,
@@ -93,38 +91,18 @@ class HospitalSSOAdapter:
         if parsed.scheme not in {"http", "https"}:
             raise ValueError("Redirect URI scheme must be http or https")
 
-    def _decode_jwt_payload(self, token: str) -> dict[str, Any]:
-        parts = token.split(".")
-        if len(parts) < 2:
-            return {}
-        payload = parts[1]
-        padded = payload + "=" * (-len(payload) % 4)
-        try:
-            decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
-            return json.loads(decoded)
-        except (ValueError, json.JSONDecodeError):
-            return {}
-
     def exchange_code_for_claims(self, *, code: str, state: str) -> SSOClaims:
         """Normalize a callback code into a local SSO claim set."""
         if not code or not state:
             raise ValueError("SSO callback requires both code and state")
+        settings = get_settings()
+        if not self.issuer_url or not self.client_id or not settings.oidc_client_secret:
+            raise ValueError("OIDC SSO is not configured")
         try:
-            state_claims = jwt.decode(state, get_settings().secret_key, algorithms=[get_settings().jwt_algorithm])
+            state_claims = jwt.decode(state, settings.secret_key, algorithms=[settings.jwt_algorithm])
             expected_nonce = str(state_claims["nonce"])
         except (JWTError, KeyError, TypeError, ValueError) as error:
             raise ValueError("Invalid or expired SSO state") from error
-
-        if code.startswith("sso_") or not self.issuer_url or not self.client_id:
-            return SSOClaims(
-                email="dr.rana@citycare.org",
-                full_name="Dr. Rana Samir",
-                given_name="Rana",
-                family_name="Samir",
-                organization_domain="citycare.org",
-                role="physician",
-                provider_user_id=f"sso-clinician-{expected_nonce[:8]}",
-            )
 
         try:
             discovery_url = f"{self.issuer_url.rstrip('/')}/.well-known/openid-configuration"
@@ -152,20 +130,17 @@ class HospitalSSOAdapter:
             access_token = token_payload.get("access_token")
             id_token = token_payload.get("id_token")
 
-            if get_settings().is_production:
-                if not id_token or not jwks_uri:
-                    raise ValueError("OIDC response is missing a verifiable ID token or JWKS URI")
-                jwks_response = httpx.get(jwks_uri, timeout=10)
-                jwks_response.raise_for_status()
-                claims_payload = jwt.decode(
-                    id_token,
-                    jwks_response.json(),
-                    algorithms=["RS256", "RS384", "RS512"],
-                    audience=get_settings().oidc_audience or self.client_id,
-                    issuer=self.issuer_url,
-                )
-            else:
-                claims_payload = self._decode_jwt_payload(id_token) if id_token else {}
+            if not id_token or not jwks_uri:
+                raise ValueError("OIDC response is missing a verifiable ID token or JWKS URI")
+            jwks_response = httpx.get(jwks_uri, timeout=10)
+            jwks_response.raise_for_status()
+            claims_payload = jwt.decode(
+                id_token,
+                jwks_response.json(),
+                algorithms=["RS256", "RS384", "RS512"],
+                audience=settings.oidc_audience or self.client_id,
+                issuer=self.issuer_url,
+            )
             if claims_payload.get("nonce") != expected_nonce:
                 raise ValueError("OIDC nonce validation failed")
             if userinfo_endpoint and access_token:
@@ -189,8 +164,7 @@ class HospitalSSOAdapter:
                     provider_user_id=str(claims_payload.get("sub") or state),
                 )
         except (JWTError, HTTPError, ValueError) as error:
-            if get_settings().is_production:
-                raise ValueError("External identity provider exchange failed") from error
+            raise ValueError("External identity provider exchange failed") from error
 
         raise ValueError("A verified external identity response is required")
 

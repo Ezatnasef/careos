@@ -1406,7 +1406,9 @@ def test_patient_scope_matches_department_and_project() -> None:
     assert patient_scope_matches(user, bad_project) is False
 
 
-def test_hospital_sso_start_and_callback_flow() -> None:
+def test_hospital_sso_start_and_callback_flow(monkeypatch) -> None:
+    from app.config import get_settings
+
     client = TestClient(app)
     start = client.post(
         "/api/v1/auth/sso/start",
@@ -1419,13 +1421,48 @@ def test_hospital_sso_start_and_callback_flow() -> None:
     assert body["state"]
     assert body["nonce"]
 
-    callback = client.post(
-        "/api/v1/auth/sso/callback",
-        json={"provider": "hospital_sso", "code": "demo-sso-code", "state": body["state"]},
-    )
+    monkeypatch.setenv("OIDC_ISSUER_URL", "")
+    monkeypatch.setenv("OIDC_CLIENT_ID", "")
+    monkeypatch.setenv("OIDC_CLIENT_SECRET", "")
+    get_settings.cache_clear()
+    try:
+        callback = client.post(
+            "/api/v1/auth/sso/callback",
+            json={"provider": "hospital_sso", "code": "sso_demo_code", "state": body["state"]},
+        )
+    finally:
+        get_settings.cache_clear()
 
     assert callback.status_code == 401
     assert "External identity verification failed" in callback.json()["detail"]
+
+
+def test_sso_fails_closed_when_oidc_is_not_configured(monkeypatch) -> None:
+    from app.config import get_settings
+    from app.sso import HospitalSSOAdapter
+    from jose import jwt
+
+    monkeypatch.setenv("OIDC_ISSUER_URL", "")
+    monkeypatch.setenv("OIDC_CLIENT_ID", "")
+    monkeypatch.setenv("OIDC_CLIENT_SECRET", "")
+    get_settings.cache_clear()
+    try:
+        client = TestClient(app)
+        start = client.post("/api/v1/auth/sso/start", json={"provider": "hospital_sso"})
+        assert start.status_code == 503
+
+        state = jwt.encode(
+            {
+                "nonce": "test-nonce",
+                "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+            },
+            get_settings().secret_key,
+            algorithm=get_settings().jwt_algorithm,
+        )
+        with pytest.raises(ValueError, match="OIDC SSO is not configured"):
+            HospitalSSOAdapter().exchange_code_for_claims(code="sso_anything", state=state)
+    finally:
+        get_settings.cache_clear()
 
 
 def test_hospital_sso_start_respects_redirect_uri() -> None:
@@ -1438,6 +1475,90 @@ def test_hospital_sso_start_respects_redirect_uri() -> None:
 
     assert start.status_code == 200
     assert redirect_uri in start.json()["redirect_url"]
+
+
+def test_deleted_staff_account_cannot_log_in_again() -> None:
+    client = TestClient(app)
+    member, owner = register_invited_user_with_owner(client, "physician")
+    owner_headers = {"Authorization": f"Bearer {owner.json()['access_token']}"}
+
+    deleted = client.delete(
+        f"/api/v1/team/users/{member['user']['id']}",
+        headers=owner_headers,
+    )
+    assert deleted.status_code == 200
+
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": member["user"]["email"], "password": "strong-password"},
+    )
+    assert login.status_code == 401
+
+    session = client.get(
+        "/api/v1/me",
+        headers={"Authorization": f"Bearer {member['access_token']}"},
+    )
+    assert session.status_code == 401
+
+
+def test_current_user_rejects_soft_deleted_account_with_active_session(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    from app import auth
+
+    class FakeSession:
+        async def scalar(self, _query):
+            return SimpleNamespace(
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
+            )
+
+        async def get(self, _model, _user_id):
+            return SimpleNamespace(deleted_at=datetime.now(timezone.utc))
+
+    monkeypatch.setattr(
+        auth.jwt,
+        "decode",
+        lambda *_args, **_kwargs: {"sub": str(uuid4()), "jti": "active-session"},
+    )
+    credentials = HTTPAuthorizationCredentials(
+        scheme="Bearer",
+        credentials="signed-token",
+    )
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(auth.current_user(credentials, FakeSession()))
+    assert error.value.status_code == 401
+
+
+def test_telegram_followup_requires_verified_patient_session(monkeypatch) -> None:
+    from app.models import PatientPortalAccount
+
+    async def current_account() -> PatientPortalAccount:
+        return PatientPortalAccount(
+            organization_id=uuid4(),
+            patient_id=uuid4(),
+            email="patient@example.org",
+            full_name="Test Patient",
+            password_hash="unused",
+        )
+
+    async def unexpected_send(*_args, **_kwargs):
+        raise AssertionError("Telegram must not be sent without a verified patient destination")
+
+    app.dependency_overrides[api.current_portal_account] = current_account
+    monkeypatch.setattr(api.notification_provider, "send_telegram", unexpected_send)
+    try:
+        response = TestClient(app).post(
+            "/api/v1/integrations/telegram/send-followup",
+            json={"chat_id": "attacker-controlled", "message": "Test"},
+        )
+    finally:
+        app.dependency_overrides.pop(api.current_portal_account, None)
+
+    assert response.status_code == 503
+    assert "verified patient Telegram account" in response.json()["detail"]
 
 
 def test_unknown_credentials_are_rejected_without_development_seed() -> None:
@@ -2170,7 +2291,8 @@ def test_portal_tokens_are_rejected_when_org_or_patient_claims_do_not_match(monk
 
 def test_oidc_adapter_reuses_discovery_and_userinfo_when_provider_is_configured(monkeypatch) -> None:
     import base64
-    import json
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
     from jose import jwt
 
     from app.config import get_settings
@@ -2180,7 +2302,9 @@ def test_oidc_adapter_reuses_discovery_and_userinfo_when_provider_is_configured(
     monkeypatch.setenv("OIDC_ISSUER_URL", "https://issuer.example.com")
     monkeypatch.setenv("OIDC_CLIENT_ID", "careos-client")
     monkeypatch.setenv("OIDC_CLIENT_SECRET", "careos-secret")
+    monkeypatch.setenv("OIDC_AUDIENCE", "careos-client")
     monkeypatch.setenv("APP_URL", "https://careos.example.com")
+    get_settings.cache_clear()
 
     class FakeResponse:
         def __init__(self, payload):
@@ -2193,23 +2317,63 @@ def test_oidc_adapter_reuses_discovery_and_userinfo_when_provider_is_configured(
             return None
 
     state = jwt.encode({"nonce": "test-nonce", "exp": datetime.now(timezone.utc) + timedelta(minutes=10)}, get_settings().secret_key, algorithm=get_settings().jwt_algorithm)
-    id_payload = base64.urlsafe_b64encode(json.dumps({"email": "dr.rana@citycare.org", "name": "Dr. Rana Samir", "role": "physician", "hd": "citycare.org", "nonce": "test-nonce"}).encode()).decode().rstrip("=")
+    signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_numbers = signing_key.public_key().public_numbers()
+
+    def encode_integer(value: int) -> str:
+        encoded = value.to_bytes((value.bit_length() + 7) // 8, "big")
+        return base64.urlsafe_b64encode(encoded).decode().rstrip("=")
+
+    jwks = {
+        "keys": [{
+            "kty": "RSA",
+            "kid": "test-key",
+            "use": "sig",
+            "alg": "RS256",
+            "n": encode_integer(public_numbers.n),
+            "e": encode_integer(public_numbers.e),
+        }]
+    }
+    id_token = jwt.encode(
+        {
+            "iss": "https://issuer.example.com",
+            "sub": "provider-user-1",
+            "aud": "careos-client",
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+            "iat": datetime.now(timezone.utc),
+            "nonce": "test-nonce",
+            "email": "dr.rana@citycare.org",
+            "name": "Dr. Rana Samir",
+            "role": "physician",
+            "hd": "citycare.org",
+        },
+        signing_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ),
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
 
     class FakeHTTP:
         @staticmethod
-        def get(url, timeout):
+        def get(url, timeout, headers=None):
             if url.endswith("/.well-known/openid-configuration"):
                 return FakeResponse({
                     "userinfo_endpoint": "https://issuer.example.com/userinfo",
                     "token_endpoint": "https://issuer.example.com/token",
+                    "jwks_uri": "https://issuer.example.com/jwks",
                 })
+            if url.endswith("/jwks"):
+                return FakeResponse(jwks)
             return FakeResponse({})
 
         @staticmethod
         def post(url, data=None, headers=None, timeout=None):
             class Reply:
                 def json(self):
-                    return {"id_token": f"header.{id_payload}.signature", "access_token": "abc"}
+                    return {"id_token": id_token, "access_token": "abc"}
 
                 def raise_for_status(self):
                     return None
@@ -2221,3 +2385,4 @@ def test_oidc_adapter_reuses_discovery_and_userinfo_when_provider_is_configured(
     assert claims.email == "dr.rana@citycare.org"
     assert claims.role == "physician"
     assert claims.organization_domain == "citycare.org"
+    get_settings.cache_clear()
